@@ -1502,6 +1502,13 @@ const dict = {
     en: '**j/k** page · **enter/esc** collapse · **q** exit',
   },
   'traj-hint-failure': { zh: '{{key}} 看完整轨迹', en: '{{key}} for the full trajectory' },
+  // ── boot phase (`dst` fast start; src/preboot/) ─────────────────────
+  // The real Chat is mounted against a boot channel (`ready === false`)
+  // while dsh still composes its plugin tree. Typing is accepted; sending is
+  // not — the status line says so, and Enter answers with a transient notice.
+  'preboot-status': { zh: 'DeepSeek Harness 正在启动…… 可以先输入，就绪后即可发送', en: 'DeepSeek Harness is starting… you can type now and send once it is ready' },
+  'preboot-status-slow': { zh: 'DeepSeek Harness 仍在启动（已 {{seconds}} 秒）…… 可以先输入，就绪后即可发送', en: 'DeepSeek Harness is still starting ({{seconds}}s)… you can type now and send once it is ready' },
+  'preboot-not-ready': { zh: '还没就绪——启动完成后按 Enter 发送', en: 'Not ready yet — press Enter to send once startup completes' },
 } as const satisfies Record<string, { zh: I18nText; en?: I18nText }>
 
 export type I18nKey = keyof typeof dict

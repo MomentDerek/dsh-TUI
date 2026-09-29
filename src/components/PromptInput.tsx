@@ -1641,6 +1641,13 @@ export function PromptInput({
         return
       }
     }
+    // Boot phase (`dst` fast start): dsh is still composing, nothing can be
+    // sent or run yet. Refuse here — BEFORE any path that clears the draft —
+    // so the text stays exactly where it is; the notice says why.
+    if (channel.ready === false && value.trim() !== '') {
+      channel.notify(t('preboot-not-ready'), { color: 'warning', timeoutMs: 2500 })
+      return
+    }
     if (channel.working && value.trim() !== '') {
       // Immediate-command semantics: /btw and /skills are exempt from
       // steering — neither command interrupts the running turn. Hidden

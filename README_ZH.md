@@ -91,7 +91,7 @@ npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui
 
 # 启动（首次运行自动初始化 profile，需要 pnpm）
 dsh-tui
-# dst 是短别名，启动同一个 TUI
+# dst 是快速启动入口：几百毫秒内画出开屏与输入框，dsh 加载期间即可输入
 dst
 ```
 
@@ -105,7 +105,7 @@ TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 
 
 | 命令 | 作用 |
 | --- | --- |
-| `dsh-tui` / `dst` | 启动 TUI；短别名是同一个程序 |
+| `dsh-tui` / `dst` | 启动 TUI；`dst` 是快速启动入口：先画出输入框、dsh 加载期间即可输入（见[快速启动](#快速启动dst)） |
 | `dsh-tui --resume [id]` · `dsh-tui update` · `dsh-tui doctor` | 恢复会话 · 更新 profile 并对齐启动器 · 环境体检 |
 | `dsh-tui safe` | 只读诊断、插件清单与修复指引；`safe --rescue` 创建干净的救援 profile |
 | `dsh-tui version` · `dsh-tui help` | 启动器与 profile 版本、用法；没装 dsh 时这两条也能用 |
@@ -119,6 +119,26 @@ TUI 启动后会在后台检查新版本，不阻塞首帧。有更新时输入 
 `dsh-tui --patch ./overlay.yml -- --resume=sid-1` 会应用补丁，
 并将 `--resume=sid-1` 作为提示词发送，而不恢复该会话。
 安全模式：[安装与快速开始](docs/getting-started.md)。
+
+
+### 快速启动（`dst`）
+
+普通 `dsh-tui` 启动要等 dsh 组合完 profile、加载完整棵插件树才有画面（WSL2
+热启动约两秒）。`dst` 接受相同的参数与子命令，但让 dsh 带着一个预载模块启动：
+预载在约一秒内把真正的聊天界面挂起来，只是背后接的是一个还没有会话的"启动态
+channel"——头部、输入框、状态栏都是平时那一套，输入框立即可打字。此时还不能
+发送：状态栏写着 dsh 正在启动，按 Enter 只弹一条提示。dsh 起来后，真实会话从
+同一个界面底下滑入：不重挂、不闪屏，草稿留在输入框里，肉眼可见的变化只有启动
+提示消失、"已加载上下文"一行出现。
+
+- 长命令也能开启：`DSH_TUI_PREBOOT=1 dsh-tui`；`DSH_TUI_PREBOOT=0 dst` 退回普通路径。
+- dsh 求值模块图的那段时间进程是忙的，这个窗口里输入的按键回显可能停顿最多
+  约一秒然后一次补上，不会丢键。
+- 启动态从 `settings.yaml` 读取 `fullscreen`、`terminalImages`、页边距、开屏
+  与语言设置；若 profile 的 `cordis.yml` 把 `fullscreen` 或 `terminalImages`
+  改成了不同的值，dsh 起来时会重挂一次（草稿会带过去）而不是原地更新。
+- `PATH` 上的 `dsh` 不是 JavaScript 入口、或 profile 副本没有编译产物时，自动
+  回退到普通的 `dsh --profile dsh-tui` 启动。
 
 ### 迁移其他编程代理的对话（`dsh-tui migrate`）
 

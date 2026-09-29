@@ -67,7 +67,7 @@ import { normalizeScrollGutter } from '../tuiDisplayPrefs.js'
 import { OverlayAbove } from '../components/OverlayAbove.js'
 import { TooltipLayer } from '../components/Tooltip.js'
 import { PromptInput, type PromptController } from '../components/PromptInput.js'
-import type { PromptDraftCache } from '../components/promptDraftCache.js'
+import { resolveBindingGeneration, type PromptDraftCache } from '../components/promptDraftCache.js'
 import type { InjectController } from '../dsh-adapter/inject-channel.js'
 import { PromptEditorLayer, usePromptEditorOpen } from '../components/PromptEditor.js'
 import { GoalTodoPanel } from '../components/GoalTodoPanel.js'
@@ -307,6 +307,7 @@ export function Chat({
   renderScene,
   openHomeOnBoot,
   starPrompt,
+  initialDraft,
 }: {
   channel: Channel
   renderScene?: (id: string, channel: Channel) => React.ReactNode
@@ -378,6 +379,15 @@ export function Chat({
    * undefined.
    */
   starPrompt?: { dir?: string; onStar?: () => StarAttempt | Promise<StarAttempt>; onOpen?: () => void } | null
+  /**
+   * Text the user typed BEFORE this Chat existed. The `dst` fast start
+   * normally keeps one Chat mounted from the boot phase on (no hand-over);
+   * this is its fallback when the boot slot had to be re-mounted with other
+   * renderer options (`src/preboot/host.tsx`). Seeded into the composer's
+   * draft slot for the first mount, owned by the session this Chat attaches
+   * to, so the composer restores it like a draft that survived a screen swap.
+   */
+  initialDraft?: { value: string; cursor: number }
   /**
    * The composer's live controller, published every render. Exposed as a prop
    * so a regression can read the draft the composer HOLDS — the ownership
@@ -580,6 +590,12 @@ export function Chat({
    * screen, and the screen stays reachable.
    */
   const [supervisorOpen, setSupervisorOpen] = React.useState(openHomeOnBoot === true)
+  // The fast start mounts Chat before the host knows whether this launch is
+  // an ordinary one; the decision then arrives as a prop change, not as the
+  // initial value above. A `true` landing late still opens the home screen.
+  React.useEffect(() => {
+    if (openHomeOnBoot === true) setSupervisorOpen(true)
+  }, [openHomeOnBoot])
   /** `/tree` opens the session family tree (pi's Session Tree): every rewind
    *  fork stitched back onto the message it diverged from, hover previews,
    *  and per-node rewind/fork/adopt actions. Like the supervisor, a screen. */
@@ -1300,7 +1316,21 @@ export function Chat({
    * is dropped the moment the attached session changes so no draft can follow
    * the user into a different conversation.
    */
-  const promptDraftRef = React.useRef<PromptDraftCache>({ current: null })
+  const promptDraftRef = React.useRef<PromptDraftCache>({
+    current: initialDraft === undefined || initialDraft.value === ''
+      ? null
+      : {
+          ownerAgentId: String(channel.agentId),
+          bindingGeneration: resolveBindingGeneration(channel),
+          value: initialDraft.value,
+          cursor: initialDraft.cursor,
+          foldBlock: null,
+          expanded: false,
+          vimEnabled: false,
+          vimInsert: false,
+          images: [],
+        },
+  })
   /**
    * Latest channel for the unmount release below: that effect must not re-run
    * on a channel identity change, yet its cleanup must release against the
@@ -1381,9 +1411,18 @@ export function Chat({
    * old conversation's text. Which DRAFT the slot keeps is a separate question,
    * answered by the snapshot's owner fields.
    */
+  /** `channel.ready` as of the last reconciliation, for the boot edge below. */
+  const draftReadyRef = React.useRef(channel.ready)
   React.useLayoutEffect(() => {
+    const becameReady = !draftReadyRef.current && channel.ready
+    draftReadyRef.current = channel.ready
     if (draftSessionRef.current === draftSessionId) return
     draftSessionRef.current = draftSessionId
+    // Boot phase → live (`dst` fast start): the agent id goes from the boot
+    // channel's empty placeholder to the real one, but no conversation is
+    // being REPLACED — this is the session the user was typing at all
+    // along, arriving. It adopts the draft instead of clearing it.
+    if (becameReady) return
     // A stored draft can only belong to the conversation being replaced: the
     // composer is the one that writes it, and it writes it on the way out.
     promptDraftRef.current.current = null
@@ -1392,7 +1431,7 @@ export function Chat({
       return
     }
     promptControllerRef.current?.clear()
-  }, [draftSessionId])
+  }, [draftSessionId, channel.ready])
   const previewGallery = activePreview === null ? [] : activePreview.peek
     ? promptControllerRef.current?.previewImages?.() ?? [activePreview]
     : overlay.kind === 'image-preview' ? overlay.gallery ?? [activePreview] : []

@@ -98,7 +98,8 @@ npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui
 
 # Start (first run auto-initializes the profile; needs pnpm)
 dsh-tui
-# Both `dsh-tui` and the short `dst` alias start the same TUI.
+# `dst` is the fast-start entry: the splash and prompt paint within a few
+# hundred milliseconds and accept typing while dsh finishes loading.
 dst
 ```
 
@@ -124,7 +125,7 @@ source builds, and troubleshooting, including migration from the former
 
 | Command | Purpose |
 | --- | --- |
-| `dsh-tui` / `dst` | Start the TUI; `dst` is a short alias for the same program |
+| `dsh-tui` / `dst` | Start the TUI; `dst` is the fast-start entry that pre-paints the prompt and accepts typing while dsh loads (see [Fast start](#fast-start-dst)) |
 | `dsh-tui --resume [id]` · `dsh-tui update` · `dsh-tui doctor` | Resume a session · update the profile and align the launcher · pre-flight environment checks |
 | `dsh-tui safe` | Read-only diagnostics, plugin inventory and repair guidance; `safe --rescue` builds a clean rescue profile |
 | `dsh-tui version` · `dsh-tui help` | Launcher and profile versions and usage; both work even without a `dsh` install |
@@ -138,6 +139,34 @@ directly, use `dsh --profile dsh-tui -- -- --resume=sid-1 ./notes`: the first
 prompt: `dsh-tui --patch ./overlay.yml -- --resume=sid-1` applies the overlay
 and sends `--resume=sid-1` as prompt text without resuming that session.
 Safe mode: [Getting started](docs/getting-started.en.md).
+
+### Fast start (`dst`)
+
+A plain `dsh-tui` launch shows nothing until dsh has composed the profile and
+loaded its whole plugin tree (about two seconds on a warm WSL2 machine). `dst`
+takes the same arguments and subcommands but starts dsh with a preload that
+mounts the real chat screen first, about one second in, against a boot-phase
+channel that has no session yet: the header, the prompt box and the status
+line are the ordinary ones, and the prompt accepts typing right away. Sending
+is not possible yet — the status line says dsh is still starting and Enter
+answers with a notice. When dsh is up, the live session slides in underneath
+the same screen: nothing re-mounts, the draft stays in the composer, and the
+only visible changes are the boot notice going away and the loaded-context
+row appearing.
+
+- Opt in from the long command with `DSH_TUI_PREBOOT=1 dsh-tui`; opt out of
+  the fast path with `DSH_TUI_PREBOOT=0 dst`.
+- While dsh evaluates its module graph the process is busy, so the echo of
+  keys typed in that window can stall for up to about a second and then catch
+  up. No keystrokes are lost.
+- The boot phase reads `fullscreen`, `terminalImages`, page margin, splash
+  and language settings from `settings.yaml`. If the profile's `cordis.yml`
+  overrides `fullscreen` or `terminalImages` to a different value, the screen
+  re-mounts once when dsh is up (the draft is carried over) instead of
+  updating in place.
+- The fast path falls back to the plain `dsh --profile dsh-tui` launch when the
+  `dsh` on `PATH` is not a JavaScript entry or the profile copy has no compiled
+  preload.
 
 ### Importing conversations from other agents (`dsh-tui migrate`)
 

@@ -50,7 +50,8 @@ import {
 } from '../utils/keymap.js'
 import { attachHerdrIntegration } from '../herdr.js'
 import { logMouseDebug } from '../utils/debug.js'
-import { Chat } from '../screens/Chat.js'
+import { disposePendingPreboot, takePrebootSlot } from '../preboot/handle.js'
+import { mountChatHost, type BootSlot, type ChatHostProps } from '../preboot/host.js'
 import { openInjectChannel, type InjectController } from './inject-channel.js'
 import { startSessionMountHeartbeat } from './session-mount-heartbeat.js'
 import { reserveMount } from '../sessionMounts.js'
@@ -64,8 +65,7 @@ import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspaces.js'
 import { getHostSettingsSections, getLocalSettingsSectionsHost, type TuiSettingsField, type TuiSettingsSectionsRuntime } from './settings-sections.js'
 import { compositionRoot, withHostRootCapability } from './host-access.js'
-import { render, ThemeProvider, AlternateScreen } from '../ui.js'
-import { PageMargin } from '../components/PageMargin.js'
+import type { Instance } from '../ui.js'
 import { normalizeSplashFont } from '../components/splashFonts.js'
 import { SETTING_GROUPS, SHORTCUT_FIELD_META, settingField } from '../settings/definitions.js'
 import instances from '../ink/instances.js'
@@ -158,6 +158,14 @@ export function resolveTuiHostMode(
   return explicitTuiLaunch ? 'invalid-explicit-launch' : 'headless-host'
 }
 
+/**
+ * The boot slot (`dst` fast start) taken by the running `apply`, until the
+ * render step brings it live or discards it. Module-level so
+ * `handleStartupError` can restore the terminal when startup dies between
+ * the two points.
+ */
+let pendingPreboot: BootSlot | undefined
+
 export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx): Promise<void> {
   const config = configValues<Config>(runtimeConfig)
   // /restart handoff diagnosis: the replacement process is marked by env and
@@ -233,6 +241,13 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     )
     return
   }
+
+  // Fast launcher (`dst`): the `--import` preload mounted the root tree
+  // against a boot channel (src/preboot/) before dsh started loading and
+  // published its slot. Take it now so a failure anywhere below can still
+  // tear that renderer down (see handleStartupError) — and bring it live at
+  // the render step, where the live channel slides in under the running Chat.
+  pendingPreboot = takePrebootSlot()
 
   // Validate settings before creating an agent or taking over the terminal.
   const tuiSettingsNs = resolveSettingsNamespace(configOwner, Config) as SettingsNamespace
@@ -1261,7 +1276,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // UI; user exit runs the full leave sequence: unmount() restores the
   // terminal (cursor, raw mode, mouse tracking) and the explicit newlines
   // keep the shell prompt from overlapping the TUI's last line.
-  let instance: Awaited<ReturnType<typeof render>> | undefined
+  let instance: Instance | undefined
   let exited = false
   let updateRequested = false
   let updateTargetVersion: string | undefined
@@ -1437,8 +1452,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     && launchSessionId === undefined
     && requestedWorkspace === undefined
     && initialPrompt === ''
-  const chat = React.createElement(Chat, {
-    channel,
+  const hostProps: ChatHostProps = {
     renderScene: createChannelSceneOutlet(() => rawChannel.pluginScene),
     questionStore,
     approvalStore,
@@ -1455,10 +1469,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     activityStore,
     extensionShortcuts: getHostShortcuts(ctx.get('tuiShortcuts') as TuiShortcutRuntime | undefined),
     themeHost,
-    // Full-screen surfaces inside Chat — the trajectory scene and the session
-    // browser — enter the alt screen themselves in inline mode; in fullscreen
-    // the tree is already wrapped below, so they must not nest.
-    fullscreen: bootedFullscreen,
     onExit: () => handleExit(),
     // `/restart`: respawn this process and resume the session, no update.
     onRestart: () => {
@@ -1511,12 +1521,13 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         handleExit()
       })
     },
-  })
-  // Freeze the fullscreen decision only NOW, right before the tree mounts:
-  // Chat above was created after the same settingsReady await, so the root
-  // wrap and the `fullscreen` prop share one value; a mid-session /settings
-  // edit from here on is persisted for the next boot (the watch notifies),
-  // never applied live (swapping layouts requires re-mounting the tree).
+  }
+  // Freeze the fullscreen decision only NOW, right before the tree mounts
+  // (or the boot slot goes live): the host props above were created after the
+  // same settingsReady await, so the root wrap and the `fullscreen` prop
+  // share one value; a mid-session /settings edit from here on is persisted
+  // for the next boot (the watch notifies), never applied live (swapping
+  // layouts requires re-mounting the tree).
   // Host recompose hardening: never regress a fullscreen session to inline
   // on a re-mount whose settings application arrived late (see the module
   // latch note). A fresh process still resolves from config + settings
@@ -1525,23 +1536,48 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     bootedFullscreen = true
   }
   rendererSettingsFrozen = true
-  // fullscreen: wrap the tree in <AlternateScreen> (DEC 1049 + SGR mouse
-  // tracking), which turns on in-app text selection (copy-on-select via
-  // useCopyOnSelect), wheel scroll, and click/hover hit-testing. Inline
-  // mode leaves the mouse to the terminal emulator's native selection.
-  // PageMargin keeps the whole UI inset from the terminal edges (some
-  // terminals — bare WSL/tmux/SSH — have no own padding, so text touches
-  // the screen border). It must sit INSIDE AlternateScreen: the alt-screen
-  // box sizes itself to the real terminal rows, while PageMargin reports
-  // content-box dimensions to everything below it.
-  const marginChildren = bootedFullscreen
-    ? React.createElement(AlternateScreen, null, React.createElement(PageMargin, null, chat))
-    : React.createElement(PageMargin, null, chat)
-  const tree = React.createElement(ThemeProvider, {
-    themeHost,
-    children: marginChildren,
-  })
-  instance = await render(tree, { exitOnCtrlC: false, terminalImages: bootedTerminalImages })
+  // Every launch renders through the same root (src/preboot/host.tsx):
+  // ThemeProvider → [AlternateScreen →] PageMargin → Chat. fullscreen wraps
+  // the tree in <AlternateScreen> (DEC 1049 + SGR mouse tracking: in-app
+  // text selection, wheel scroll, click/hover hit-testing); inline mode
+  // leaves the mouse to the terminal emulator. PageMargin keeps the UI inset
+  // from the terminal edges on terminals without their own padding.
+  //
+  // The `dst` fast start mounted that root already, against a boot channel,
+  // before dsh ran. If its renderer decisions match the ones this boot
+  // resolved, the live channel and host props slide in underneath the
+  // running tree — no re-mount, the draft typed so far stays in the
+  // composer. Otherwise (the options are fixed per Ink instance and per root
+  // wrap) the boot slot is torn down and a fresh slot mounts already live,
+  // carrying the draft over: one visible flash, never a wrong layout.
+  let slot: BootSlot
+  const preboot = pendingPreboot
+  pendingPreboot = undefined
+  if (
+    preboot !== undefined
+    && preboot.phase === 'booting'
+    && preboot.fullscreen === bootedFullscreen
+    && preboot.terminalImages === bootedTerminalImages
+  ) {
+    preboot.ready({ channel, props: hostProps })
+    slot = preboot
+    logForDebugging(`[preboot] boot slot went live (mounted ${Math.round(performance.now() - preboot.mountedAt)}ms ago)`)
+  } else {
+    let initialDraft: ChatHostProps['initialDraft']
+    if (preboot !== undefined) {
+      const draft = preboot.draft()
+      if (draft !== '') initialDraft = { value: draft, cursor: draft.length }
+      const disposeStart = performance.now()
+      preboot.dispose()
+      logForDebugging(`[preboot] renderer mismatch (fullscreen ${preboot.fullscreen}→${bootedFullscreen}, images ${preboot.terminalImages}→${bootedTerminalImages}, phase ${preboot.phase}); disposed in ${Math.round(performance.now() - disposeStart)}ms, mounting fresh`)
+    }
+    slot = await mountChatHost({
+      fullscreen: bootedFullscreen,
+      terminalImages: bootedTerminalImages,
+      initial: { channel, props: initialDraft === undefined ? hostProps : { ...hostProps, initialDraft } },
+    })
+  }
+  instance = slot.instance
   const isRecompose = lastBootedFullscreen !== undefined
   lastBootedFullscreen = bootedFullscreen
   lastBootedTerminalImages = bootedTerminalImages
@@ -1905,7 +1941,7 @@ type InkShutdownState = {
  */
 export async function finishExit(
   ctx: Context,
-  instance: Awaited<ReturnType<typeof render>> | undefined,
+  instance: Instance | undefined,
   fullscreen: boolean,
   notice: string | undefined,
   stderrNotice: string | undefined,
@@ -2119,6 +2155,11 @@ function runUpdate(
 
 /** Deferred runtime failures must restore the terminal and fail the process. */
 export function handleStartupError(ctx: Context, error: unknown): void {
+  // A boot slot that never went live still owns the alt-screen and
+  // intercepts stderr; restore the terminal first or the message vanishes.
+  pendingPreboot?.dispose()
+  pendingPreboot = undefined
+  disposePendingPreboot()
   const message = error instanceof Error ? error.message : String(error)
   void finishExit(ctx, undefined, lastBootedFullscreen ?? true, undefined,
     `dsh-tui startup failed: ${message}`, () => disposeRootAndExit(ctx, 1))
