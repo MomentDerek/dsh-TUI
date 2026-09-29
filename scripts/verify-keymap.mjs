@@ -25,7 +25,10 @@
  * Listener order (#1155): on the FIRST mount — before any screen has
  * unmounted and remounted the composer — Ctrl+E (showAll) and Ctrl+A
  * (dashboard) must be consumed by Chat alone; the editor's readline
- * line-end / line-start bindings must not also move the caret.
+ * line-end / line-start bindings must not also move the caret. A fresh
+ * fullscreen mount then proves Ctrl+E really toggled show-all (the row
+ * hidden behind MessageList's render cap appears), which the caret probe
+ * alone cannot tell apart from a press nobody handled.
  *
  * Run after build: `node scripts/verify-keymap.mjs`
  */
@@ -33,7 +36,7 @@ import { Writable, PassThrough } from 'node:stream'
 import React from 'react'
 import xtermHeadless from '@xterm/headless'
 const { Terminal: XTerm } = xtermHeadless
-import { render } from '../lib/types/ui.js'
+import { render, AlternateScreen } from '../lib/types/ui.js'
 import { Chat } from '../lib/types/screens/Chat.js'
 import { setLang } from '../lib/types/i18n.js'
 import {
@@ -136,8 +139,8 @@ delete process.env.VISUAL
 delete process.env.EDITOR
 const term = new XTerm({ cols: 110, rows: 34, scrollback: 100, allowProposedApi: true })
 
-function makeStreams() {
-  const stdout = new Writable({ write(chunk, _enc, cb) { term.write(String(chunk), cb) } })
+function makeStreams(target = term) {
+  const stdout = new Writable({ write(chunk, _enc, cb) { target.write(String(chunk), cb) } })
   stdout.columns = 110
   stdout.rows = 34
   stdout.isTTY = true
@@ -237,7 +240,7 @@ setLang('en')
 
 const screen = () => viewportLines(term).join('\n')
 
-const promptText = () => {
+const promptText = (view = screen()) => {
   // Anchored at line start: the input border rows and hint lines can carry
   // a mid-line '>', but only the prompt row carries the '❯' glyph.
   //
@@ -246,7 +249,7 @@ const promptText = () => {
   // matches and every draft reads as empty. The EMPTY prompt renders box-drawing
   // decoration on the same row and the row ends with the ⛶ expand-editor
   // affordance — strip those before comparing content, along with the ⌸ itself.
-  const match = screen().match(/^\s*⌸?\s*[❯]\s*(.*)$/m)
+  const match = view.match(/^\s*⌸?\s*[❯]\s*(.*)$/m)
   const raw = match === null ? '' : (match[1] ?? '')
   return raw.replace(/[╭╮╰╯─│═║⛶⌸]+/g, '').trim()
 }
@@ -269,7 +272,7 @@ await settle(() => promptText() === 'abc')
 stdin.write('\x1b[H')
 stdin.write('\x05')
 stdin.write('Y')
-check('first-mount ctrl+e toggles show-all without moving the caret', await settled(() => promptText() === 'Yabc'), JSON.stringify(promptText()))
+check('first-mount ctrl+e does not move the caret', await settled(() => promptText() === 'Yabc'), JSON.stringify(promptText()))
 stdin.write('\x03')
 await settle(() => promptText() === '')
 stdin.write('abc')
@@ -324,5 +327,49 @@ check('default ctrl+g no longer matches after remap', !actionMatches('editor', '
 resetKeymapOverrides()
 
 instance.unmount()
+
+// ---- fresh fullscreen mount: first-mount Ctrl+E really toggles show-all ---
+// The caret probe above cannot tell "Chat consumed Ctrl+E" from "nobody
+// handled it". Show-all is observable only with a transcript longer than
+// MessageList's render cap (120 rows) — its oldest row stays hidden until
+// the toggle — and only where the transcript is live: inline history never
+// repaints rows above it, so this half runs fullscreen. A fresh mount is
+// itself first-mount listener order.
+const HIDDEN_ROW = 'keymap-showall-hidden-row'
+rows.push({ id: 9000, kind: 'notice', text: HIDDEN_ROW })
+for (let i = 1; i <= 120; i++) rows.push({ id: 9000 + i, kind: 'notice', text: `keymap filler ${i}` })
+const fsTerm = new XTerm({ cols: 110, rows: 34, scrollback: 0, allowProposedApi: true })
+const fs = makeStreams(fsTerm)
+const fsInstance = await render(
+  React.createElement(AlternateScreen, null, React.createElement(Chat, {
+    channel,
+    questionStore: { subscribe: () => () => {}, getSnapshot: () => null, answerCurrent: () => {} },
+    // The star prompt reads the real usage stats; it must not steal keys here.
+    starPrompt: null,
+    fullscreen: true,
+    onExit() {},
+  })),
+  { stdout: fs.stdout, stderr: fs.stderr, stdin: fs.stdin, exitOnCtrlC: false, patchConsole: false },
+)
+const fsScreen = () => viewportLines(fsTerm).join('\n')
+/** PageUp until the transcript's top is on screen (the page size is the layout's). */
+const scrollToTop = async () => {
+  for (let i = 0; i < 12; i++) fs.stdin.write('\x1b[5~')
+  await sleep(300) // 固定窗:pacing 翻页没有逐页锚点，最终画面由下方 settled 断言
+}
+await settle(() => fsScreen().includes('keymap filler 120'))
+await scrollToTop()
+const capped = await settled(() => /previous messages|显示前/.test(fsScreen()) && !fsScreen().includes(HIDDEN_ROW))
+check('fullscreen: the capped transcript shows the divider, not its oldest row', capped, capped ? '' : fsScreen())
+fs.stdin.write('abc')
+await settle(() => promptText(fsScreen()) === 'abc')
+fs.stdin.write('\x1b[H')
+fs.stdin.write('\x05')
+fs.stdin.write('Y')
+check('fullscreen first-mount ctrl+e does not move the caret', await settled(() => promptText(fsScreen()) === 'Yabc'), JSON.stringify(promptText(fsScreen())))
+await scrollToTop()
+const shownAll = await settled(() => fsScreen().includes(HIDDEN_ROW))
+check('fullscreen first-mount ctrl+e toggles show-all', shownAll, shownAll ? '' : fsScreen())
+fsInstance.unmount()
 console.log(failed === 0 ? '\nall keymap checks passed' : `\n${failed} keymap check(s) failed`)
 process.exit(failed === 0 ? 0 : 1)

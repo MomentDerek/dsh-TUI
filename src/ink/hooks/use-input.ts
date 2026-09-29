@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useEventCallback } from 'usehooks-ts'
 import type { InputEvent, Key } from '../events/input-event.js'
 import { isInputSuppressed } from '../input-suppression.js'
@@ -103,7 +103,9 @@ const useInput = (inputHandler: Handler, options: Options = {}): void => {
     }
   })
 
-  const prepend = options.prepend === true
+  // Mount-time value, per the option's contract: a later change must not
+  // re-register the listener and move its slot.
+  const prepend = useRef(options.prepend === true).current
   useEffect(() => {
     if (prepend) internal_eventEmitter?.prependListener('input', handleData)
     else internal_eventEmitter?.on('input', handleData)
@@ -111,7 +113,7 @@ const useInput = (inputHandler: Handler, options: Options = {}): void => {
     return () => {
       internal_eventEmitter?.removeListener('input', handleData)
     }
-  }, [internal_eventEmitter, handleData, prepend])
+  }, [internal_eventEmitter, handleData])
 }
 
 export default useInput
