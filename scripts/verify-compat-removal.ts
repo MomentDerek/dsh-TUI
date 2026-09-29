@@ -171,8 +171,8 @@ const pluginHostExport = manifest.exports?.['./plugin-host']
 if (typeof pluginHostExport === 'string' || pluginHostExport === undefined) {
   failures.push('package.json ./plugin-host must be an export object')
 } else {
-  if (pluginHostExport.import !== './lib/types/plugin-host.js') {
-    failures.push('package.json ./plugin-host import must point at ./lib/types/plugin-host.js')
+  if (pluginHostExport.import !== './lib/bundle/plugin-host.js') {
+    failures.push('package.json ./plugin-host import must point at ./lib/bundle/plugin-host.js')
   }
   if (pluginHostExport.types !== './lib/types/plugin-host.d.ts') {
     failures.push('package.json ./plugin-host types must point at ./lib/types/plugin-host.d.ts')

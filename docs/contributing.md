@@ -103,7 +103,10 @@ Discussions。人不能用「私下批准」、关联 issue 或粘贴维护者�
 - `.github/scripts/pr-intake/`：PR 入口门禁（语言、关单文案、白名单、issue-link）。
   workflow 只编排；`pr-gate.yml` 必须 checkout 默认分支，不能跑 PR 头。
 - `lib/`：由 `src/` 生成、忽略入库并随 npm 分发的 JavaScript、声明与声明映射。
-  `./invariant` 也直接使用 `lib/types/dsh-adapter/invariant.js` 的编译结果。
+  `lib/types/` 是 tsc 逐文件产物（声明、回归脚本与位置敏感资产的锚点）；
+  `lib/bundle/` 是 `scripts/bundle-lib.mjs` 用 rolldown 从 `lib/types/` 打出的
+  运行时入口，`main` 与 `exports` 的 import/default 目标（含 `./invariant`）都指向它，
+  `types` 仍指向 `lib/types/`。
 - `README.md`（英文，默认门面）与 `README_ZH.md`（中文）：双语用户文档。
   行为、配置、快捷键与限制必须两版同步。
 
@@ -170,7 +173,9 @@ Cordis config
 常规构建与类型检查关口：`pnpm build`。
 
 - 该命令先删除整个 `lib/`，再用 `tsc -p tsconfig.json` 把 `src/` 输出到
-  `lib/types/`，最后运行适配边界、上游契约与 patch surface 门禁。
+  `lib/types/`，接着用 rolldown 打包出 `lib/bundle/`（启动时少加载上千个模块
+  文件；规则见 `scripts/bundle-lib.mjs` 头部），最后运行适配边界、上游契约与
+  patch surface 门禁。
 - `prepare` 生命周期只服务**源码检出场景**的自举编译（vendor 子模块缺失时
   快速失败，见 scripts/prepare-guard.mjs）。
 - Git URL 依赖安装自 vendoring（#308）起三重阻断（workspace 依赖/子模块/
@@ -220,6 +225,7 @@ CI 在安装后运行：
 ```sh
 pnpm compile                               # 从干净目录生成运行时
 test -f lib/types/index.js
+test -f lib/bundle/index.js
 pnpm verify:build                          # 构建门禁，不重复编译
 pnpm verify:package                        # npm tarball 与入口 smoke test
 node --import tsx/esm scripts/repro-askpanel.tsx

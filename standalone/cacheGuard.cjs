@@ -47,6 +47,7 @@ const MANIFEST_ENTRIES = [
   'node_modules/@deepseek-ai/cordis/lib/index.js',
   'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/index.js',
   'node_modules/@deepseek-harness-tui/dsh-tui/lib/types/update.js',
+  'node_modules/@deepseek-harness-tui/dsh-tui/lib/bundle/*.js',
   'node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js',
   'node_modules/@deepseek-harness-tui/dsh-tui/package.json',
   'node_modules/@deepseek-harness-tui/dsh-tui/cordis.patch.yml',

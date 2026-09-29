@@ -918,8 +918,9 @@ check1('decision permission map is immutable',
     mirror.indexOf('dsh-tui-plugin-host') !== -1 && mirror.indexOf('dsh-tui-plugin-host') < mirror.indexOf('dsh-tui-extensions'))
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   check1('exports exposes ./plugin-host',
-    manifest.exports?.['./plugin-host']?.import === './lib/types/plugin-host.js')
+    manifest.exports?.['./plugin-host']?.import === './lib/bundle/plugin-host.js')
   check1('compiled entry exists after build', existsSync(join(root, 'lib/types/plugin-host.js')))
+  check1('bundled entry exists after build', existsSync(join(root, 'lib/bundle/plugin-host.js')))
   const publicHostShim = readFileSync(join(root, 'src/plugin-host.ts'), 'utf8')
   check1('public plugin-host shim exports the narrowed capability type',
     publicHostShim.includes('TuiPluginHost') && !publicHostShim.includes('TuiPluginHostRuntime'))

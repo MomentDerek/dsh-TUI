@@ -42,56 +42,56 @@
     "dsh-tui": "./bin/dsh-tui.js",
     "dst": "./bin/dsh-tui.js"
   },
-  "main": "lib/types/index.js",
+  "main": "lib/bundle/index.js",
   "types": "lib/types/index.d.ts",
   "exports": {
     ".": {
       "types": "./lib/types/index.d.ts",
-      "import": "./lib/types/index.js"
+      "import": "./lib/bundle/index.js"
     },
     "./working-activity": {
       "types": "./lib/types/working-activity.d.ts",
-      "import": "./lib/types/working-activity.js"
+      "import": "./lib/bundle/working-activity.js"
     },
     "./oauth": {
       "types": "./lib/types/oauth.d.ts",
-      "import": "./lib/types/oauth.js"
+      "import": "./lib/bundle/oauth.js"
     },
     "./workspaces": {
       "types": "./lib/types/workspaces.d.ts",
-      "import": "./lib/types/workspaces.js"
+      "import": "./lib/bundle/workspaces.js"
     },
     "./command-trees": {
       "types": "./lib/types/command-trees.d.ts",
-      "import": "./lib/types/command-trees.js"
+      "import": "./lib/bundle/command-trees.js"
     },
     "./settings-sections": {
       "types": "./lib/types/settings-sections.d.ts",
-      "import": "./lib/types/settings-sections.js"
+      "import": "./lib/bundle/settings-sections.js"
     },
     "./scenes": {
       "types": "./lib/types/scenes.d.ts",
-      "import": "./lib/types/scenes.js"
+      "import": "./lib/bundle/scenes.js"
     },
     "./extensions": {
       "types": "./lib/types/extensions.d.ts",
-      "import": "./lib/types/extensions.js"
+      "import": "./lib/bundle/extensions.js"
     },
     "./plugin-host": {
       "types": "./lib/types/plugin-host.d.ts",
-      "import": "./lib/types/plugin-host.js"
+      "import": "./lib/bundle/plugin-host.js"
     },
     "./api": {
       "types": "./lib/types/api.d.ts",
-      "import": "./lib/types/api.js"
+      "import": "./lib/bundle/api.js"
     },
     "./jsx-runtime": {
       "types": "./lib/types/jsx-runtime.d.ts",
-      "import": "./lib/types/jsx-runtime.js"
+      "import": "./lib/bundle/jsx-runtime.js"
     },
     "./invariant": {
       "types": "./lib/types/dsh-adapter/invariant.d.ts",
-      "default": "./lib/types/dsh-adapter/invariant.js"
+      "default": "./lib/bundle/invariant.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
@@ -114,7 +114,8 @@
     "clean": "node scripts/clean-lib.mjs",
     "build:dsh-std": "pnpm --dir vendor/dsh-std install --frozen-lockfile --ignore-scripts && pnpm --dir vendor/dsh-std --filter @dsh-std/core --filter @dsh-std/manifest --filter @dsh-std/connection --filter @dsh-std/presentation --filter @dsh-std/command --filter @dsh-std/storage --filter @dsh-std/messages -r build",
     "build:dsh-auth": "pnpm --dir dsh-auth install --frozen-lockfile --ignore-scripts && pnpm --dir dsh-auth run build",
-    "compile": "npm run build:dsh-std && npm run build:dsh-auth && npm run clean && tsc -p tsconfig.json",
+    "compile": "npm run build:dsh-std && npm run build:dsh-auth && npm run clean && tsc -p tsconfig.json && npm run bundle",
+    "bundle": "node scripts/bundle-lib.mjs",
     "compile:src": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "prepare": "node scripts/prepare-guard.mjs && npm run compile",
@@ -482,6 +483,7 @@
     "@types/react-reconciler": "^0.33.0",
     "@types/semver": "^7.0.0",
     "@xterm/headless": "^6.0.0",
+    "rolldown": "^1.2.11",
     "tar": "^7.5.22",
     "tsx": "^4.0.0",
     "typescript": "^6.0.3"

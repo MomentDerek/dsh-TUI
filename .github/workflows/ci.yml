@@ -146,6 +146,8 @@ jobs:
         run: |
           test -f lib/types/index.js
           test -f lib/types/dsh-adapter/invariant.js
+          test -f lib/bundle/index.js
+          test -f lib/bundle/invariant.js
 
       # 编译产物交给下游（gates 与各测试组经 needs: build 下载复用，不再各自
       # prepare-compile）。@dsh-std 运行时依赖只有 workspace 内部链接，
@@ -582,9 +584,11 @@ jobs:
       - run: |
           test -f lib/types/index.js
           test -f lib/types/dsh-adapter/invariant.js
+          test -f lib/bundle/index.js
+          test -f lib/bundle/invariant.js
 
       - name: Smoke-import compiled entry
-        run: node -e "import('./lib/types/index.js').then(() => console.log('entry import ok')).catch(e => { console.error(e); process.exit(1) })"
+        run: node -e "import('./lib/bundle/index.js').then(() => console.log('entry import ok')).catch(e => { console.error(e); process.exit(1) })"
 
       # Regression for the macOS Unix-domain socket path limit.
       # Force an intentionally long TMPDIR: before the Darwin-specific

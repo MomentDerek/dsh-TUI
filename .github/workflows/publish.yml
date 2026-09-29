@@ -46,6 +46,8 @@ jobs:
         run: |
           test -f lib/types/index.js
           test -f lib/types/dsh-adapter/invariant.js
+          test -f lib/bundle/index.js
+          test -f lib/bundle/invariant.js
 
       - run: pnpm verify:build
 

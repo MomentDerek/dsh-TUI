@@ -133,8 +133,12 @@ boundaries and helpers over introducing parallel abstractions.
   issue-link). Workflows only orchestrate; `pr-gate.yml` must check out the
   default branch and must not run the PR head.
 - `lib/`: ignored JavaScript, declarations, and declaration maps generated from
-  `src/` and shipped to npm. `./invariant` uses the compiled
-  `lib/types/dsh-adapter/invariant.js` entry as well.
+  `src/` and shipped to npm. `lib/types/` is the per-file tsc output
+  (declarations, the anchor for regression scripts and location-sensitive
+  assets); `lib/bundle/` is the runtime entry set that `scripts/bundle-lib.mjs`
+  builds from `lib/types/` with rolldown. `main` and every `exports`
+  import/default target (including `./invariant`) point at `lib/bundle/`, while
+  `types` stays on `lib/types/`.
 - `README.md` (English, the default front page) and `README_ZH.md` (Chinese):
   the bilingual user documentation. Keep behavior, configuration, shortcuts,
   and limitations synchronized between them.
@@ -227,7 +231,9 @@ pnpm build
 ```
 
 - This removes the complete `lib/` directory, runs `tsc -p tsconfig.json` to
-  emit `src/` into `lib/types/`, and then checks the adapter boundary, upstream
+  emit `src/` into `lib/types/`, bundles `lib/bundle/` from it with rolldown
+  (startup loads a thousand fewer module files; rules live in the header of
+  `scripts/bundle-lib.mjs`), and then checks the adapter boundary, upstream
   contract, and patch surface.
 - The `prepare` lifecycle serves **source-checkout bootstrapping only** (it
   fails fast when the vendored submodules are absent — see scripts/prepare-guard.mjs).
@@ -299,6 +305,7 @@ CI runs these commands after installation:
 ```sh
 pnpm compile                               # generate a clean runtime
 test -f lib/types/index.js
+test -f lib/bundle/index.js
 pnpm verify:build                          # build gates without recompiling
 pnpm verify:package                        # npm tarball and entry smoke test
 node --import tsx/esm scripts/repro-askpanel.tsx
