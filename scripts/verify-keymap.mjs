@@ -22,6 +22,11 @@
  * the prompt — and a remapped editor key (alt+g) must open the external
  * editor path rather than inserting 'g'.
  *
+ * Listener order (#1155): on the FIRST mount — before any screen has
+ * unmounted and remounted the composer — Ctrl+E (showAll) and Ctrl+A
+ * (dashboard) must be consumed by Chat alone; the editor's readline
+ * line-end / line-start bindings must not also move the caret.
+ *
  * Run after build: `node scripts/verify-keymap.mjs`
  */
 import { Writable, PassThrough } from 'node:stream'
@@ -214,6 +219,7 @@ const channel = {
   resumeTo: async () => ({ ok: false, reason: 'unavailable' }),
   newSession: async () => false,
   compact() {},
+  subagents: [],
 }
 
 const { stdout, stderr, stdin } = makeStreams()
@@ -253,6 +259,30 @@ check('plain v types', await settled(() => promptText() === 'v'), JSON.stringify
 // Ctrl+C clears the non-empty prompt (idle single press).
 stdin.write('\x03')
 check('ctrl+c clears the prompt', await settled(() => promptText() === ''), JSON.stringify(promptText()))
+
+// Listener order (#1155). Nothing has remounted the composer yet, so this
+// is the first-mount order: Chat must still own Ctrl+E / Ctrl+A. The caret
+// probe is a typed marker — if the readline binding also fired, the marker
+// lands at the line end / line start instead of where the caret was.
+stdin.write('abc')
+await settle(() => promptText() === 'abc')
+stdin.write('\x1b[H')
+stdin.write('\x05')
+stdin.write('Y')
+check('first-mount ctrl+e toggles show-all without moving the caret', await settled(() => promptText() === 'Yabc'), JSON.stringify(promptText()))
+stdin.write('\x03')
+await settle(() => promptText() === '')
+stdin.write('abc')
+await settle(() => promptText() === 'abc')
+stdin.write('\x1b[D')
+stdin.write('\x01')
+check('first-mount ctrl+a opens the subagent dashboard', await settled(() => /Subagent Dashboard|子代理面板/.test(screen())))
+stdin.write('\x1b')
+await settle(() => promptText() === 'abc')
+stdin.write('X')
+check('first-mount ctrl+a leaves the caret where it was', await settled(() => promptText() === 'abXc'), JSON.stringify(promptText()))
+stdin.write('\x03')
+await settle(() => promptText() === '')
 
 // Alt+V arrives as ESC v. Whatever the clipboard holds, the paste branch
 // must consume the key: a prompt change or a clipboard notification are

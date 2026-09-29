@@ -4070,6 +4070,13 @@ export function Chat({
       // (wired to the toast below).
       event.stopImmediatePropagation()
     }
+  }, {
+    // Chat's global layer must see every key before the composer and the
+    // panels it hosts (the handler's yield guards and readline shadowing
+    // both assume it), whether or not they mounted in the same
+    // commit — child effects run first, so append order would put a
+    // first-mount PromptInput ahead of Chat (#1155).
+    prepend: true,
   })
 
   // Working-activity line (spinner slot): context-pressure prefix shares the
