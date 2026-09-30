@@ -53,6 +53,12 @@ export interface BootSlot {
    * from the `booting` phase.
    */
   ready(live: LiveChat): void
+  /**
+   * The plugin has taken the slot (`takePrebootSlot`): from here on its
+   * startup path owns the boot screen's fate — going live, a renderer
+   * mismatch re-mount, or `handleStartupError`. Idempotent.
+   */
+  claim(): void
   /** The composer's current text (a mismatch fallback carries it into a fresh mount). */
   draft(): string
   /** Unmount and release the renderer (terminal restored). Idempotent. */
@@ -145,6 +151,12 @@ export interface MountChatHostOptions {
    * (a ~1s synchronous block) before the screen is on.
    */
   firstFrameWaitMs?: number
+  /**
+   * Lifecycle edges of a slot mounted in its boot phase: `claimed` once the
+   * plugin takes it, then `ready` or `disposed` when it leaves `booting`.
+   * The `dst` preload arms its boot watchdog and exit backstop on these.
+   */
+  onLifecycle?: (event: 'claimed' | 'ready' | 'disposed') => void
 }
 
 /**
@@ -157,6 +169,7 @@ export async function mountChatHost(options: MountChatHostOptions): Promise<Boot
   const store = createHostStore(options.initial.props)
   const promptControllerRef: React.RefObject<PromptController | null> = { current: null }
   let phase: BootSlotPhase = options.initial.channel.ready ? 'ready' : 'booting'
+  let claimed = false
   let firstFramePainted: () => void = () => {}
   const firstFrame = new Promise<void>(resolve => {
     firstFramePainted = resolve
@@ -200,6 +213,12 @@ export async function mountChatHost(options: MountChatHostOptions): Promise<Boot
       // already sees the live stores and callbacks.
       store.set(live.props)
       deferred.resolve(live.channel)
+      options.onLifecycle?.('ready')
+    },
+    claim() {
+      if (claimed) return
+      claimed = true
+      options.onLifecycle?.('claimed')
     },
     draft() {
       return promptControllerRef.current?.text() ?? ''
@@ -207,6 +226,9 @@ export async function mountChatHost(options: MountChatHostOptions): Promise<Boot
     dispose() {
       if (phase === 'disposed') return
       phase = 'disposed'
+      // Before the teardown: a listener must never outlive the phase it
+      // guards, even when unmount throws (revoked TTY).
+      options.onLifecycle?.('disposed')
       instance.unmount()
       instance.cleanup()
     },

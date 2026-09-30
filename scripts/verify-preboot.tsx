@@ -24,7 +24,8 @@
  *      (a later real session switch still repaints).
  *   6. FALLBACK + EXIT: `draft()` + `dispose()` carry the text into a fresh
  *      slot mounted already live (renderer mismatch path); a double Ctrl+C in
- *      the boot phase exits with 0 (a user exit, like the live funnel); the published slot is taken exactly once.
+ *      the boot phase exits with 0 (a user exit, like the live funnel); the
+ *      published slot is taken exactly once.
  *   7. FATAL: an uncaught error while dsh is still loading tears the boot
  *      screen down, reaches stderr and exits 1 (the #185 process guard must
  *      not rethrow it from its listener — exit 7, terminal left in alt-screen).
@@ -33,6 +34,19 @@
  *      runs); the session screen opened during boot gains its foreign-source
  *      tabs at ready; a draft (vim mode, or text parked via the prompt row's
  *      ⌸ in fullscreen) survives Esc back to the composer after ready.
+ *   9. LANDING (M4): the preload makes the same workspace-home decision the
+ *      plugin makes (home unseen + ordinary launch), so the FIRST frame is
+ *      the home screen and the handoff does not flip it; a resume/workspace
+ *      target or a first prompt keeps the chat screen.
+ *  10. RENDERER DECISION (M6): a renderer choice persisted by the plugin
+ *      (the profile's cordis.yml layer) is preferred when settings.yaml does
+ *      not set the key, so the boot slot already matches and the plugin can
+ *      take it live instead of re-mounting; settings.yaml still wins.
+ *  11. WATCHDOG (M5): a boot slot nobody takes (the profile has no dsh-tui
+ *      row, or its config failed validation) tears the boot screen down,
+ *      prints why on the real stderr and exits non-zero; a slot that was
+ *      taken or went live disarms it; a process exit while still booting
+ *      restores the terminal and never reports success.
  *
  * Run: node --import tsx/esm scripts/verify-preboot.tsx
  */
@@ -44,7 +58,8 @@ const home = fileURLToPath(new URL('../node_modules/.cache/dsh-tui-preboot-home'
 process.env.HOME = home
 process.env.USERPROFILE = home
 
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
 import xterm from '@xterm/headless'
@@ -52,6 +67,20 @@ import type { ChannelUi } from '../src/adapter/ports/channel-ui.js'
 import { settled, sleep } from './lib/term-test.mjs'
 
 mkdirSync(home, { recursive: true })
+// The test HOME persists across runs: start every run from the same prefs.
+const dataDir = join(home, '.dsh-tui')
+mkdirSync(dataDir, { recursive: true })
+rmSync(join(dataDir, 'renderer.json'), { force: true })
+const homePrefsFile = join(dataDir, 'home.json')
+/** Sections 4–7 exercise the chat screen: the one-shot home landing is spent. */
+const setHomeSeenForTest = (seen: boolean): void => {
+  if (seen) writeFileSync(homePrefsFile, `${JSON.stringify({ seen: true })}\n`)
+  else rmSync(homePrefsFile, { force: true })
+}
+setHomeSeenForTest(true)
+delete process.env.DSH_TUI_RESUME_SESSION
+delete process.env.DSH_TUI_WORKSPACE_TARGET
+delete process.env.DSH_TUI_PREBOOT_TIMEOUT_MS
 const dshHome = join(home, '.dsh')
 mkdirSync(dshHome, { recursive: true })
 writeFileSync(join(dshHome, 'settings.yaml'), [
@@ -126,6 +155,9 @@ class FakeStdin extends PassThrough {
 const terminal = new XTerm({ cols: COLS, rows: ROWS, allowProposedApi: true })
 const stdout = new FakeStdout(terminal)
 const stdin = new FakeStdin()
+// One stdin is shared by every mount below, and the renderer leaves an
+// `error` listener behind per instance; the count is the fixture, not a leak.
+stdin.setMaxListeners(0)
 const stderr = new FakeStderr()
 const screen = (): string => {
   const buffer = terminal.buffer.active
@@ -215,6 +247,14 @@ check('settings: terminalImages defaults on', decided.terminalImages === true)
 check('settings: effortDefault wins', decided.effort === 'high', String(decided.effort))
 const defaults = decidePreboot(readTuiSettingsLayer(join(home, 'no-such-dsh-home')))
 check('settings: missing file → schema defaults', defaults.fullscreen && defaults.terminalImages && !defaults.minimalUi)
+// M6: the plugin's persisted renderer decision (cordis.yml layer) fills in
+// where settings.yaml is silent; an explicit settings key still wins.
+{
+  const quiet = decidePreboot({}, { fullscreen: false, terminalImages: false })
+  check('renderer: persisted decision preferred when settings is silent', quiet.fullscreen === false && quiet.terminalImages === false)
+  const loud = decidePreboot({ fullscreen: true, terminalImages: true }, { fullscreen: false, terminalImages: false })
+  check('renderer: settings.yaml key beats the persisted decision', loud.fullscreen === true && loud.terminalImages === true)
+}
 
 // ── 2. deferred channel ─────────────────────────────────────────────────────
 {
@@ -353,7 +393,9 @@ await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 })
 await type('\x03')
 check('ctrl+c: first press only arms', await settled(() => screen().includes('again'), { timeoutMs: 2000 }) && exitCode === undefined, screen())
 await type('\x03')
-check('ctrl+c: second press exits 0 (user exit, not a crash)', await settled(() => exitCode === 0, { timeoutMs: 2000 }), String(exitCode))
+// A deliberate exit, so 0 like the live funnel (the exit backstop must not
+// turn it into a failure).
+check('ctrl+c: second press exits 0 (user exit)', await settled(() => exitCode === 0, { timeoutMs: 2000 }), String(exitCode))
 check('ctrl+c: renderer torn down', third.phase === 'disposed' && instances.get(stdout as never) === undefined)
 takePrebootSlot()
 
@@ -481,6 +523,169 @@ takePrebootSlot()
   check('boot cmd: /exit during boot exits 0', await settled(() => exitCode === 0, { timeoutMs: 2000 }), `${String(exitCode)}\n${screen()}`)
   check('boot cmd: /exit tears the boot screen down', exiting.phase === 'disposed', exiting.phase)
   takePrebootSlot()
+}
+
+// ── 9. landing page decided before the first frame (M4) ─────────────────────
+const HOME_TITLE = '▣ Sessions'
+{
+  setHomeSeenForTest(false)
+  const landing = await mountPreboot({ dshHome, renderOptions, argv: [], exit: () => {} })
+  const sawHome = await settled(() => screen().includes(HOME_TITLE), { timeoutMs: 3000 })
+  const frames = [screen()]
+  check('landing: first frame is the workspace home when it is unseen', sawHome && !screen().includes(BOOT_HINT), screen())
+  const liveLanding = makeLiveChannel()
+  takePrebootSlot()
+  landing.ready({ channel: liveLanding.channel, props: { questionStore: new QuestionStore(), onExit: () => {}, openHomeOnBoot: true } })
+  for (let i = 0; i < 6; i += 1) {
+    await sleep(40) // 固定窗:探针 逐帧采样交接后的屏幕，断言首页不被翻走
+    frames.push(screen())
+  }
+  check('landing: home stays put across the handoff (no flip)', frames.every(frame => frame.includes(HOME_TITLE)), frames.find(frame => !frame.includes(HOME_TITLE)) ?? '')
+  landing.dispose()
+
+  // The user closed the boot-time home (marking it seen, so the plugin says
+  // `false`) and reopened it: the handoff must not take it away.
+  setHomeSeenForTest(false)
+  const reopened = await mountPreboot({ dshHome, renderOptions, argv: [], exit: () => {} })
+  await settled(() => screen().includes(HOME_TITLE), { timeoutMs: 3000 })
+  await type('\x1b')
+  const closedHome = await settled(() => !screen().includes(HOME_TITLE) && screen().includes(BOOT_HINT), { timeoutMs: 2000 })
+  await type('/home')
+  await type('\r')
+  const reopenedHome = await settled(() => screen().includes(HOME_TITLE), { timeoutMs: 2000 })
+  takePrebootSlot()
+  reopened.ready({ channel: makeLiveChannel().channel, props: { questionStore: new QuestionStore(), onExit: () => {}, openHomeOnBoot: false } })
+  const reopenedFrames: string[] = []
+  for (let i = 0; i < 6; i += 1) {
+    await sleep(40) // 固定窗:探针 逐帧采样交接后的屏幕，断言用户重开的主页不被关掉
+    reopenedFrames.push(screen())
+  }
+  check('landing: a home the user reopened during boot survives a host `false`', closedHome && reopenedHome && reopenedFrames.every(frame => frame.includes(HOME_TITLE)), `${closedHome} ${reopenedHome}\n${reopenedFrames.find(frame => !frame.includes(HOME_TITLE)) ?? ''}`)
+  reopened.dispose()
+
+  // A seeded home nobody touched follows the host's `false` (a literal
+  // cordis.yml target the preload could not see).
+  setHomeSeenForTest(false)
+  const overruled = await mountPreboot({ dshHome, renderOptions, argv: [], exit: () => {} })
+  await settled(() => screen().includes(HOME_TITLE), { timeoutMs: 3000 })
+  takePrebootSlot()
+  overruled.ready({ channel: makeLiveChannel().channel, props: { questionStore: new QuestionStore(), onExit: () => {}, openHomeOnBoot: false } })
+  check('landing: an untouched seeded home follows a host `false`', await settled(() => !screen().includes(HOME_TITLE), { timeoutMs: 2000 }), screen())
+  overruled.dispose()
+
+  const chatFirst = async (name: string, argv: readonly string[]): Promise<void> => {
+    const slotUnderTest = await mountPreboot({ dshHome, renderOptions, argv, exit: () => {} })
+    check(name, await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 }) && !screen().includes(HOME_TITLE), screen())
+    takePrebootSlot()
+    slotUnderTest.dispose()
+  }
+  await chatFirst('landing: --resume keeps the chat screen', ['--profile', 'dsh-tui', '--', '--resume', 'abc123'])
+  await chatFirst('landing: a first prompt keeps the chat screen', ['--profile', 'dsh-tui', '--', 'fix', 'the', 'bug'])
+  process.env.DSH_TUI_WORKSPACE_TARGET = '/tmp'
+  await chatFirst('landing: a workspace target keeps the chat screen', [])
+  delete process.env.DSH_TUI_WORKSPACE_TARGET
+  process.env.DSH_TUI_RESUME_SESSION = 'abc123'
+  await chatFirst('landing: a launcher resume target keeps the chat screen', [])
+  delete process.env.DSH_TUI_RESUME_SESSION
+  setHomeSeenForTest(true)
+}
+
+// ── 10. persisted renderer decision (M6) ────────────────────────────────────
+{
+  // A profile whose cordis.yml says fullscreen: false / terminalImages: false
+  // and a settings.yaml that sets neither key. The plugin recorded its final
+  // decision for this profile on the previous boot.
+  const quietHome = join(home, '.dsh-quiet')
+  mkdirSync(quietHome, { recursive: true })
+  writeFileSync(join(quietHome, 'settings.yaml'), 'dsh-tui:\n  pageMargin: none\n  whale: false\n')
+  writeFileSync(join(dataDir, 'renderer.json'), `${JSON.stringify({ profiles: { 'preboot-test': { fullscreen: false, terminalImages: false } } })}\n`)
+  const bytesBefore = stdout.written.length
+  const matched = await mountPreboot({ dshHome: quietHome, renderOptions, argv: ['--profile', 'preboot-test'], exit: () => {} })
+  check('renderer: boot slot mounted with the persisted decision', matched.fullscreen === false && matched.terminalImages === false, `${matched.fullscreen}/${matched.terminalImages}`)
+  await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 })
+  check('renderer: inline boot screen (no alt-screen enter)', !stdout.written.slice(bytesBefore).includes('\x1b[?1049h'))
+  takePrebootSlot()
+  matched.dispose()
+  const other = await mountPreboot({ dshHome: quietHome, renderOptions, argv: ['--profile', 'some-other-profile'], exit: () => {} })
+  check('renderer: the decision is per profile', other.fullscreen === true && other.terminalImages === true, `${other.fullscreen}/${other.terminalImages}`)
+  takePrebootSlot()
+  other.dispose()
+  rmSync(join(dataDir, 'renderer.json'), { force: true })
+}
+
+// ── 11. boot watchdog + exit backstop (M5) ─────────────────────────────────
+{
+  const exitListeners = process.listenerCount('exit')
+  exitCode = undefined
+  stderr.text = ''
+  const orphan = await mountPreboot({ dshHome, renderOptions, bootTimeoutMs: 250, exit: code => { exitCode = code } })
+  check('watchdog: exit backstop armed while booting', process.listenerCount('exit') > exitListeners)
+  check('watchdog: fires when nobody takes the slot', await settled(() => exitCode !== undefined, { timeoutMs: 3000 }) && exitCode === 1, String(exitCode))
+  check('watchdog: boot screen torn down first', orphan.phase === 'disposed' && instances.get(stdout as never) === undefined)
+  check('watchdog: says why on stderr', stderr.text.includes('dsh-tui') && stderr.text.includes('DSH_TUI_PREBOOT=0'), JSON.stringify(stderr.text))
+  check('watchdog: disarmed after teardown', process.listenerCount('exit') === exitListeners, String(process.listenerCount('exit')))
+  takePrebootSlot()
+
+  exitCode = undefined
+  const adopted = await mountPreboot({ dshHome, renderOptions, bootTimeoutMs: 150, exit: code => { exitCode = code } })
+  takePrebootSlot()
+  await sleep(400) // 固定窗:探针 断言被接管的 slot 不会被看门狗杀掉
+  check('watchdog: a taken slot is left to the plugin', exitCode === undefined && adopted.phase === 'booting', `${String(exitCode)} ${adopted.phase}`)
+  adopted.ready({ channel: makeLiveChannel().channel, props: { questionStore: new QuestionStore(), onExit: () => {} } })
+  check('watchdog: exit backstop released once live', process.listenerCount('exit') === exitListeners, String(process.listenerCount('exit')))
+  adopted.dispose()
+
+  // A real process exit with status 0 while the boot slot is still booting
+  // (dsh returned without ever mounting the TUI): the terminal is restored
+  // and the status is not success.
+  const childFile = join(home, 'preboot-backstop-child.mts')
+  writeFileSync(childFile, [
+    "import { PassThrough, Writable } from 'node:stream'",
+    "class Out extends Writable { columns = 80; rows = 24; isTTY = true; _write(_c: unknown, _e: unknown, cb: () => void) { cb() } }",
+    'class In extends PassThrough { isTTY = true; setRawMode() { return this } }',
+    `const { mountPreboot } = await import(${JSON.stringify(new URL('../src/preboot/mount.ts', import.meta.url).href)})`,
+    `const slot = await mountPreboot({ dshHome: ${JSON.stringify(dshHome)}, argv: [], renderOptions: { stdout: new Out(), stdin: new In(), stderr: new Out(), patchConsole: false } })`,
+    "process.on('exit', () => { process.stderr.write(`PHASE=${slot.phase}\\n`) })",
+    'process.exit(0)',
+    '',
+  ].join('\n'))
+  const child = spawnSync(process.execPath, ['--import', 'tsx/esm', childFile], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: process.env,
+    encoding: 'utf8',
+    timeout: 30000,
+  })
+  check('backstop: exit 0 while booting becomes non-zero', child.status !== 0 && child.status !== null, `status=${child.status} stderr=${child.stderr.slice(-400)}`)
+  check('backstop: boot screen disposed on the way out', child.stderr.includes('PHASE=disposed'), child.stderr.slice(-400))
+
+  // The real stack: Ink's own stderr/console patches installed (default
+  // patchConsole, the process's real stderr). What dsh wrote while the boot
+  // screen swallowed stderr must reach the restored terminal, and the
+  // renderer's reset sequences must be written on the way out.
+  const realFile = join(home, 'preboot-backstop-real.mts')
+  writeFileSync(realFile, [
+    "import { PassThrough, Writable } from 'node:stream'",
+    "let out = ''",
+    "class Out extends Writable { columns = 80; rows = 24; isTTY = true; _write(c: unknown, _e: unknown, cb: () => void) { out += String(c); cb() } }",
+    'class In extends PassThrough { isTTY = true; setRawMode() { return this } }',
+    `const { mountPreboot } = await import(${JSON.stringify(new URL('../src/preboot/mount.ts', import.meta.url).href)})`,
+    `const slot = await mountPreboot({ dshHome: ${JSON.stringify(dshHome)}, argv: [], renderOptions: { stdout: new Out(), stdin: new In() } })`,
+    "process.stderr.write('DSH-STDERR-MARKER\\n')",
+    "console.error('DSH-CONSOLE-MARKER')",
+    "process.on('exit', () => { process.stderr.write(`PHASE=${slot.phase} CURSOR=${out.includes('\\x1b[?25h')} ALT=${out.includes('\\x1b[?1049h') ? out.includes('\\x1b[?1049l') : 'n/a'}\\n`) })",
+    'process.exit(0)',
+    '',
+  ].join('\n'))
+  const real = spawnSync(process.execPath, ['--import', 'tsx/esm', realFile], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: process.env,
+    encoding: 'utf8',
+    timeout: 30000,
+  })
+  check('backstop (real stack): swallowed stderr is replayed', real.stderr.includes('DSH-STDERR-MARKER') && real.stderr.includes('DSH-CONSOLE-MARKER'), real.stderr.slice(-600))
+  check('backstop (real stack): stderr restored after teardown', /PHASE=disposed/.test(real.stderr), real.stderr.slice(-600))
+  check('backstop (real stack): cursor shown and alt-screen left', /CURSOR=true ALT=(true|n\/a)/.test(real.stderr), real.stderr.slice(-600))
+  check('backstop (real stack): exit 0 while booting becomes non-zero', real.status !== 0 && real.status !== null, `status=${real.status}`)
 }
 
 terminal.dispose()

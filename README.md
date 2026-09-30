@@ -172,9 +172,18 @@ row appearing.
   up. No keystrokes are lost.
 - The boot phase reads `fullscreen`, `terminalImages`, page margin, splash
   and language settings from `settings.yaml`. If the profile's `cordis.yml`
-  overrides `fullscreen` or `terminalImages` to a different value, the screen
-  re-mounts once when dsh is up (the draft is carried over) instead of
-  updating in place.
+  overrides `fullscreen` or `terminalImages`, the boot phase uses the values
+  remembered from the previous launch (`~/.dsh-tui/renderer.json`, per
+  profile), so the screen re-mounts at most once after such an edit (the draft
+  is carried over) instead of updating in place.
+- On a first launch the boot screen already opens on the workspace home, the
+  same page the live session lands on.
+- If dsh never hands the boot screen to dsh-tui (for example the profile has
+  no dsh-tui row, or its config fails validation), `dst` restores the
+  terminal after 60 seconds, prints what dsh wrote to stderr and exits
+  non-zero. `DSH_TUI_PREBOOT_TIMEOUT_MS` changes the limit (`0` turns it off).
+  A deliberate exit before the session is up (`/exit`, double Ctrl+C) exits
+  with 0.
 - The fast path falls back to the plain `dsh --profile dsh-tui` launch when the
   `dsh` on `PATH` is not a JavaScript entry or the profile copy has no compiled
   preload.

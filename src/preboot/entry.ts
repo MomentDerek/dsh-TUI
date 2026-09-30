@@ -15,7 +15,24 @@
 import '../force-production-react.js'
 import { PREBOOT_ENV } from './handle.js'
 
-if (process.env[PREBOOT_ENV] === '1' && process.stdout.isTTY === true && process.stdin.isTTY === true) {
+/**
+ * dsh's own print-and-exit switches (the launcher's `dshSwitches`, in the
+ * host prefix before `--`): those runs never mount dsh-tui, and a boot screen
+ * would both hide their output and turn their success into a failed boot.
+ */
+const HOST_INFO_SWITCHES = new Set(['--dump-config', '--dump-default-config', '--dump-config-schema', '-V', '--version'])
+const hostArgs = (() => {
+  const argv = process.argv.slice(2)
+  const separator = argv.indexOf('--')
+  return separator === -1 ? argv : argv.slice(0, separator)
+})()
+
+if (
+  process.env[PREBOOT_ENV] === '1'
+  && process.stdout.isTTY === true
+  && process.stdin.isTTY === true
+  && !hostArgs.some(arg => HOST_INFO_SWITCHES.has(arg))
+) {
   try {
     const { mountPreboot } = await import('./mount.js')
     await mountPreboot()

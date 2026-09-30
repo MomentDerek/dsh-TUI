@@ -56,3 +56,35 @@ export function markHomeSeen(): boolean {
     return false
   }
 }
+
+/** What a launch said about where it wants to land. */
+export interface HomeLandingInputs {
+  /** `readHomePrefs().seen === true`. */
+  readonly homeSeen: boolean
+  /** An explicit resume target (`--resume` / `-c` / the launcher's env handoff). */
+  readonly launchSessionId: string | undefined
+  /** An explicit workspace target (cordis.yml `workspace` / the launcher's env handoff). */
+  readonly requestedWorkspace: string | undefined
+  /** The first prompt from app argv (`''` when none). */
+  readonly initialPrompt: string
+}
+
+/**
+ * Whether this launch lands on the workspace home screen.
+ *
+ * Only an ORDINARY launch is eligible: an explicit resume, an explicit
+ * workspace target, and a first prompt all mean the user already said where
+ * they want to be, and covering that with a browser would be the TUI
+ * second-guessing them.
+ *
+ * The one rule both launch paths use — the plugin at mount, and the `dst`
+ * preload before dsh runs (src/preboot/mount.ts) — so the boot phase's first
+ * frame is already the page the live session shows: a flip at the handoff
+ * would cover what the user typed and turn the next keys into home shortcuts.
+ */
+export function decideOpenHomeOnBoot(inputs: HomeLandingInputs): boolean {
+  return !inputs.homeSeen
+    && inputs.launchSessionId === undefined
+    && inputs.requestedWorkspace === undefined
+    && inputs.initialPrompt === ''
+}

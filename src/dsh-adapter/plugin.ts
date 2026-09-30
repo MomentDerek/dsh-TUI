@@ -34,8 +34,9 @@ import { composePreset, filterMinimalPresetTools, resolvePersistedPreset, resolv
 import { ensurePackagedPresets } from './packaged-presets.js'
 import { registerBundledPresets } from './bundled-presets.js'
 import { ensureLegacySessionEventTypes, snapshotLiveSessionEvents } from './compat/index.js'
-import { clearResumeTarget, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
-import { readHomePrefs } from '../homePrefs.js'
+import { clearResumeTarget, initialPromptFromCmdlineArgs, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
+import { decideOpenHomeOnBoot, readHomePrefs } from '../homePrefs.js'
+import { writeRendererDecision } from '../rendererPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
@@ -100,35 +101,10 @@ let lastBootedFullscreen: boolean | undefined
 // Image preferences also stay fixed across host recomposes until /restart.
 let lastBootedTerminalImages: boolean | undefined
 
-/**
- * Extract the startup prompt from raw app argv, excluding session selectors
- * and Web startup flag values. `--trusted-host` consumes multiple authorities
- * up to the next flag; none of them are prompt text (issue #882). An app-level
- * `--` ends flag parsing; all following tokens are literal prompt text.
- */
-export function initialPromptFromCmdlineArgs(args: readonly string[] | undefined): string {
-  if (args === undefined) return ''
-  const promptArgs: string[] = []
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i]!
-    if (arg === '--') {
-      promptArgs.push(...args.slice(i + 1))
-      break
-    }
-    if (arg === '--resume' || arg === '--host' || arg === '--port') {
-      if (args[i + 1] !== undefined && !args[i + 1]!.startsWith('-')) i += 1
-      continue
-    }
-    if (arg === '--trusted-host') {
-      while (args[i + 1] !== undefined && !args[i + 1]!.startsWith('-')) i += 1
-      continue
-    }
-    if (arg.startsWith('--resume=')) continue
-    if (arg.startsWith('-')) continue
-    promptArgs.push(arg)
-  }
-  return promptArgs.join(' ').trim()
-}
+// Lives next to resumeTargetFromArgv (no upstream imports) so the `dst`
+// preload parses app argv exactly like this plugin; re-exported for the
+// argv regressions that import it from here.
+export { initialPromptFromCmdlineArgs }
 
 /**
  * How this process should treat the TUI frontend, given the terminal it runs on.
@@ -1452,20 +1428,18 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // root tree resolves after settingsReady below.
   await settingsReady
   /**
-   * One-shot workspace-home landing.
-   *
-   * Only an ORDINARY launch is eligible: an explicit resume (`--resume` /
-   * `-c` / the launcher's remembered target), an explicit workspace target, and
-   * a first prompt all mean the user already said where they want to be, and
-   * covering that with a browser would be the TUI second-guessing them. The
-   * `seen` marker is written when the screen is dismissed (see `closeHome`),
-   * so a process that dies before the first frame does not consume it.
+   * One-shot workspace-home landing (the rule: decideOpenHomeOnBoot, shared
+   * with the `dst` preload so the boot phase already paints the same page).
+   * The `seen` marker is written when the screen is dismissed (see
+   * `closeHome`), so a process that dies before the first frame does not
+   * consume it.
    */
-  const homeSeen = readHomePrefs().seen === true
-  const openHomeOnBoot = !homeSeen
-    && launchSessionId === undefined
-    && requestedWorkspace === undefined
-    && initialPrompt === ''
+  const openHomeOnBoot = decideOpenHomeOnBoot({
+    homeSeen: readHomePrefs().seen === true,
+    launchSessionId,
+    requestedWorkspace,
+    initialPrompt,
+  })
   const hostProps: ChatHostProps = {
     renderScene: createChannelSceneOutlet(() => rawChannel.pluginScene),
     questionStore,
@@ -1596,6 +1570,18 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const isRecompose = lastBootedFullscreen !== undefined
   lastBootedFullscreen = bootedFullscreen
   lastBootedTerminalImages = bootedTerminalImages
+  // Record what this profile resolves when settings.yaml is silent (the
+  // cordis.yml layer, which the `dst` preload cannot read), so the next
+  // preload mounts the boot slot with the renderer this branch will pick and
+  // the slot goes live in place instead of re-mounting. The settings user
+  // layer is left out on purpose: the preload reads it itself and it wins
+  // there as it does here. A recompose's values are latched, not resolved.
+  if (!isRecompose) {
+    writeRendererDecision(profile, {
+      fullscreen: config.fullscreen === true,
+      terminalImages: config.terminalImages ?? true,
+    })
+  }
   logMouseDebug('apply mount', { bootedFullscreen, isRecompose })
   // /restart handoff diagnosis: the replacement got all the way to a mounted
   // UI, so any later death is post-boot (and its stderr keeps flowing to the

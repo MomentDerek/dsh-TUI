@@ -140,8 +140,14 @@ channel"——头部、输入框、状态栏都是平时那一套，输入框立
 - dsh 求值模块图的那段时间进程是忙的，这个窗口里输入的按键回显可能停顿最多
   约一秒然后一次补上，不会丢键。
 - 启动态从 `settings.yaml` 读取 `fullscreen`、`terminalImages`、页边距、开屏
-  与语言设置；若 profile 的 `cordis.yml` 把 `fullscreen` 或 `terminalImages`
-  改成了不同的值，dsh 起来时会重挂一次（草稿会带过去）而不是原地更新。
+  与语言设置；若 profile 的 `cordis.yml` 覆盖了 `fullscreen` 或 `terminalImages`，
+  启动态沿用上次启动记下的值（`~/.dsh-tui/renderer.json`，按 profile 区分），
+  因此改动 `cordis.yml` 后最多重挂一次（草稿会带过去）而不是原地更新。
+- 首次启动时开屏直接落在工作区主页，与真实会话落地的页面一致。
+- 若 dsh 始终没有把开屏交给 dsh-tui（例如 profile 没有 dsh-tui 行，或其配置校验
+  失败），`dst` 在 60 秒后恢复终端、打印 dsh 写到 stderr 的内容并以非零码退出；
+  `DSH_TUI_PREBOOT_TIMEOUT_MS` 可调整时限（`0` 关闭）。会话就绪前主动退出
+  （`/exit`、双击 Ctrl+C）仍以 0 退出。
 - `PATH` 上的 `dsh` 不是 JavaScript 入口、或 profile 副本没有编译产物时，自动
   回退到普通的 `dsh --profile dsh-tui` 启动。
 

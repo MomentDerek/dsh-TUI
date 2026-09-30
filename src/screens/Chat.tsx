@@ -599,12 +599,32 @@ export function Chat({
    * on" has not been answered yet. Every later launch starts on the chat
    * screen, and the screen stays reachable.
    */
-  const [supervisorOpen, setSupervisorOpen] = React.useState(openHomeOnBoot === true)
-  // The fast start mounts Chat before the host knows whether this launch is
-  // an ordinary one; the decision then arrives as a prop change, not as the
-  // initial value above. A `true` landing late still opens the home screen.
+  const [supervisorOpen, setSupervisorOpenState] = React.useState(openHomeOnBoot === true)
+  // The fast start mounts Chat before dsh runs, but seeds the value above
+  // with the same rule on the same inputs (decideOpenHomeOnBoot), so the
+  // boot phase's first frame is already the right page and the handoff
+  // changes nothing. Only an input the preload cannot see (a literal
+  // cordis.yml `sessionId`/`workspace`) makes the plugin's decision differ;
+  // it then arrives as a prop change at the handoff. A `true` always opens
+  // the home; a `false` only takes back a screen the landing seed opened and
+  // the user has not touched since — a user who closed the boot-time home
+  // (which marks it seen, so the plugin then says `false`) and reopened it
+  // meant to be there.
+  const landingPropRef = React.useRef(openHomeOnBoot === true)
+  /** The session screen is open only because of the landing seed. */
+  const landingSeededRef = React.useRef(openHomeOnBoot === true)
+  /** Every open/close other than the landing seed: the user's own choice. */
+  const setSupervisorOpen = React.useCallback((open: boolean): void => {
+    landingSeededRef.current = false
+    setSupervisorOpenState(open)
+  }, [])
   React.useEffect(() => {
-    if (openHomeOnBoot === true) setSupervisorOpen(true)
+    const next = openHomeOnBoot === true
+    if (next === landingPropRef.current) return
+    landingPropRef.current = next
+    if (!next && !landingSeededRef.current) return
+    landingSeededRef.current = next
+    setSupervisorOpenState(next)
   }, [openHomeOnBoot])
   /** `/tree` opens the session family tree (pi's Session Tree): every rewind
    *  fork stitched back onto the message it diverged from, hover previews,

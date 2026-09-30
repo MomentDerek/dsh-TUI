@@ -38,12 +38,19 @@ export function peekPrebootSlot(): BootSlot | undefined {
 /**
  * Take the published slot, removing it from `globalThis` so exactly one
  * consumer adopts it (a recompose re-running `apply` must not find a stale
- * slot).
+ * slot). Taking it claims it: the preload's boot watchdog (a slot nobody
+ * takes means the profile never mounted dsh-tui) stands down, and the
+ * plugin's startup path owns the boot screen from here.
  */
 export function takePrebootSlot(): BootSlot | undefined {
   const host = globalThis as HandleHost
   const slot = host[PREBOOT_HANDLE_KEY]
-  if (slot !== undefined) delete host[PREBOOT_HANDLE_KEY]
+  if (slot !== undefined) {
+    delete host[PREBOOT_HANDLE_KEY]
+    // Optional call: the slot is a cross-entry-point contract, and a slot
+    // published by an older preload has no claim().
+    slot.claim?.()
+  }
   return slot
 }
 
