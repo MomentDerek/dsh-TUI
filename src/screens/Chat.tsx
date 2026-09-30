@@ -3922,6 +3922,10 @@ export function Chat({
         setSelectionActive(false)
         setSelectedId(null)
       }
+    } else if (key.escape && promptControllerRef.current?.consumeEscape()) {
+      // Selection/editor Esc stays with the composer even though Chat's
+      // global listener runs first. Consume it before interrupting the turn.
+      event.stopImmediatePropagation()
     } else if (key.escape && channel.working && !helpOpen && !promptControllerRef.current?.vimActive()) {
       // Esc interrupts a running turn (the prompt input
       // only sees esc when idle, where it has the double-tap-clear meaning).

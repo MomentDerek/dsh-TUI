@@ -29,6 +29,8 @@
  * fullscreen mount then proves Ctrl+E really toggled show-all (the row
  * hidden behind MessageList's render cap appears), which the caret probe
  * alone cannot tell apart from a press nobody handled.
+ * While a turn is working, Esc still belongs to the draft editor / input
+ * selection before Chat's interrupt branch, including in one stdin batch.
  *
  * Run after build: `node scripts/verify-keymap.mjs`
  */
@@ -51,7 +53,7 @@ import {
   resetKeymapOverrides,
   setKeymapOverrides,
 } from '../lib/types/utils/keymap.js'
-import { settle, settled, sleep, viewportLines } from './lib/term-test.mjs'
+import { findText, settle, settled, sleep, viewportLines } from './lib/term-test.mjs'
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -340,6 +342,7 @@ rows.push({ id: 9000, kind: 'notice', text: HIDDEN_ROW })
 for (let i = 1; i <= 120; i++) rows.push({ id: 9000 + i, kind: 'notice', text: `keymap filler ${i}` })
 const fsTerm = new XTerm({ cols: 110, rows: 34, scrollback: 0, allowProposedApi: true })
 const fs = makeStreams(fsTerm)
+const fsController = { current: null }
 const fsInstance = await render(
   React.createElement(AlternateScreen, null, React.createElement(Chat, {
     channel,
@@ -347,6 +350,7 @@ const fsInstance = await render(
     // The star prompt reads the real usage stats; it must not steal keys here.
     starPrompt: null,
     fullscreen: true,
+    promptControllerRef: fsController,
     onExit() {},
   })),
   { stdout: fs.stdout, stderr: fs.stderr, stdin: fs.stdin, exitOnCtrlC: false, patchConsole: false },
@@ -370,6 +374,54 @@ check('fullscreen first-mount ctrl+e does not move the caret', await settled(() 
 await scrollToTop()
 const shownAll = await settled(() => fsScreen().includes(HIDDEN_ROW))
 check('fullscreen first-mount ctrl+e toggles show-all', shownAll, shownAll ? '' : fsScreen())
+
+// The global layer is first, but editing-layer Esc must not interrupt a
+// running turn. Drive the real Chat, not the editor-only fixture.
+let cancelCalls = 0
+channel.cancel = () => { cancelCalls += 1 }
+channel.working = true
+rows.length = 0
+channel.emit()
+const DRAFT = 'escape draft'
+const EXPAND_EDITOR = '\x1b[69;6u'
+const editorOpen = () => fsScreen().includes('Draft editor')
+const resetDraft = async () => {
+  fsController.current.clear()
+  fs.stdin.write(DRAFT)
+  await settle(() => promptText(fsScreen()) === DRAFT)
+  cancelCalls = 0
+}
+await resetDraft()
+fs.stdin.write(EXPAND_EDITOR)
+await settle(editorOpen)
+fs.stdin.write('\x1b')
+check('working Esc collapses the editor and keeps the draft', await settled(() => !editorOpen() && promptText(fsScreen()) === DRAFT))
+check('editor Esc does not interrupt the turn', cancelCalls === 0, String(cancelCalls))
+
+await resetDraft()
+// ASCII-only draft/prefix: string indices match terminal columns here.
+const { col, row } = findText(fsTerm, DRAFT)
+fs.stdin.write(`\x1b[<0;${col + 1};${row + 1}M`)
+fs.stdin.write(`\x1b[<32;${col + 4};${row + 1}M`)
+fs.stdin.write(`\x1b[<0;${col + 4};${row + 1}m`)
+const inputSelected = () => {
+  const buffer = fsTerm.buffer.active
+  return buffer.getLine(buffer.baseY + row)?.getCell(col)?.isInverse() === true
+}
+await settle(inputSelected)
+fs.stdin.write('\x1b[27uX')
+check('working Esc clears only the input selection', await settled(() => !inputSelected() && fsController.current.text() === 'escXape draft'))
+check('input-selection Esc does not interrupt the turn', cancelCalls === 0, String(cancelCalls))
+
+await resetDraft()
+// CSI-u Esc is complete, so expansion, Escape, and typing share one batch.
+fs.stdin.write(`${EXPAND_EDITOR}\x1b[27u!`)
+check('batched editor open/Esc keeps the turn and draft', await settled(() => !editorOpen() && promptText(fsScreen()) === `${DRAFT}!` && cancelCalls === 0))
+
+await resetDraft()
+fs.stdin.write('\x1b')
+check('working Esc without an editing layer still interrupts', await settled(() => cancelCalls === 1))
+check('interrupting Esc keeps the unsent draft', fsController.current.text() === DRAFT)
 fsInstance.unmount()
 console.log(failed === 0 ? '\nall keymap checks passed' : `\n${failed} keymap check(s) failed`)
 process.exit(failed === 0 ? 0 : 1)
