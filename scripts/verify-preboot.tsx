@@ -518,6 +518,13 @@ takePrebootSlot()
   check('boot cmd: /lang refused, draft kept', exiting.draft() === '/lang en ' && exitCode === undefined, JSON.stringify(exiting.draft()))
   for (let i = 0; i < '/lang en '.length; i++) await type('\x7f')
   await settled(() => exiting.draft() === '', { timeoutMs: 2000 })
+  // A whole line in one input event (ConPTY / piped input: text + CR) takes
+  // the direct-submit branch, which must refuse like Enter does.
+  await type('piped line\r')
+  await sleep(100) // 固定窗:探针 断言整行输入不被提交、草稿保留
+  check('boot input: a whole piped line is kept as the draft', exiting.draft() === 'piped line' && exitCode === undefined, JSON.stringify(exiting.draft()))
+  for (let i = 0; i < 'piped line'.length; i++) await type('\x7f')
+  await settled(() => exiting.draft() === '', { timeoutMs: 2000 })
   await type('/exit')
   await type('\r')
   check('boot cmd: /exit during boot exits 0', await settled(() => exitCode === 0, { timeoutMs: 2000 }), `${String(exitCode)}\n${screen()}`)

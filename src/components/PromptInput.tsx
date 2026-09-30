@@ -2240,7 +2240,15 @@ export function PromptInput({
           return
         }
       }
-      if (!tryRunCommand(line)) submitText(line)
+      if (tryRunCommand(line)) return
+      // Boot phase: same refusal as handleEnter — keep the line as the draft
+      // instead of submitting it into a channel that cannot send yet.
+      if (channel.ready === false) {
+        setInput(line)
+        channel.notify(t('preboot-not-ready'), { color: 'warning', timeoutMs: 2500 })
+        return
+      }
+      submitText(line)
       return
     }
     if (key.return && isMod(key)) {
