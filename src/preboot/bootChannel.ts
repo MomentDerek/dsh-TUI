@@ -24,6 +24,7 @@ import { normalizeSplashFont } from '../components/splashFonts.js'
 import { t } from '../i18n.js'
 import { DEFAULT_SESSION_MODES } from '../sessionModes.js'
 import {
+  normalizeJobGroupFold,
   normalizePageMargin,
   normalizeScrollGutter,
   normalizeStatusBar,
@@ -152,6 +153,7 @@ export function createBootChannel(snapshot: BootSnapshot): BootChannel {
     activityFrames: undefined,
     diffLayout: 'auto',
     thinkingFold: 'preview',
+    jobGroupFold: normalizeJobGroupFold(settings.jobGroupFold),
     toolBackground: normalizeToolBackground(settings.toolBackground),
     scrollGutter: normalizeScrollGutter(settings.scrollGutter),
     pageMargin: normalizePageMargin(settings.pageMargin),
@@ -299,6 +301,7 @@ export function createBootChannel(snapshot: BootSnapshot): BootChannel {
     //    ready; these keep the port satisfied) ───────────────────────────
     setDiffLayout: () => {},
     setThinkingFold: () => {},
+    setJobGroupFold: () => {},
     setToolBackground: () => {},
     setScrollGutter: () => {},
     setPageMargin: () => {},
