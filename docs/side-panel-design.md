@@ -1,7 +1,7 @@
 # dsh-TUI 侧栏（Side Panel）分栏布局与 Panel 系统：技术设计
 
 - 日期：2026-09-30
-- 状态：Draft（基于 v0.12.0 代码实测修订；上一版 RFC 见文末「与上一版 RFC 的差异」）
+- 状态：Draft v2（基于 v0.12.0 代码实测修订；v2 新增 §16 架构自审、§17 Companion 系统、§18 插件渲染面与 API；与上一版 RFC 的差异见 §19）
 - 范围：Chat 主屏的左右分栏、右侧 Panel 宿主与注册表、现有辅助组件迁移、插件 Panel 接缝
 - 核心原则：**主聊天链路不重写，侧栏只重新组织持续存在的辅助状态。**
 
@@ -235,6 +235,8 @@ scene 等）必须保持整屏宽，所以分栏层**不能**包在 `<Chat/>` �
 </Box>
 ```
 
+（v2：`children` 改为 render-prop `({ columns }) => …`，见 §16.5；下文机制不变。）
+
 `SidePanelLayout` 对左栏子树做三件事，与 `PageMargin` 同构：
 
 1. `TerminalSizeContext.Provider value={{ columns: chatColumns, rows }}`；
@@ -345,7 +347,7 @@ export interface SidePanelLayoutState {
 只允许「布局适配型」修改：
 
 1. 主 return 三段包进 `SidePanelLayout`（§4.1）；
-2. Chat 顶层 `terminalColumns` 的显式下传改读 `chatColumns`：`TimelineRail` /
+2. Chat 顶层 `terminalColumns` 的显式下传改读 `chatColumns`（v2：由 `SidePanelLayout` 的 render-prop 提供，Chat 不自己算，见 §16.5）：`TimelineRail` /
    `ScrollbarGutter` 的 `terminalWidth`、`imagePreviewRegion.columns`、
    `PinnedTurnHeader`、wake 条；
 3. 转录行 `marginRight` 改读 `SurfaceEdgesContext`；
@@ -393,7 +395,15 @@ export interface PanelDefinition {
   pluginId?: string
   capabilities?: PanelCapabilities
   component: React.ComponentType<PanelProps>
+  /** 可选：1~3 行的紧凑呈现。侧栏收起或该 Panel 非 active 且有 badge 时，
+   *  宿主把它放进输入框上方的紧凑槽（今天 tuiStatus.registerView 的位置）。
+   *  一次注册、两种呈现，见 §16.1。 */
+  compact?: { maxRows: 1 | 2 | 3; component: React.ComponentType<PanelCompactProps> }
+  /** PanelBar 胶囊里的单格图标（显示宽度必须为 1；缺省用首字母）。 */
+  icon?: string
 }
+
+export interface PanelCompactProps { readonly width: number; readonly badge: PanelEntry['badge'] }
 
 export interface PanelProps {
   readonly width: number
@@ -429,34 +439,39 @@ focused / visible / mode。以后把侧栏改到底部，Panel 不用重写。
 - 右栏内的 `ScrollBox` 按命中节点接收滚轮。
 - 不知道 Chat 消息、输入、Thinking、工具。
 
-### 6.4 PanelRegistry
+### 6.4 PanelStore：定义 + 运行时状态一个 store
+
+（v2 收拢：原 6.4 `PanelRegistry` 与 6.5 `PanelNotificationStore` 合并，见 §16.2。）
 
 ```ts
-class PanelRegistry {
+interface PanelEntry {
+  readonly definition: PanelDefinition
+  readonly owner: PanelOwner                 // builtin | { pluginId, activation }
+  readonly registrationId: number            // 同 id 重注册时递增，用于重挂 error boundary
+  badge: { level: 'info' | 'warning' | 'error'; unread: number; latestAt: number } | null
+  lastError: { message: string; at: number } | null
+}
+
+class PanelStore {
   register(definition: PanelDefinition, owner: PanelOwner): () => void   // 重复 id → DUPLICATE_CONTRIBUTION_ID
-  list(): readonly PanelDefinition[]                                    // 按 order，再按注册顺序
-  get(id: string): PanelDefinition | undefined
-  subscribe(listener: () => void): () => void
+  list(): readonly PanelEntry[]                                         // 按 order，再按注册顺序
+  get(id: string): PanelEntry | undefined
+  setBadge(id: string, badge: PanelEntry['badge']): void                // 只允许 owner 或宿主调用
+  clearBadge(id: string): void
+  reportError(id: string, error: unknown): void
+  subscribe(listener: () => void): () => void                            // useSyncExternalStore
 }
 ```
 
-内置 Panel 在 `plugin.ts` 组装期注册；插件经 `ctx.tuiPanels`（§8）。Chat 侧
-的 PanelBar 只画 **已启用**（`dsh-tui.sidePanel.panels` 设置）且已注册的 Panel。
-
-### 6.5 通知与 Soft Follow
-
-不做每帧 `hasNotification()` 轮询。各 store 已有版本/订阅（`channel.subscribe`、
-`BackgroundJobStore`、`SubagentActivityStore`），Adapter 在 store 变化时向
-`PanelNotificationStore` 写入：
-
-```ts
-interface PanelNotificationState { level: 'info' | 'warning' | 'error'; unread: number; latestAt: number }
-```
-
-PanelBar 状态点：`•` idle、`●` active / unread、`!` warning、`×` error，颜色由
-主题控制，不用 emoji 做布局字符。后台 Panel 更新**不自动切换**，只亮点；用户
-打开该 Panel 时清零。`minimalUi` 下状态点退化为纯字符（与 `JobsPanel` 去
-emoji 的现有做法一致）。
+- **内置与插件走同一个 `register`**（`source` 只是标记），Phase 3 起就没有第二条
+  内置专用路径；插件 API（§18）只是给它加上 `requirePluginCaller` /
+  `bindCallerEffect` / 能力策略这层外壳。
+- Chat 侧 PanelBar 画「已启用（`dsh-tui.sidePanel.panels`）∩ 已注册」的 Panel。
+- **通知不轮询**：各 store 已有订阅（`channel.subscribe`、`BackgroundJobStore`、
+  `SubagentActivityStore`），Adapter 在变化回调里调 `setBadge`。状态点：`•` idle、
+  `●` unread / active、`!` warning、`×` error，颜色走主题，不用 emoji 做布局字符；
+  `minimalUi` 下退化为纯字符。后台更新**不自动切换**，打开该 Panel 时清零。
+- 有界：每 Panel 一条 badge，无历史列表；`unread` 饱和到 99。
 
 ### 6.6 Panel 过多
 
@@ -550,51 +565,22 @@ Alt+其他字母、Ctrl+Shift+字母。
 
 ---
 
-## 8. 插件接缝 `ctx.tuiPanels`
+## 8. 插件接缝 `ctx.tuiPanels`（概要）
 
-沿用 `tuiScenes` / `tuiStatus` 的写法，不发明新模式：
+沿用 `tuiScenes` / `tuiStatus` 的注册链与能力策略，不发明新模式；完整的
+Surface 矩阵、descriptor / ui / host 面、按键投递、授权、预算与版本协商见 §19。
+要点：
 
-- **服务行**：`cordis.patch.yml` 新增 `dsh-tui-panels` 行（或并入
-  `dsh-tui-extensions` 行），`package.json exports` 加 `./panels` 子路径，
-  `patch-surface.snapshot.json` 同步（`verify:patch-surface`）；`src/panels.ts`
-  是转发 shim，实现在 `src/dsh-adapter/panels.ts`。
-- **注册**：`register(descriptor, identity?)` → `requirePluginCaller` →
-  `activationFiber` owner → `bindCallerEffect` 挂 disposer；写 effect ledger；
-  重复 id 抛 `DUPLICATE_CONTRIBUTION_ID`。插件释放时其 Panel 自动撤下，若正
-  是 active Panel 则回到上一个。
-- **能力名**：`host.panels.register`（register）、`host.panels.list`（read-only）、
-  `host.panels.open` / `close`（mutate）、`host.panels.notify`（mutate）、
-  `host.panels.subscribe`（subscribe）——四处同步：
-  `ADAPTER_CAPABILITY_EFFECT_CLASSES`、`ADAPTER_CAPABILITY_SLICES`、kernel slice、
-  upstream driver 与 `host-facade.ts` 映射；每个方法入口
-  `assertCapabilityShadowPolicy`。
-- **manifest**：若要求 manifest 声明，需在 dsh-ecosystem-spec 新增
-  `panels.dsh/v1alpha1#Panel` contributes 类型（与 `commands` 的准入同构）。
-  在 spec 落地前 `ctx.tuiPanels` 标为 **实验性**（`docs/plugins.md` 分级表）。
-- **props 收窄**：插件 Panel 拿到的是
-
-  ```ts
-  interface TuiPanelProps extends PanelProps {
-    readonly React: typeof React
-    readonly ui: TuiPanelUi          // Box（去 focus/keyboard/ref，保留 click/hover/drag/wheel）、Text、Image、ScrollBox、useTerminalSize
-    readonly host: {
-      readonly notify(level: 'info' | 'warning' | 'error'): void      // 只影响自己的状态点
-      readonly sendToChat(input: { title: string; content: string }): void   // 经 §6.7 通道
-      readonly keys: PanelKeySubscription                             // 仅在自己 focused 时收到按键
-    }
-  }
-  ```
-
-  **不**直接给完整 `ChannelUi`（scene 给了，但 Panel 常驻且数量多，面要更窄）；
-  需要读投影时给策展过的只读快照（goal/todos/jobs/subagents/working）。
-- 与 `tuiStatus.registerView` 的关系：status view 继续存在（1~3 行、无键盘），
-  Panel 是它的「大版本」。同一插件可以两者都注册，宿主不自动迁移。
-
-插件能：注册 Panel、注册命令 / 快捷键、点亮自己的状态点、Send to Chat。
-插件不能：替换 / 隐藏 / 移动 Chat 或输入框、改 Chat 渲染器、强制布局比例、
-关闭别人的 Panel、在未聚焦时收键盘。
-
----
+- 服务行 `dsh-tui-panels`（或并入 `dsh-tui-extensions` 行）+ `package.json exports`
+  `./panels` + `patch-surface.snapshot.json`；`src/panels.ts` 转发 shim，实现在
+  `src/dsh-adapter/panels.ts`。
+- `register` → `requirePluginCaller` → `activationFiber` → `bindCallerEffect`；写 ledger；
+  重复 id 抛 `DUPLICATE_CONTRIBUTION_ID`；插件释放时 Panel 自动撤下。
+- 能力名 `host.panels.*` 四处登记（effect classes / slices / kernel slice /
+  upstream driver + `host-facade.ts`），每个入口 `assertCapabilityShadowPolicy`。
+- 在 dsh-ecosystem-spec 落地 `panels.dsh/v1alpha1#Panel` contributes 类型前标为
+  **实验性**。
+- 插件拿到的是收窄的 `TuiPanelProps`（§18.3），**不是**完整 `ChannelUi`。
 
 ## 9. 现有组件迁移原则与 Adapter
 
@@ -615,7 +601,7 @@ padding / 重复标题、按窄宽度换行、把裸 `setInterval` 换成 `useAn
 | 1 | `todo` | `GoalTodoPanel` | 去 `paddingX=2`，`MAX_TODOS` 改按 height 计算；`setInterval(1s)` → `useAnimationFrame(1000)`；`Ctrl+Q` 折叠改为在 Panel 内折叠 goal 段；`StatusLine` 的 `GoalStatusChip` 保留（同一数据的第二视图） |
 | 2 | `jobs` | `JobsPanel` | 固定列宽 2/9/11/6/9 改为按 width 分配（窄时省略 duration/pid 列）；`useInput` 改由 PanelHost 转发；`onKill` 复用 `jobControl`；整屏形态保留给回退 |
 | 3 | `agents` | `SubagentDashboard` + `SubagentDetailScene` | Dashboard 作为 Panel 主视图，`Enter` 进 Detail（Panel 内二级视图），`Esc` 返回；分隔线 `min(72, columns-6)` 自动跟随收窄的 context |
-| 4 | `companion` | `WhaleArt` / `WhaleGirlArt` / `MaidPortrait` + `whaleIdle` 状态机 | 默认 **禁用**；ASCII 先做；图形版复用现有 `<Image>` 与终端图片后端，**禁止**再造 Kitty / Sixel 渲染器；驱动统一走 `Application Events → Activity Bridge → Companion State Resolver`，Bridge 读 `workingActivity` 投影与 `channel.working`，不从 Jobs/Tools 各接一条 |
+| 4 | `companion` | `WhaleArt` / `WhaleGirlArt` / `MaidPortrait` + `whaleIdle` 姿态规划器 | 默认 **禁用**；完整设计见 §17：皮肤无关的姿态词汇 + 纯函数心情解析器；图形版复用现有 `<Image>`，**禁止**再造 Kitty / Sixel 渲染器；插件皮肤是纯数据 |
 
 Thinking、工具卡、`SubagentMessage`、`JobCard`、`LogoHeader` 开屏 splash 全部
 保持原实现原位置。
@@ -673,6 +659,8 @@ Schema、`plugin.ts` format/parse；`SETTING_GROUPS` 新增 `side-panel` 分组�
 | `verify-side-panel-boundary.tsx` | 插件 Panel render 抛错：只该 Panel 显示错误卡；期间提交一条消息、流式与工具卡照常 |
 | `verify-side-panel-images.tsx` | 侧栏开启时转录缩略图 / 大图预览的 x 偏移与裁剪正确；右栏内 `<Image>` 可绘制（复用 `verify-image-inspection` 的 harness） |
 | 迁移项各一 | `verify-goal-todo.mjs` 扩 panel variant；`verify-jobs-panel` 扩 Panel 形态与整屏回退；子代理同理 |
+| Companion 四项 | 见 §17.8：mood 优先级、pose 帧级 parity、Panel 占位 / 零定时器 / 左栏零 diff、皮肤 descriptor 校验 |
+| 插件 Panel | `verify-plugin-panels.ts`：注册 → badge → open 限速 → Send to Chat 授权拒绝 / 放行 → 释放撤下；`verify-side-panel-boundary` 覆盖连续 3 次崩溃禁用 |
 
 既有必跑：`pnpm build`（含 `verify:boundary` / `verify:i18n` /
 `verify:patch-surface` / `verify:settings` / `verify:chat-overlay`）、CI 三项
@@ -691,11 +679,11 @@ tmux（`Ctrl+B` 前缀）下确认回退与提示。
 | **0 · 边界盘点** | 本文 §1 | 已完成 |
 | **1 · Shell** | `SidePanelLayout` + `dimensions.ts` + `SurfaceEdgesContext`；右栏只画 `Side Panel` 占位；`Ctrl+B` / `/panel toggle`；设置四项 | 几何与布局回归通过；侧栏收起时所有现有回归零 diff |
 | **2 · Chat 宽度与出血** | §4.7 六项改动；`verify-side-panel-bleed` / `-images` / `-selection` | 侧栏开启时 Thinking / 工具卡 / Markdown / 图片 / 输入框 / picker 在 68:32、100:0、20:80 与 resize 下正确 |
-| **3 · Panel Core** | `PanelRegistry` / `PanelHost` / `PanelBar` / `PanelErrorBoundary` / `PanelNotificationStore` / Panel 选择器 overlay / 焦点键盘链 | `verify-side-panel-keys` / `-boundary` 通过；内部 API，不对插件开放 |
+| **3 · Panel Core** | `PanelStore` / `PanelHost` / `PanelBar` / `PanelErrorBoundary` / compact 槽 / Panel 选择器 overlay / `useSidePanel()` 焦点键盘链 | `verify-side-panel-keys` / `-boundary` 通过；内置 Panel 已经走 `PanelStore.register`，但服务尚不挂到 ctx |
 | **4 · 迁移** | `todo` → `jobs`（含 §6.7 Send to Chat 通道）→ `agents`；`GoalTodoPanel` 从底部 chrome 移除（分栏时） | 各 Panel 与整屏回退双形态回归；原 store 零复制 |
-| **5 · Companion** | `companion` Panel（默认禁用），ASCII 先、图形复用 `<Image>` | 与 `whaleIdle` 状态机共用一份 sprite / 帧表 |
-| **6 · 插件 API** | `ctx.tuiPanels`、能力四表、patch-surface、`exports`、spec contributes 类型、`docs/plugins.md` 分级（实验性） | `verify:plugin-*` 系列扩展通过；至少一个内置 Panel 改经同一 API 注册以验证消费面 |
-| **7 · 后续** | Files / Context Inspector / Sessions / Tool Activity / 双列选区 / divider 拖拽 / 底部区域 | 不阻塞主架构 |
+| **5 · Companion** | `companion` Panel（默认禁用）：`resolveCompanionMood` + `CompanionPose` 词汇 + 三个内置皮肤（§17） | `verify-companion-mood` / `-panel` 通过；开屏 splash 与 Panel 共用同一规划器与帧表 |
+| **6 · 插件 API** | `ctx.tuiPanels`（§18）、能力四表、授权项、patch-surface、`exports`、spec contributes 类型、`docs/plugins.md` 分级（实验性）；`tuiStatus.registerView` 标记为 compact 的兼容别名 | `verify:plugin-*` 系列扩展通过；至少一个非内置示例插件（plugin-template）跑通注册 → badge → Send to Chat → 释放 |
+| **7 · 后续** | Files / Context Inspector / Sessions / Tool Activity / 双列选区 / divider 拖拽 / 底部区域 / 插件 Companion 皮肤（数据） / 多 Panel 纵向堆叠 | 不阻塞主架构 |
 
 ---
 
@@ -713,6 +701,8 @@ tmux（`Ctrl+B` 前缀）下确认回退与提示。
   `ADAPTER.md`、dsh-ecosystem-spec contributes 类型。
 - 架构：`docs/architecture{,.en}.md` 模块边界表加 `SidePanelLayout` /
   `PanelHost` 一行；`AGENTS.md` 仓库布局加 `src/components/sidePanel/`。
+- Companion：`dsh-tui.companion.*` 四项走同一设置链；皮肤帧表改动同步 `verify-whale-idle.mjs` parity；`assets/whale-girl` 立绘变更沿现有裁切脚本。
+- 插件 API：`src/api.ts` 策展导出清单（§18.5）、`docs/plugins{,.en}.md` Surface 矩阵与分级、plugin-template 示例。
 - 文案：全部走 `t()`，`verify:i18n` 门禁。
 
 ---
@@ -733,7 +723,474 @@ Panel 崩溃不中断对话。
 
 ---
 
-## 16. 与上一版 RFC 的差异
+## 16. 架构自审：v1 方案里可以收拢的地方
+
+对 §3–§10 做一次「以后会不会后悔」的复审。每条给出问题、决定与影响的章节；
+决定已回写到前文。
+
+### 16.1 插件有两条渲染路径 → 一次注册、两种呈现
+
+v1 保留 `tuiStatus.registerView`（1~3 行、输入框上方）并新增 `tuiPanels`，插件
+要在两个接缝之间自己做选择与同步。收拢为：**Panel descriptor 可选带
+`compact`**（§6.2）。宿主按状态选呈现：
+
+| 侧栏状态 | Panel 状态 | 呈现 |
+| --- | --- | --- |
+| 展开 | active | 全量 `component` 在 PanelHost |
+| 展开 | 非 active，有 badge | 只亮 PanelBar 状态点 |
+| 收起 / 窄屏 / inline | 有 `compact` 且启用 | `compact` 在输入框上方紧凑槽（今天 status view 的位置，总预算仍 6 行） |
+| 收起 / 窄屏 / inline | 无 `compact` | 只在 `/panel` 选择器里可见 |
+
+`tuiStatus.registerView` 保留为 **compact-only 的兼容别名**（内部转成一个无
+`component` 的 Panel 注册，不出现在 PanelBar），沿 `docs/plugins.md` 的弃用窗口
+规则处理。插件因此只学一个模型；宿主只维护一个错误边界与一个预算表。
+
+### 16.2 两个 store → 一个 `PanelStore`
+
+`PanelRegistry` 与 `PanelNotificationStore` 的键都是 panel id，生命周期完全一致
+（注册即有 badge 槽，释放即清）。合并后（§6.4）少一个订阅源、少一处「注销时忘
+了清 badge」的 bug 面。
+
+### 16.3 内置 Panel 从第一天走插件同一条路
+
+v1 的 Phase 6 才「至少一个内置 Panel 改经同一 API 注册」。改为 Phase 3 起内置
+Panel 就用 `PanelStore.register`（§13）；Phase 6 只加宿主准入外壳，不改注册面。
+这样 API 在开放前已被三个真实消费者（todo / jobs / agents）验证过，符合 RFC
+「不要先设计稳定公共 API 再找消费者」。
+
+### 16.4 Companion 不需要事件总线
+
+RFC 的 `Application Events → Activity Bridge → State Resolver` 假设活动状态要
+在 TUI 内自己折叠。本仓库里 `workingActivity` 投影已经是折叠好的会话级状态
+（phase / toolCount / phaseStartedAt / phrase，`activity-store.ts:33-62`），
+`channel.working`、`spinnerMode`、`subagents`、`backgroundJobs`、审批 / 问卷快照
+也都是现成投影。Bridge 退化为一个**纯函数** `resolveCompanionMood(inputs, now)`
+（§17.2），无订阅、无缓冲、可单测。
+
+### 16.5 Chat 的改动再收一步：`useSidePanel()` + render-prop
+
+v1 让 Chat 在顶层算 `chatColumns` 再显式下传（§4.7 第 2 项）。改为
+`SidePanelLayout` 提供 render-prop：
+
+```tsx
+<SidePanelLayout state={sidePanel} side={<SidePanelColumn />}>
+  {({ columns: chatColumns }) => ( /* 原三段，显式宽度处读 chatColumns */ )}
+</SidePanelLayout>
+```
+
+同时把侧栏的状态、键盘分支、命令分发收进 `src/components/sidePanel/useSidePanel.ts`，
+Chat.tsx 只增加：一次 hook 调用、一处 `if (sidePanel.focus === 'panel') return sidePanel.handleKey(...)`
+让位、`runCommand` 里 `/panel` 一条 case。Chat.tsx 已 5400 行，这条线要守住。
+
+### 16.6 Panel 内容变化不得改变列宽
+
+分栏后列宽是数值且只由布局状态决定；Panel 内部再怎么动（Companion 每 120ms
+换帧、Jobs 列表增删）都只让右栏子树 dirty，Yoga 对左栏干净子树走缓存，转录
+不重排。**规则**：PanelBar 与 Panel 组件不得让右栏的期望宽度随内容变化
+（胶囊文字截断到固定预算，图标固定 1 格，`WhaleArt` 已用 `width` 钉宽）。
+`verify-side-panel-layout` 里加「Companion 连续 50 帧，左栏帧字节零 diff」断言。
+
+### 16.7 保留不改的决定与理由
+
+- **不引入 `ink/focus.ts` 的 FocusManager**：Chat 今天完全不用它，为侧栏引入
+  第二套焦点语义会让 `chatOverlay.ts` 的互斥结构失效；`focus: 'chat' | 'panel'`
+  两态够用，等出现第三个焦点区再谈。
+- **不做双列选区**：需要改 `selection.ts` 的线性模型，收益（跨栏复制）小于风险；
+  V1 右栏 `noSelect` + Panel 自己的复制动作。
+- **不在 inline 模式硬做右栏**：§0 第 2 点的物理限制，不是工程量问题。
+- **不把 StatusLine 拉成跨两栏的全宽底栏**：状态行属于 Chat（模型、上下文、
+  cwd 都是会话事实），拉出去就要给它第二个宽度来源；右栏用自己的 1 行 hint。
+
+---
+
+## 17. Companion（宠物）系统设计
+
+### 17.1 目标与非目标
+
+目标：把今天散落在开屏 splash 里的鲸鱼 / 女仆形象、idle 动画、点击爱心、求
+star 彩蛋收成一个**可选、可换皮、可被插件扩展、跟随会话状态的伙伴系统**，主
+形态是侧栏 `companion` Panel，次形态是开屏 splash（保持现状）与 1~3 行 compact。
+
+非目标：不做养成 / 数值系统、不写入会话日志、不新增网络请求、不为宠物再造
+图片管线、不在 `minimalUi` 下出现。
+
+### 17.2 三层：心情 → 姿态 → 皮肤
+
+```text
+会话投影（只读）                纯函数                 皮肤无关词汇            具体渲染
+working / spinnerMode  ─┐
+workingActivity          ├─▶ resolveCompanionMood ─▶ CompanionMood ─▶ planPose ─▶ CompanionPose ─▶ Skin.render
+approval / question      │        (inputs, now)                      (state, mood, now)              │
+subagents / jobs / goal  │                                                                            ├─ whale（层叠像素，现有 whaleIdle 规划器）
+lastInputAt / celebration┘                                                                            ├─ whale-girl（30×30 半块像素）
+                                                                                                      ├─ maid-portrait（<Image transparent>，回退到 whale-girl）
+                                                                                                      └─ 插件皮肤（纯数据帧表，§17.6）
+```
+
+**心情（mood）** 是会话层语义，所有皮肤共享：
+
+```ts
+export type CompanionMood =
+  | 'sleeping'      // 空闲超过 sleepAfter 且无未读事项
+  | 'idle'          // 空闲
+  | 'waiting'       // 请求已发、首 token 未到（activity.phase==='waiting' / spinnerMode==='requesting'）
+  | 'thinking'      // 推理中
+  | 'working'       // 工具运行中（activity.phase==='tool'）
+  | 'responding'    // 正文流式中
+  | 'attention'     // 有待处理的审批 / 问卷 / 子代理等待输入 / 失败的后台任务未读
+  | 'celebrate'     // 回合完成（phase==='done' 短暂）/ goal 完成 / star / 节日彩蛋
+  | 'error'         // 最近一回合以错误结束
+
+export interface CompanionMoodInputs {
+  readonly working: boolean
+  readonly spinnerMode: SpinnerMode                     // channel-display.ts
+  readonly activity: ActivityView | undefined           // activity-store.ts（可缺，插件未装时）
+  readonly attention: { approvals: number; questions: number; subagentsWaiting: number; jobsFailedUnread: number }
+  readonly goalPhase: 'none' | 'active' | 'complete'
+  readonly lastTurnError: boolean
+  readonly lastInputAt: number
+  readonly celebration: { kind: 'star' | 'holiday' | 'turn-done' | 'goal-done'; until: number } | undefined
+  readonly sleepAfterMs: number
+}
+
+export function resolveCompanionMood(input: CompanionMoodInputs, now: number): { mood: CompanionMood; since: number; bubble?: string }
+```
+
+优先级：`attention` > `error` > `celebrate` > 工作态（waiting / thinking / working /
+responding）> `sleeping` > `idle`。`bubble` 取 `activity.phrase ?? activity.label+detail`
+（已是 zh/en 双语），截到皮肤给的气泡宽度；不再自造文案。
+
+**姿态（pose）** 是皮肤无关的动画词汇，由现有分层规划器泛化而来：
+
+```ts
+export interface CompanionPose {
+  readonly mood: CompanionMood
+  readonly tick: number            // 0.. 单调递增，皮肤按自己的帧率取模
+  readonly blink: boolean
+  readonly gesture: 'none' | 'wag' | 'flutter' | 'spout' | 'nod' | 'wave'   // 皮肤可只支持子集，未支持退化为 none
+  readonly heart: 0 | 1 | 2 | 3    // 点击爱心 pass（现有 HEART_SEQUENCE）
+  readonly sleepZ: 0 | 1 | 2 | 3 | 4 | 5
+  readonly facing: 'left' | 'right'
+}
+```
+
+`whaleIdle.ts` 的 `WhaleIdleState` / `nextWhaleIdleStep` 保持不动，`planPose` 是它
+的薄包装：把 mood 映射到今天的 `working: boolean` 输入（waiting/thinking/working/
+responding → working=true），把 `WhaleLayerPose` 的 tail/fin/spout 映射到 `gesture`。
+开屏 splash 的 `LogoV2` 继续直接消费 `WhaleLayerPose`，不受影响。
+
+### 17.3 皮肤接口
+
+```ts
+export interface CompanionSkin {
+  readonly id: string                                   // 'whale' | 'whale-girl' | 'maid-portrait' | 'plugin:xxx'
+  readonly title: string                                // i18n key（内置）或字面量（插件）
+  readonly cells: { readonly columns: number; readonly rows: number }   // 固定占位，永不随帧变化
+  readonly bubble?: { readonly maxColumns: number; readonly placement: 'above' | 'right' }
+  readonly graphics: 'none' | 'optional' | 'required'   // required 且无图片协议时该皮肤不可选
+  readonly supports: ReadonlySet<CompanionPose['gesture']>
+  render(pose: CompanionPose, ctx: SkinRenderContext): React.ReactNode
+}
+
+interface SkinRenderContext {
+  readonly image: TerminalImageSource | undefined       // 已解码 RGBA（仅 graphics != none 且已就绪）
+  readonly theme: Theme                                 // 语义色
+  readonly minimal: boolean
+}
+```
+
+内置三皮肤：
+
+| 皮肤 | 占位 | 数据 | 说明 |
+| --- | --- | --- | --- |
+| `whale` | 13×40 | `whaleFrames.ts` + `whaleLayers.ts` 层叠合成 | `WhaleArt pose=…`，与开屏共用 `LAYERED_CACHE` |
+| `whale-girl` | 15×30 | `whaleGirlSprite.ts` 半块像素 | `WhaleGirlArt`；`heart>0` 时用 `WhaleGirlHappyArt` 的心形行 |
+| `maid-portrait` | 按格子像素比等比拟合到 ≤ 30 列 | `assets/whale-girl` 两张立绘（`useMaidPortraits`） | `<Image transparent>`；`mood` 切 normal / happy 立绘；无图片协议时自动回退 `whale-girl` |
+
+### 17.4 Companion Panel 组件
+
+```text
+┌ [ ♥ Companion ] ─────────────┐
+│                              │
+│        （皮肤 13×40）          │
+│                              │
+│  ⏵ 正在读取 package.json      │  ← bubble（activity.phrase / line，1~2 行）
+│  Working 8.2s · 3 tools      │  ← 从 phaseStartedAt / toolCount 派生，本地计时
+│                              │
+│  click: ♥   Enter: poke      │  ← PanelHint 行由宿主渲染
+└──────────────────────────────┘
+```
+
+- 布局：皮肤居中，`cells` 固定；宽度不足 `cells.columns + 2` 时切到 compact
+  皮肤（`whale` 的 `RENDERED[STANDARD]` 裁到 7 行；插件皮肤必须提供 `small` 帧表）。
+- 时钟：`useAnimationFrame(visible && !sleeping ? 120 : sleeping ? 1000 : null)`；
+  `visible=false`（非 active Panel / 侧栏收起）**零定时器**；终端失焦时
+  `ClockProvider` 自动降频。
+- 交互：点击 → 爱心 pass（现有语义）；`Enter`（焦点在右栏）→ poke：气泡显示完整
+  `activity.line` 3 秒；`s` → Send to Chat 当前活动摘要（复用 §6.7）；双击不定义。
+- 睡眠：`sleepAfterMs` 默认 60s（开屏 splash 保持 10s 的 `SLEEP_DELAY_MS`，
+  Panel 常驻，10s 会频繁入睡）；有 `attention` 时不入睡。
+- compact（1~3 行）：`[♥] 思考中 12s ▂▃▅` —— 首格 mood 图标（主题色）+ 活动
+  短句 + 现有 spinner 帧；不画皮肤。
+- `minimalUi`：Panel 不可启用（选择器灰掉并提示）。
+
+### 17.5 与现有开屏 splash 的关系
+
+| | 开屏 splash（`LogoHeader`） | Companion Panel |
+| --- | --- | --- |
+| 位置 | 转录顶部，随转录滚走 | 侧栏，常驻 |
+| 设置 | `dsh-tui.whale` / `whaleIdle` / `whaleGirl` / `splashFont`（不变） | `dsh-tui.companion.*`（§17.7） |
+| 规划器 | `whaleIdle.ts`（直接） | 同一个，经 `planPose` |
+| 帧表 / 立绘 | `whaleFrames` / `whaleGirlSprite` / `assets/whale-girl` | 同一份，同一缓存 |
+| 求 star / 节日彩蛋 | `splashEggs.ts` 改文字，`StarPrompt` | 作为 `celebration` 输入触发 `celebrate` mood；不改 splash 逻辑 |
+
+两者同时存在时不冲突：splash 只在空会话或滚到顶部时可见（`whaleArtVisible` 门
+控 `scrollTop < 16`），Panel 在会话进行中承担「一直看得见」的角色。
+
+### 17.6 插件皮肤：纯数据，不执行代码
+
+插件不提供 `render` 函数，只提供帧表；宿主用内置 `SpriteSkin` 渲染。与主题
+（`tuiThemes`）同一信任模型：descriptor 视为不可信输入，全有或全无校验。
+
+```ts
+export interface TuiCompanionSkinDescriptor {
+  readonly id: string                           // plugin:sub 命名空间
+  readonly title: string
+  readonly cells: { columns: number; rows: number }          // ≤ 40×20
+  readonly small?: { columns: number; rows: number }         // ≤ 30×7，窄栏用
+  readonly palette: Record<string, [number, number, number] | null>   // 单字符 → RGB / 透明
+  readonly frames: Record<string, readonly string[]>          // 帧名 → cells.rows 行，每行 cells.columns 个 palette 字符
+  readonly moods: Partial<Record<CompanionMood, readonly string[]>>    // mood → 帧名循环；缺省回落到 'idle'
+  readonly overlays?: { heart?: readonly string[]; sleep?: readonly string[]; blink?: string }   // 叠加帧（与 whaleLayers 同语义）
+  readonly image?: { rgba: Uint8Array; width: number; height: number; moods?: Partial<Record<CompanionMood, 'rgba'>> }  // 可选立绘，走 <Image>，受 1024px / 4 MiB 预算
+}
+```
+
+校验：字符全在 palette、每帧尺寸一致、`moods` 引用的帧存在、总字节 ≤ 256 KiB、
+图片受现有插件图片预算；任一失败整份拒绝并 toast 一次。注册经
+`ctx.tuiPanels.companion.registerSkin(descriptor)`（§18.2），释放即回落到默认
+皮肤。放 Phase 7。
+
+### 17.7 设置
+
+| key | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `dsh-tui.companion.skin` | select | `inherit` | `inherit`（跟随 `whaleGirl`：开 → `maid-portrait`，否则 `whale`）/ `whale` / `whale-girl` / `maid-portrait` / 插件 id |
+| `dsh-tui.companion.bubble` | boolean | `true` | 是否显示活动气泡 |
+| `dsh-tui.companion.sleepAfter` | number（秒） | `60` | 入睡延迟；`0` 不入睡 |
+| `dsh-tui.companion.celebrations` | boolean | `true` | 回合完成 / goal 完成 / 节日的 `celebrate` mood |
+
+是否启用 Companion 本身 = `dsh-tui.sidePanel.panels` 里是否有 `companion`（§10），
+不另设开关。
+
+### 17.8 验证
+
+- `verify-companion-mood.ts`（纯函数）：优先级表逐格；`attention` 阻止入睡；
+  `celebration.until` 到期回落；`activity` 缺失（插件未装）时只靠 `working` /
+  `spinnerMode` 也能给出 waiting / thinking / responding。
+- `verify-companion-pose.ts`：`planPose` 与 `nextWhaleIdleStep` 帧级一致（沿
+  `verify-whale-idle.mjs` 的 parity 写法）。
+- `verify-companion-panel.tsx`：三皮肤在 40 / 30 / 28 列侧栏下的占位不变；
+  `visible=false` 时无定时器（`ClockProvider` 订阅数为 0）；连续 50 帧左栏零 diff；
+  无图片协议时 `maid-portrait` 回退 `whale-girl`。
+- `verify-companion-skin-descriptor.ts`：坏 palette / 尺寸不一 / 超预算 / 引用缺帧
+  逐一被拒。
+
+---
+
+## 18. 插件渲染面与 API 预留（详细）
+
+### 18.1 Surface 矩阵
+
+插件能画到的每个位置、拿到的能力、隔离方式，一张表说清；新增的是 **panel /
+compact / companion skin** 三行，其余为现状。
+
+| Surface | 接缝 | 尺寸 | 键盘 | 指针 | 能拿到的数据 | 隔离 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 转录条目 | `tuiRenderers.register(type, fn)` | 文本行 | — | — | 事件 payload | 纯函数，返回文本 |
+| 状态行文本 | `tuiStatus.set` | 1 行合并 | — | — | — | 文本截断 |
+| **compact** | `tuiPanels.register({ compact })`（`tuiStatus.registerView` 兼容别名） | 1~3 行，总预算 6 | — | click / hover / drag | 只读快照 | `PanelErrorBoundary` |
+| **panel** | `tuiPanels.register({ component })` | 右栏 width×height | 仅 focused 时 | click / hover / drag / wheel | 只读快照 + host 动作 | `PanelErrorBoundary` |
+| 全屏场景 | `tuiScenes.register` | 整屏 | 全部 | 全部 | 完整 `ChannelUi` | `PluginSceneBoundary` |
+| 托管对话框 | `tuiDialogs` | 居中 | 独占 | — | 自己的选项 | 宿主渲染 |
+| toast | `tuiToast.show` | 1 行 | — | — | — | 宿主渲染 |
+| **companion skin** | `tuiPanels.companion.registerSkin` | 皮肤 `cells` | — | click（宿主处理） | — | 纯数据，宿主渲染 |
+| 快捷键 | `tuiShortcuts.register` | — | 组合键（须 Ctrl/Alt） | — | — | handler 异常 → toast |
+
+原则：**面越常驻，权限越窄**。场景是独占整屏的临时态，可以给完整 channel；Panel
+常驻且可多个，只给只读快照与中介动作；皮肤永远在线，只收数据。
+
+### 18.2 服务面
+
+```ts
+interface TuiPanelHost {
+  register(descriptor: TuiPanelDescriptor, identity?: Context): () => void   // host.panels.register
+  list(): readonly TuiPanelSummary[]                                           // host.panels.list（只含 id/title/source，不含组件）
+  open(id: string): boolean                                                    // host.panels.open  — 仅自己注册的 id；侧栏收起时先展开
+  close(id: string): boolean                                                   // host.panels.close — 仅自己的；active 时回到上一个
+  badge(id: string, badge: { level: 'info' | 'warning' | 'error'; unread?: number } | null): void   // host.panels.badge — 仅自己的
+  subscribe(listener: (event: TuiPanelEvent) => void): () => void              // host.panels.subscribe：opened / closed / focused / blurred / sidebar-toggled（仅涉及自己的 Panel）
+  readonly companion: {
+    registerSkin(descriptor: TuiCompanionSkinDescriptor, identity?: Context): () => void   // host.panels.companion.register-skin
+  }
+}
+```
+
+能力分类：`register` → register；`list` → read-only；`open` / `close` / `badge` →
+mutate；`subscribe` → subscribe；`companion.register-skin` → register。四处同步
+（§8）。`open` 是 mutate 且会改布局，**限速**：每插件每 5s 至多 1 次，超过丢弃并
+记 ledger（防止插件抢屏）。
+
+### 18.3 descriptor / props / ui
+
+```ts
+export const TUI_PANEL_API_VERSION = 1
+
+export interface TuiPanelDescriptor {
+  readonly apiVersion: 1
+  readonly id: string                                  // /^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)*$/，宿主自动加 plugin 前缀
+  readonly title: string
+  readonly icon?: string                               // 显示宽度 1
+  readonly order?: number                              // 插件 Panel 排在内置之后，再按 order
+  readonly minColumns?: number                         // 默认 PANEL_MIN_COLUMNS
+  readonly component?: React.ComponentType<TuiPanelProps>            // 至少 component / compact 之一
+  readonly compact?: { maxRows: 1 | 2 | 3; component: React.ComponentType<TuiPanelCompactProps> }
+  readonly capabilities?: { scroll?: boolean; sendToChat?: boolean; zoom?: boolean }
+  readonly keys?: { readonly hint?: string }           // PanelHint 行追加文案（截断）
+}
+
+export interface TuiPanelUi {                          // 与 TuiStatusViewUi 同一收窄法：Box 去 ref/tabIndex/autoFocus/onKeyDown*/onFocus*/onBlur*/onContextMenu
+  readonly Box: React.ComponentType<TuiPanelBoxProps>  // 保留 click / hover / drag / onWheel
+  readonly Text: React.ComponentType<TuiPanelTextProps>
+  readonly Image: React.ComponentType<ImageProps>      // 已解码 RGBA，受插件图片预算
+  readonly ScrollBox: React.ComponentType<TuiPanelScrollBoxProps>
+  readonly Divider: typeof Divider
+  readonly ListItem: typeof ListItem
+  readonly HintLine: typeof HintLine
+  readonly useTerminalSize: () => { columns: number; rows: number }   // = Panel 的 width/height
+  readonly useAnimationFrame: (ms: number | null) => number            // 唯一合法的定时源
+  readonly useTheme: () => ReadonlyTheme                               // 语义色只读
+}
+
+export interface TuiPanelSnapshot {                    // 策展的只读投影；每字段都是现有 channel 字段的结构拷贝
+  readonly sessionId: string | undefined
+  readonly cwd: string
+  readonly lang: 'zh' | 'en'
+  readonly working: boolean
+  readonly spinnerMode: SpinnerMode
+  readonly activity: ActivityView | undefined
+  readonly goal: ChannelGoal | undefined
+  readonly todos: readonly TodoPanelItem[]
+  readonly backgroundJobs: readonly BackgroundJobState[]
+  readonly subagents: readonly SubagentState[]
+  readonly attention: { approvals: number; questions: number }
+  readonly version: number                             // channel.version，变化即重渲染
+}
+
+export interface TuiPanelHostApi {
+  readonly snapshot: TuiPanelSnapshot                  // 当前帧快照（props 里同步给出）
+  readonly focused: boolean
+  notify(level: 'info' | 'warning' | 'error', unread?: number): void      // 只影响自己的状态点
+  clearBadge(): void
+  sendToChat(input: { title: string; content: string }): boolean          // 需授权 panels.chat.attach；返回是否已附加
+  openScene(id: string): boolean                                           // 仅自己注册的 scene
+  toast(text: string, options?: TuiToastOptions): boolean                  // 转 tuiToast
+  readonly storage: TuiPluginStorage                                       // 自己的 tuiPluginStorage 句柄（256 key / 256 KiB）
+  onKey(listener: (event: TuiPanelKeyEvent) => void): () => void          // 仅 focused 期间投递
+  focus(): void                                                            // 请求焦点（侧栏已展开且自己 active 时才生效）
+}
+
+export interface TuiPanelProps {
+  readonly React: typeof React
+  readonly ui: TuiPanelUi
+  readonly host: TuiPanelHostApi
+  readonly width: number
+  readonly height: number
+  readonly focused: boolean
+  readonly visible: boolean
+  readonly mode: 'split' | 'zoom' | 'fullscreen'
+}
+
+export interface TuiPanelCompactProps {
+  readonly React: typeof React
+  readonly ui: Pick<TuiPanelUi, 'Box' | 'Text' | 'Image' | 'useTerminalSize' | 'useAnimationFrame' | 'useTheme'>
+  readonly host: Pick<TuiPanelHostApi, 'snapshot' | 'notify' | 'clearBadge' | 'storage'>
+  readonly width: number
+  readonly badge: { level: 'info' | 'warning' | 'error'; unread: number } | null
+}
+
+export interface TuiPanelKeyEvent {                    // 与 useInput 的 (input, key) 同形
+  readonly input: string
+  readonly key: Key
+  preventDefault(): void                               // 阻止宿主的 Panel 内默认键（↑↓ 滚动、s 发送）
+}
+```
+
+宿主保留键（Panel 收不到）：`Esc`、`sidePanel` / `sidePanelZoom` 组合、
+`1-9`、`[` / `]`、`←/→`（切 Panel）、所有 `Ctrl+*` / `Alt+*`。其余在 focused
+时先给 Panel；未 `preventDefault` 的 `↑/↓/PgUp/PgDn` 由宿主滚动、`s` 触发
+Send to Chat、`y` 复制、`+/-` 调宽。
+
+### 18.4 授权与预算
+
+| 项 | 规则 |
+| --- | --- |
+| `panels.register` | manifest 声明 `panels.dsh/v1alpha1#Panel`（spec 落地前：`TUI_EXTENSION_API_VERSION` 协商 + 实验性标记） |
+| `panels.chat.attach` | **显式授权**（与 intercept 类决策事件同级）：Send to Chat 会把内容送进模型上下文；未授权时 `sendToChat` 返回 false 并 toast 一次 |
+| `panels.projection.read` | 默认允许；`snapshot` 里没有转录正文、没有 API key、没有文件内容 |
+| 数量 | 每插件 ≤ 4 个 Panel、≤ 2 个皮肤；全局 ≤ 32 个注册 |
+| compact 预算 | 沿用 6 行总预算；超出者按 order 靠后先不画 |
+| `open` 限速 | 5s / 次 / 插件 |
+| 图片 | 沿用插件图片 1024px / 4 MiB；Panel 内 `Image` 数量 ≤ 4 |
+| 错误 | render 抛错 → 该 Panel 显示错误卡（`Retry` / `Disable`），badge `×`，Chat 不受影响；连续 3 次 → 本次会话内禁用并 toast |
+| 异步错误 | 插件自负；`host.notify('error')` 可主动点亮 |
+
+### 18.5 版本与兼容
+
+- `apiVersion` 字面量 1；宿主拒绝未知版本并记 ledger。
+- 新增字段只增不改；`TuiPanelSnapshot` 字段可能新增，插件按可选读。
+- `tuiStatus.registerView` → 兼容别名，弃用窗口按 `docs/plugins.md` 现有规则
+  （先一个已发布次版本告警再移除）。
+- `src/api.ts` 显式策展导出：`TuiPanelDescriptor`、`TuiPanelProps`、
+  `TuiPanelCompactProps`、`TuiPanelHostApi`、`TuiPanelSnapshot`、`TuiPanelKeyEvent`、
+  `TuiCompanionSkinDescriptor`、`TUI_PANEL_API_VERSION`；不 `export *`。
+- 单 React 规则与 scene 相同（注入的 `React`、`jsxImportSource` 指向宿主）。
+
+### 18.6 示例：一个最小插件 Panel
+
+```ts
+// plugin-template 风格
+export const name = 'my-activity'
+export const inject = ['tuiPanels']
+export function apply(ctx: Context) {
+  ctx.tuiPanels.register({
+    apiVersion: 1,
+    id: 'activity',                         // 宿主注册为 my-activity:activity
+    title: 'Activity',
+    icon: '⚡',
+    capabilities: { scroll: true, sendToChat: true },
+    component: ({ React, ui, host, width, height, focused }) => {
+      const { Box, Text, ScrollBox } = ui
+      const tick = ui.useAnimationFrame(host.snapshot.working ? 500 : null)
+      React.useEffect(() => host.onKey(e => {
+        if (e.input === 'r') { host.clearBadge(); e.preventDefault() }
+      }), [host])
+      return React.createElement(ScrollBox, { flexDirection: 'column', height },
+        host.snapshot.backgroundJobs.map(job =>
+          React.createElement(Text, { key: job.id, wrap: 'truncate-end' }, `${job.status} ${job.command}`)))
+    },
+    compact: {
+      maxRows: 1,
+      component: ({ React, ui, host }) =>
+        React.createElement(ui.Text, { dimColor: true }, `${host.snapshot.backgroundJobs.length} jobs`),
+    },
+  })
+}
+```
+
+---
+
+## 19. 与上一版 RFC 的差异
 
 | RFC 条目 | 修订 | 依据 |
 | --- | --- | --- |
@@ -742,7 +1199,7 @@ Panel 崩溃不中断对话。
 | §69 新增 `SurfaceBoundsProvider` | 复用 `TerminalSizeContext` 覆盖 + `PageInsetContext`；新增仅 `SurfaceEdgesContext`（出血） | `PageMargin` 同机制已在产；无组件直读 `stdout.columns` |
 | §68/70 「审查 Terminal Width 依赖」为最大工作量 | 降为小项；主要工作转到出血、选区、焦点键盘链、Send to Chat 通道 | §1.2 表 |
 | §9 「包在 ExistingChat 外面」 | 包在 Chat **主 return 内部**，早返回整屏页面不分栏 | Settings / Supervisor / Trajectory 必须整屏 |
-| §18 `CHAT_MIN_WIDTH=56 / WORKSPACE_MIN=26` | 64 / 28，以 gutter 60 列阈值与 Jobs 列宽为锚，Phase 1 校准后冻结 | `timeline-rail.ts:32-35`、`JobsPanel.tsx:113-141` |
+| §17 `CHAT_MIN_WIDTH=56 / WORKSPACE_MIN=26` | 64 / 28，以 gutter 60 列阈值与 Jobs 列宽为锚，Phase 1 校准后冻结 | `timeline-rail.ts:32-35`、`JobsPanel.tsx:113-141` |
 | §22 Resize | 键盘 V1、拖拽 V1.1 不变；拖拽复用既有捕获式拖拽协议 | `verify-drag-protocol.tsx` |
 | §49 避免 `Ctrl+A` | `Ctrl+A` 已是 dashboard 动作；默认键选 `Ctrl+B`（VS Code 同键，注明 tmux 需重映射） | `keymap.ts:201-217/333-351` |
 | §56-57 `ctx.chat.attachContext` | 落到 channel 层 `attachContext` 投影 + `PromptInput` chip，沿 IDE 选区通道路径 | 现状只有整段替换的 `fillText` |
@@ -750,3 +1207,8 @@ Panel 崩溃不中断对话。
 | §63 `WorkspacePreferences` 文件 | 用户可配项走设置（`definitions.ts` 单点），不新增 `~/.dsh-tui` 文件 | 设置链 + `verify:settings` |
 | §65 `src/tui/workspace/...` 目录 | `src/components/sidePanel/`（布局、Panel 原语、Adapter）+ `src/dsh-adapter/panels.ts`（接缝）+ `src/panels.ts`（shim），不移动现有文件 | 仓库布局与 adapter 边界门禁 |
 | 新增 | 选区按整行线性，右栏 V1 `noSelect`；全屏编辑器打开时侧栏收起；`minimalUi` 下状态点去 emoji；PanelBar 走 `chatOverlay.ts` 状态机 | `selection.ts`、`PromptEditor.tsx`、`minimalUiMode.ts`、`chatOverlay.ts` |
+| §43 `Activity Bridge` 事件总线 | 退化为纯函数 `resolveCompanionMood(inputs, now)`，输入全是现成投影 | `workingActivity` 已是折叠好的会话投影（§16.4） |
+| §44 Companion 只说「复用 Image」 | 三层：心情 → 皮肤无关姿态 → 皮肤；三个内置皮肤共用 `whaleIdle` 规划器与帧表；插件皮肤是纯数据 | §17 |
+| §47 插件权限清单 | 落到 Surface 矩阵 + `panels.chat.attach` 显式授权 + 数量 / 限速 / 图片预算 | §18.1 / §18.4 |
+| §53 `PanelNotificationStore` 独立 store | 并入 `PanelStore` 的 badge 槽 | §16.2 |
+| 新增（v2） | Panel `compact` 呈现统一 `tuiStatus.registerView`；内置 Panel 从 Phase 3 走同一注册路径；`useSidePanel()` + render-prop 把 Chat.tsx 改动压到三处；Panel 内容不得改变列宽 | §16.1 / §16.3 / §16.5 / §16.6 |
