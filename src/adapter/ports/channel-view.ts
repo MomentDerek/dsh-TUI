@@ -143,6 +143,9 @@ export interface SubagentRow {
   agentId: string
   runId?: string
   description: string
+  /** Durable creation mode from the kernel catalog event; absent before the
+   *  parent log's `subagent/catalog` fact arrives (bus-only discovery). */
+  mode?: 'one-shot' | 'continuable' | 'unknown'
   provider?: string
   model?: string
   effort?: string
@@ -162,6 +165,9 @@ export interface SubagentState {
   agentId: string
   runId?: string
   description: string
+  /** Durable creation mode from `subagent/catalog` (one-shot burns out;
+   *  continuable survives epochs and can take later prompts). */
+  mode?: 'one-shot' | 'continuable' | 'unknown'
   provider?: string
   model?: string
   effort?: string
@@ -214,6 +220,19 @@ export interface SubagentTokenUsage {
   context?: number
 }
 
+/** Output-stream label of one mirrored job line; absent = plain stdout. */
+export type BackgroundJobOutputChannel = 'stdout' | 'stderr' | 'log'
+
+/** One mirrored output line. `channel` rides the kernel chunk label
+ * (`stderr` renders red, `log` = producer narration the model never sees);
+ * `gapBefore` marks bytes lost before this line (ring eviction / producer
+ * gap) — the UI renders a dim `…dropped…` banner above it. */
+export interface BackgroundJobOutputLine {
+  text: string
+  channel?: BackgroundJobOutputChannel
+  gapBefore?: true
+}
+
 /** One background job as a live transcript card (see `kind: 'job'`). */
 export interface JobRow {
   id: string
@@ -221,10 +240,12 @@ export interface JobRow {
   label: string
   status: BackgroundJobStatus
   detail?: string
+  /** Live producer progress line (`3/10`, phase name); cleared at settle. */
+  progress?: string
   startedAt: number
   finishedAt?: number
-  /** Mirrored `job_output` tail feeding the card's three-line waterfall. */
-  outputLines: readonly string[]
+  /** Mirrored output tail feeding the card's three-line waterfall. */
+  outputLines: readonly BackgroundJobOutputLine[]
 }
 
 /**
@@ -241,10 +262,14 @@ export interface JobRow {
  *
  * - `read()` is CONSUMING (one cursor per job) and a terminal read marks the
  *   job reported, which would eat the owning agent's `job_output` delta and
- *   suppress its completion notice. The UI therefore NEVER reads: the
- *   three-line output waterfall on a card is mirrored from the agent's own
- *   `job_output` tool results as they stream through the session event log
- *   ({@link BackgroundJobStore.onOutputSeen}), not polled.
+ *   suppress its completion notice. The UI therefore never calls `read()`.
+ *   Output mirroring has two tiers: when the kernel event bus is reachable
+ *   (`events.subscribe`, present on the real registry) the UI keeps its own
+ *   byte cursor and pulls non-consuming `readAt` increments on every
+ *   `output` event — live output without the model polling; on kernels
+ *   without the bus it falls back to mirroring the agent's own `job_output`
+ *   tool results as they stream through the session event log
+ *   ({@link BackgroundJobStore.onOutputSeen}).
  * - Jobs are process-local and owner-fenced. `list(agent)` returns exactly
  *   the jobs the current conversation owns (plus unowned ones); a job that
  *   disappears while live was teardown-cancelled (owner disposal / session
@@ -440,12 +465,23 @@ export interface BackgroundJobState {
   command?: string
   status: BackgroundJobStatus
   detail?: string
+  /** Live producer progress line (`3/10`, phase name); cleared at settle. */
+  progress?: string
   startedAt: number
   finishedAt?: number
-  /** Last-seen output tail (mirrored `job_output` text), newest last. */
-  outputLines: string[]
-  /** Epoch ms of the last mirrored `job_output` read (receipt time). */
+  /** Last-seen output tail, newest last. Mirrored from the kernel output
+   *  ring when its event bus is reachable (non-consuming `readAt` with the
+   *  UI's own byte cursor), falling back to `job_output` tool-result tails. */
+  outputLines: BackgroundJobOutputLine[]
+  /** Epoch ms of the last mirrored output read (receipt time). */
   lastOutputAt?: number
+  /** Total output bytes observed through the kernel ring (`output.total`). */
+  outputTotalBytes?: number
+  /** True when bytes were dropped before the retained tail (ring eviction
+   *  or producer gap) — the panel shows the loss banner. */
+  outputDropped?: boolean
+  /** Producer-retained spill files holding the complete output stream. */
+  spillPaths?: readonly string[]
 }
 
 /**

@@ -10,7 +10,7 @@
   交给 pnpm；pnpm 9 的传递依赖提升行为不同，会让 `dsh-working-activity`
   解析不到，表现为启动后立刻退出且几乎无报错（issue #60，见下方常见问题）。
 - 支持交互输入的终端 TTY。`dsh-tui` 不支持把 stdout 重定向后启动。
-- `DEEPSEEK_API_KEY`。用自定义兼容端点时还可设置 `DEEPSEEK_BASE_URL`。
+- `deepseek-official` 模型路由需要 `DEEPSEEK_API_KEY`；DSH 0.2.0-rc.1+ 的标准 profile 也可通过 `/auth login deepseek-account` 登录独立的 DeepSeek 账号路由。其他支持的账号可用 `/provider` 或 `/auth` 登录。自定义兼容端点还可设置 `DEEPSEEK_BASE_URL`。
 
 macOS/Linux：
 
@@ -272,13 +272,13 @@ pnpm build
 pnpm smoke
 ```
 
-本仓库有三个子模块，其中两个是安装必需：
+本仓库有两个子模块，其中安装必需的是 `vendor/dsh-std`：
 
 - `vendor/dsh-std`：`pnpm-workspace.yaml` 把 `vendor/dsh-std/packages/*` 列为
   workspace 包。
-- `dsh-auth`：经 `link:` 引入。
+- `dsh-ecosystem-spec`：生态适配规范，供契约检查使用。
 
-漏掉 `--recurse-submodules` 会让这两个目录为空，
+漏掉 `--recurse-submodules` 会让这些目录为空，
 `pnpm install --frozen-lockfile` 直接失败。已经克隆过的检出补一条：
 
 ```sh
@@ -385,8 +385,9 @@ dsh plugin --profile dsh-tui add @deepseek-harness-tui/dsh-tui@latest
 
 ### 模型启动失败或提示没有凭证
 
-确认启动 `dsh` 的同一个 Shell 中存在 `DEEPSEEK_API_KEY`。自定义端点同时检查
-`DEEPSEEK_BASE_URL`。
+若使用 `deepseek-official`，确认启动 `dsh` 的同一个 Shell 中存在 `DEEPSEEK_API_KEY`；
+自定义端点同时检查 `DEEPSEEK_BASE_URL`。若使用 `deepseek-account` 或订阅模型，
+用 `/auth status` 检查登录状态，必要时重新运行 `/auth login <provider>`。
 
 ### 工作状态行重复
 
