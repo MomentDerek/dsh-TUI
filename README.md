@@ -159,6 +159,12 @@ the same screen: nothing re-mounts, the draft stays in the composer, and the
 only visible changes are the boot notice going away and the loaded-context
 row appearing.
 
+- Before the session arrives only purely local slash commands run: `/exit`
+  (`/quit`, `/q`), `/help`, `/tips`, `/theme` (not `/theme status`), `/vim`
+  and the session screen (`/resume`, `/home`, `/agentview`), which fills in
+  once dsh is up.
+  Any other command is refused like a prompt, and its text stays in the
+  composer.
 - Opt in from the long command with `DSH_TUI_PREBOOT=1 dsh-tui`; opt out of
   the fast path with `DSH_TUI_PREBOOT=0 dst`.
 - While dsh evaluates its module graph the process is busy, so the echo of

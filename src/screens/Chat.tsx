@@ -1435,12 +1435,27 @@ export function Chat({
     const becameReady = !draftReadyRef.current && channel.ready
     draftReadyRef.current = channel.ready
     if (draftSessionRef.current === draftSessionId) return
+    const previousSessionId = draftSessionRef.current
     draftSessionRef.current = draftSessionId
     // Boot phase → live (`dst` fast start): the agent id goes from the boot
     // channel's empty placeholder to the real one, but no conversation is
     // being REPLACED — this is the session the user was typing at all
     // along, arriving. It adopts the draft instead of clearing it.
-    if (becameReady) return
+    if (becameReady) {
+      // A composer that was unmounted during boot (the session screen opened
+      // from the prompt row) stored its draft under the boot owner — agent
+      // '' and the boot binding generation. Hand it to the live session, or
+      // the restore check refuses it on the way back and the draft is lost.
+      const stored = promptDraftRef.current.current
+      if (stored !== null && stored.ownerAgentId === String(previousSessionId)) {
+        promptDraftRef.current.current = {
+          ...stored,
+          ownerAgentId: String(draftSessionId),
+          bindingGeneration: resolveBindingGeneration(channel),
+        }
+      }
+      return
+    }
     // A stored draft can only belong to the conversation being replaced: the
     // composer is the one that writes it, and it writes it on the way out.
     promptDraftRef.current.current = null

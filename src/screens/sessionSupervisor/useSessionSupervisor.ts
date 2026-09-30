@@ -24,6 +24,7 @@ import type { TuiWorkspaceEntry, TuiWorkspaceTarget } from '../../workspaces.js'
 import type { ChannelUi as Channel } from '../../adapter/channel/ui-policy.js'
 import type { ResumeResult } from '../../adapter/ports/channel-view.js'
 import { resumeFailureText } from '../../sessions/resumeFailure.js'
+import { useChannelReady } from '../../hooks/useChannelReady.js'
 import { RAIL_CHROME_ROWS, WORKSPACE_ROW_LINES, RAIL_MIN_TOTAL_COLUMNS, RAIL_WIDTH_MIN, RAIL_WIDTH_MAX, SESSION_ROW_LINES, SESSION_PANE_CHROME_ROWS, noticeLines, MenuAction, MENU_ACTIONS, MENU_WIDTH, MENU_HEIGHT, MENU_LABEL_KEYS, SupervisorLiveState, RailEntry, UNREGISTERED_RAIL_ID, message, samePath, sessionMatchesQuery } from './model.js'
 
 /**
@@ -116,7 +117,7 @@ export function useSessionSupervisor(input: SessionSupervisorInput) {
    * without this edge a screen opened during boot keeps the boot channel's
    * empty answer forever. Hosts that predate the flag count as ready.
    */
-  const ready = React.useSyncExternalStore(channel.subscribe, () => channel.ready !== false)
+  const ready = useChannelReady(channel)
   /** True while this mount has only ever seen the boot channel. */
   const openedDuringBootRef = useRef(!ready)
 

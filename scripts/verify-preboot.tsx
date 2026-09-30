@@ -28,6 +28,11 @@
  *   7. FATAL: an uncaught error while dsh is still loading tears the boot
  *      screen down, reaches stderr and exits 1 (the #185 process guard must
  *      not rethrow it from its listener — exit 7, terminal left in alt-screen).
+ *   8. BOOT SCREENS: during boot only purely local slash commands run (a
+ *      menu-selected /model or /settings is refused with the text kept, /vim
+ *      runs); the session screen opened during boot gains its foreign-source
+ *      tabs at ready; a draft (vim mode, or text parked via the prompt row's
+ *      ⌸ in fullscreen) survives Esc back to the composer after ready.
  *
  * Run: node --import tsx/esm scripts/verify-preboot.tsx
  */
@@ -162,6 +167,11 @@ function makeLiveChannel() {
     agentId: { enumerable: true, get: () => agentId },
     sessionId: { enumerable: true, value: 'live-agent-0001' },
     model: { enumerable: true, value: 'live-model-x' },
+    // Non-zero, unlike the boot channel's 0: a draft stored under the boot
+    // owner must be rebound, not merely re-keyed by agent id.
+    agentBindingGeneration: { enumerable: true, value: 7 },
+    listForeignSources: { enumerable: true, value: () => Promise.resolve([{ agentId: 'claude-code', label: 'Claude Code' }]) },
+    listForeignSessions: { enumerable: true, value: () => Promise.resolve([]) },
     subscribe: {
       enumerable: true,
       value: (listener: () => void) => {
@@ -381,6 +391,97 @@ try {
 check('fatal: undefined rejection claimed and exits 1', rethrown === undefined && exitCode === 1 && fifth.phase === 'disposed', `${String(rethrown)} ${String(exitCode)}`)
 check('fatal: undefined reason named on stderr', stderr.text.includes('unhandledRejection with undefined reason'), JSON.stringify(stderr.text))
 takePrebootSlot()
+
+// ── 8. boot-phase screens and commands ─────────────────────────────────────
+// Slash commands during boot: only the purely local ones run; the rest are
+// refused like a plain prompt (text kept, not-ready notice) on EVERY dispatch
+// path, including the menu's selected row. A session screen opened during
+// boot lists its foreign-source tabs once the live channel arrives, and a
+// draft parked while it was open comes back after ready.
+{
+  exitCode = undefined
+  const sixth = await mountPreboot({ dshHome, renderOptions, exit: code => { exitCode = code } })
+  await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 })
+  await type('/mo')
+  await settled(() => screen().includes('commands ·'), { timeoutMs: 2000 })
+  await type('\r')
+  check('boot cmd: menu-selected /model refused with the notice', await settled(() => screen().includes('Not ready yet'), { timeoutMs: 2000 }), screen())
+  check('boot cmd: menu-selected /model keeps the draft', sixth.draft() === '/mo', JSON.stringify(sixth.draft()))
+  await type('\x7f\x7f\x7f')
+  await settled(() => sixth.draft() === '', { timeoutMs: 2000 })
+  await type('/settings')
+  await type('\r')
+  await sleep(100) // 固定窗:探针 断言 /settings 不开空设置屏
+  check('boot cmd: /settings refused, draft kept', sixth.draft() === '/settings' && !screen().includes('Settings unavailable'), `${JSON.stringify(sixth.draft())}\n${screen()}`)
+  for (let i = 0; i < '/settings'.length; i++) await type('\x7f')
+  await settled(() => sixth.draft() === '', { timeoutMs: 2000 })
+  await type('/vim')
+  await type('\r')
+  check('boot cmd: /vim runs during boot', await settled(() => sixth.draft() === '' && screen().includes('vim mode on') && screen().includes('INSERT'), { timeoutMs: 2000 }), `${JSON.stringify(sixth.draft())}\n${screen()}`)
+  // The keyboard door to the session screen. The line itself is consumed, but
+  // vim mode rides the parked draft snapshot even with no text.
+  await type('/resume')
+  await type('\r')
+  check('boot screen: /resume opens the session screen during boot', await settled(() => !screen().includes('INSERT'), { timeoutMs: 2000 }), screen())
+  const liveSix = makeLiveChannel()
+  takePrebootSlot()
+  sixth.ready({ channel: liveSix.channel, props: { questionStore: new QuestionStore(), onExit: () => { exitCode = 0 } } })
+  check('boot screen: foreign-source tab appears after ready', await settled(() => screen().includes('Claude Code'), { timeoutMs: 3000 }), screen())
+  await type('\x1b')
+  if (!(await settled(() => screen().includes('❯'), { timeoutMs: 800 }))) await type('\x1b')
+  check('boot screen: vim mode parked during boot survives Esc after ready', await settled(() => screen().includes('❯') && screen().includes('INSERT'), { timeoutMs: 2000 }), screen())
+  sixth.dispose()
+}
+
+// The prompt row's ⌸ is the door that keeps TEXT in the composer while the
+// session screen is open (it needs mouse tracking, so a fullscreen home).
+{
+  const fullHome = join(home, '.dsh-full')
+  mkdirSync(fullHome, { recursive: true })
+  writeFileSync(join(fullHome, 'settings.yaml'), 'dsh-tui:\n  fullscreen: true\n  whale: false\n')
+  exitCode = undefined
+  const seventh = await mountPreboot({ dshHome: fullHome, renderOptions, exit: code => { exitCode = code } })
+  check('boot screen (fullscreen): mounted', await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 }), screen())
+  await type('keep me')
+  await settled(() => seventh.draft() === 'keep me', { timeoutMs: 2000 })
+  const lines = screen().split('\n')
+  const homeRow = lines.findIndex(line => line.includes('⌸') && line.includes('keep me'))
+  const homeCol = homeRow < 0 ? -1 : lines[homeRow]!.indexOf('⌸')
+  check('boot screen (fullscreen): ⌸ on the prompt row', homeRow >= 0, screen())
+  stdin.write(`\x1b[<0;${homeCol + 1};${homeRow + 1}M`)
+  stdin.write(`\x1b[<0;${homeCol + 1};${homeRow + 1}m`)
+  check('boot screen (fullscreen): ⌸ opens the session screen during boot', await settled(() => !screen().includes('keep me'), { timeoutMs: 2000 }), screen())
+  const liveSeven = makeLiveChannel()
+  takePrebootSlot()
+  seventh.ready({ channel: liveSeven.channel, props: { questionStore: new QuestionStore(), onExit: () => { exitCode = 0 } } })
+  await settled(() => screen().includes('Claude Code'), { timeoutMs: 3000 })
+  await type('\x1b')
+  if (!(await settled(() => screen().includes('keep me'), { timeoutMs: 800 }))) await type('\x1b')
+  check('boot screen (fullscreen): text draft parked during boot survives Esc after ready', await settled(() => seventh.draft() === 'keep me' && screen().includes('keep me'), { timeoutMs: 2000 }), `${JSON.stringify(seventh.draft())}\n${screen()}`)
+  seventh.dispose()
+  takePrebootSlot()
+}
+
+// /exit during boot is a deliberate exit like the double Ctrl+C: 0, boot
+// screen torn down.
+{
+  exitCode = undefined
+  const exiting = await mountPreboot({ dshHome, renderOptions, exit: code => { exitCode = code } })
+  await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 })
+  // /lang would lose its settings-layer mirror (the boot channel has no
+  // settings host), so it waits for the session like any other command.
+  await type('/lang en ')
+  await type('\r')
+  await sleep(100) // 固定窗:探针 断言 /lang 不执行、文字留在输入框
+  check('boot cmd: /lang refused, draft kept', exiting.draft() === '/lang en ' && exitCode === undefined, JSON.stringify(exiting.draft()))
+  for (let i = 0; i < '/lang en '.length; i++) await type('\x7f')
+  await settled(() => exiting.draft() === '', { timeoutMs: 2000 })
+  await type('/exit')
+  await type('\r')
+  check('boot cmd: /exit during boot exits 0', await settled(() => exitCode === 0, { timeoutMs: 2000 }), `${String(exitCode)}\n${screen()}`)
+  check('boot cmd: /exit tears the boot screen down', exiting.phase === 'disposed', exiting.phase)
+  takePrebootSlot()
+}
 
 terminal.dispose()
 if (failures > 0) {
