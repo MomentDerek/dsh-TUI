@@ -40,7 +40,7 @@ import { writeRendererDecision } from '../rendererPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, applyPageMargin, isPageMarginMode, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, applyPageMargin, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -573,6 +573,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // screen edits this key live through the dsh-tui namespace.
     diffLayout: config.diffLayout,
     thinkingFold: config.thinkingFold,
+    jobGroupFold: config.jobGroupFold,
     toolBackground: config.toolBackground,
     scrollGutter: config.scrollGutter,
     pageMargin: config.pageMargin,
@@ -671,6 +672,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       Schema.object({
         diffLayout: Schema.union(['auto', 'split', 'unified']).default('auto'),
         thinkingFold: Schema.union(['preview', 'full']).default('preview'),
+        jobGroupFold: Schema.union(['auto', 'always', 'never']).default('auto'),
         toolBackground: Schema.union(['none', 'subtle', 'strong']).default('none'),
         scrollGutter: Schema.union(['timeline', 'scrollbar', 'hidden']).default('timeline'),
         // Preset names AND custom `NxM` specs (the settings field's parse
@@ -783,6 +785,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       fullscreen?: boolean
       terminalImages?: boolean
       thinkingFold?: 'preview' | 'full'
+      jobGroupFold?: 'auto' | 'always' | 'never'
       effortDefault?: string
       toolBackground?: ToolBackground
       scrollGutter?: ScrollGutterMode
@@ -851,6 +854,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     const applyDisplay = (value: SettingsValue): void => {
       if (shadow) return
       channel.setThinkingFold(value.thinkingFold ?? config.thinkingFold ?? 'preview')
+      channel.setJobGroupFold(normalizeJobGroupFold(value.jobGroupFold ?? config.jobGroupFold))
       channel.setToolBackground(normalizeToolBackground(value.toolBackground ?? config.toolBackground))
       channel.setScrollGutter(normalizeScrollGutter(value.scrollGutter ?? config.scrollGutter))
       // Page margin: the channel carries the mode (tests observe it), the
@@ -1038,6 +1042,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           ...settingField('thinkingFold'),
+        },
+        {
+          ...settingField('jobGroupFold'),
         },
         {
           ...settingField('toolBackground'),

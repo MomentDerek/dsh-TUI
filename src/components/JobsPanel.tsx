@@ -12,6 +12,9 @@ import { isMinimalUiMode } from '../minimalUiMode.js'
 
 export interface JobsPanelProps {
   jobs: readonly BackgroundJobState[]
+  /** Focus this job on open (a transcript card click opens the panel AT its
+   *  job); absent or unknown ids fall back to the roster head. */
+  initialFocusId?: string
   onClose: () => void
   /** Kill the focused live job (`job_kill` with the session's authority). */
   onKill: (id: string) => void
@@ -114,8 +117,12 @@ function JobRowLine({ job, focused, armed, showProgress, onFocus }: {
         <Box width={9} flexShrink={0}>
           <Text bold={focused} color={focused ? 'accent' : undefined} wrap="truncate-end">{job.id}</Text>
         </Box>
+        {/* The label is the row's flexible column and WRAPS: a long command
+          * folds onto the following lines (hanging under its own column)
+          * instead of collapsing to an ellipsis when the terminal is narrow.
+          * The id, progress, duration and status columns keep their grid. */}
         <Box flexGrow={1} flexShrink={1}>
-          <Text bold={focused} wrap="truncate-end">{job.label}</Text>
+          <Text bold={focused}>{job.label}</Text>
         </Box>
         {showProgress === true && (
           <Box width={11} flexShrink={0} justifyContent="flex-end">
@@ -143,12 +150,16 @@ function JobRowLine({ job, focused, armed, showProgress, onFocus }: {
           {job.command !== undefined && job.command !== '' && job.command !== job.label && (
             <Box flexDirection="row" gap={1}>
               <Box width={7} flexShrink={0}><Text dimColor>{t('jobs-panel-command')}</Text></Box>
-              <Text dimColor wrap="truncate-end">{job.command}</Text>
+              {/* Detail values WRAP: a long command, a long path or a wide
+                * output line must be readable in full here — the panel is the
+                * deep view, and a clipped one-liner was the "a long line shows
+                * nothing" report. */}
+              <Text dimColor>{job.command}</Text>
             </Box>
           )}
           <Box flexDirection="row" gap={1}>
             <Box width={7} flexShrink={0}><Text dimColor>{t('jobs-panel-started')}</Text></Box>
-            <Text dimColor wrap="truncate-end">
+            <Text dimColor>
               {timeOf(job.startedAt)
                 + (job.finishedAt !== undefined ? ` · ${t('jobs-panel-finished')} ${timeOf(job.finishedAt)}` : '')
                 + (job.lastOutputAt !== undefined ? ` · ${t('jobs-panel-output-at')} ${timeOf(job.lastOutputAt)}` : '')}
@@ -157,7 +168,7 @@ function JobRowLine({ job, focused, armed, showProgress, onFocus }: {
           {(job.outputTotalBytes !== undefined || job.outputDropped === true) && (
             <Box flexDirection="row" gap={1}>
               <Box width={7} flexShrink={0}><Text dimColor>{t('jobs-panel-output')}</Text></Box>
-              <Text dimColor wrap="truncate-end">
+              <Text dimColor>
                 {(job.outputTotalBytes !== undefined ? formatBytes(job.outputTotalBytes) : '')
                   + (job.outputDropped === true
                     ? `${job.outputTotalBytes !== undefined ? ' · ' : ''}${t('jobs-output-dropped')}`
@@ -167,7 +178,7 @@ function JobRowLine({ job, focused, armed, showProgress, onFocus }: {
           )}
           {job.spillPaths !== undefined && job.spillPaths.length > 0 && (
             <Box paddingLeft={8}>
-              <Text dimColor wrap="truncate-end">
+              <Text dimColor>
                 {t('jobs-output-spill', { path: job.spillPaths[job.spillPaths.length - 1] ?? '' })}
               </Text>
             </Box>
@@ -181,7 +192,7 @@ function JobRowLine({ job, focused, armed, showProgress, onFocus }: {
                   marginTop={runIndex === 0 ? 0 : 1}
                 >
                   {run.kind === 'gap' && (
-                    <Text dimColor italic wrap="truncate-end">{t('jobs-output-gap')}</Text>
+                    <Text dimColor italic>{t('jobs-output-gap')}</Text>
                   )}
                   {run.kind === 'markdown' && (
                     // stdout prose (a subagent job's report, an agent's
@@ -190,16 +201,16 @@ function JobRowLine({ job, focused, armed, showProgress, onFocus }: {
                     <Markdown cacheTokens>{run.text}</Markdown>
                   )}
                   {run.kind === 'stderr' && (
-                    <Text color="error" wrap="truncate-end">{`│ ${run.text}`}</Text>
+                    <Text color="error">{`│ ${run.text}`}</Text>
                   )}
                   {run.kind === 'log' && (
-                    <Text dimColor italic wrap="truncate-end">{`│ ${run.text}`}</Text>
+                    <Text dimColor italic>{`│ ${run.text}`}</Text>
                   )}
                 </Box>
               ))}
             </Box>
           ) : (
-            <Text dimColor wrap="truncate-end">{t('jobs-panel-no-output-yet')}</Text>
+            <Text dimColor>{t('jobs-panel-no-output-yet')}</Text>
           )}
         </Box>
       )}
@@ -221,8 +232,23 @@ function timeOf(ms: number): string {
  * row expands a detail block (full label, start/finish times, mirrored
  * output tail). The panel is the deep view behind the transcript job cards.
  */
-export function JobsPanel({ jobs, onClose, onKill }: JobsPanelProps): React.ReactNode {
-  const [focusIndex, setFocusIndex] = React.useState(0)
+export function JobsPanel({ jobs, onClose, onKill, initialFocusId }: JobsPanelProps): React.ReactNode {
+  const [focusIndex, setFocusIndex] = React.useState(() => {
+    if (initialFocusId === undefined) return 0
+    const found = jobs.findIndex(job => job.id === initialFocusId)
+    return found >= 0 ? found : 0
+  })
+  // A card click may race the roster: the id can land after the panel opened
+  // (late kernel push), so re-apply once when it first becomes findable.
+  const initialFocusApplied = React.useRef(initialFocusId === undefined)
+  React.useEffect(() => {
+    if (initialFocusApplied.current || initialFocusId === undefined) return
+    const found = jobs.findIndex(job => job.id === initialFocusId)
+    if (found < 0) return
+    initialFocusApplied.current = true
+    setFocusIndex(found)
+    scrollRef.current?.scrollTo(Math.max(0, found - 2))
+  }, [jobs, initialFocusId])
   /** Armed kill: first `k` primes, second within the window confirms; any
    *  navigation or other key disarms. Mirrors the web two-press stop. */
   const [killArmed, setKillArmed] = React.useState<string | undefined>(undefined)
@@ -230,6 +256,16 @@ export function JobsPanel({ jobs, onClose, onKill }: JobsPanelProps): React.Reac
   const { rows } = useTerminalSize()
   // 1s tick keeps live durations counting while the panel is open.
   const [clockRef] = useAnimationFrame(1000)
+
+  // Bring an initial deep focus into view on mount (rows are ~1 line each;
+  // two rows of headroom above reads better than pinning to the top edge).
+  React.useEffect(() => {
+    if (initialFocusId === undefined || initialFocusApplied.current === false) return
+    if (initialFocusId !== undefined && jobs.findIndex(job => job.id === initialFocusId) > 2) {
+      scrollRef.current?.scrollTo(Math.max(0, jobs.findIndex(job => job.id === initialFocusId) - 2))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only scroll placement
+  }, [])
 
   const focus = Math.min(focusIndex, Math.max(0, jobs.length - 1))
 
