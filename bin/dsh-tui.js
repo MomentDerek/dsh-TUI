@@ -790,16 +790,15 @@ const resolvePrebootLaunch = () => {
 const startDshSession = (dshArgs, profile = PROFILE, env = process.env, { preboot = false } = {}) =>
   new Promise(resolve => {
     const fast = preboot ? resolvePrebootLaunch() : undefined
-    const childEnv = withGuideSkillDir(env)
     const child = fast === undefined
       ? spawn(...cmd('dsh', ['--profile', profile, ...dshArgs]), {
           stdio: 'inherit',
-          env: childEnv,
+          env: withGuideSkillDir(env),
           ...shellOpt,
         })
       : spawn(process.execPath, ['--import', fast.preload, fast.dshEntry, '--profile', profile, ...dshArgs], {
           stdio: 'inherit',
-          env: childEnv,
+          env: withGuideSkillDir(env),
         })
     child.on('error', err => resolve({ kind: 'error', error: err }))
     child.on('exit', (code, signal) => {
