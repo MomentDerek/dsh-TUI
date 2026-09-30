@@ -364,7 +364,9 @@ if (!isWin) {
   symlinkSync(join(jsStubDir, 'dsh-real.js'), join(jsStubDir, 'dsh'))
   writeFileSync(join(jsStubDir, 'pnpm'), '#!/bin/sh\nexit 0\n')
   chmodSync(join(jsStubDir, 'pnpm'), 0o755)
-  const jsPath = [jsStubDir, '/usr/bin', '/bin'].join(sep)
+  // The stub's `#!/usr/bin/env node` must resolve even when node lives under
+  // nvm/fnm/Homebrew/a CI toolcache: add only node's own dir after the stub dir.
+  const jsPath = [jsStubDir, dirname(process.execPath), '/usr/bin', '/bin'].join(sep)
   resetStubLog()
   r = runBin(['bar'], { PATH: jsPath, DSH_TUI_PREBOOT: '1' })
   const fastCall = stubCalls().at(-1) ?? ''
@@ -386,6 +388,24 @@ if (!isWin) {
     encoding: 'utf8',
   })
   check('dst: DSH_TUI_PREBOOT=0 opts out', stubCalls().at(-1) === '<--profile><dsh-tui><--><baz>', stubCalls().at(-1))
+  // One-shot DSH host switches print and exit: they must not run under the
+  // preload, whose alt-screen exit (?1049l) would wipe their output. A leading
+  // `--version` is the launcher's own subcommand, so it only reaches dsh behind
+  // another host flag; cover both the bare and the prefixed form.
+  const hostSwitches = ['--dump-config', '--dump-default-config', '--dump-config-schema', '-V', '--version']
+  const switchCases = [
+    ...hostSwitches.filter(sw => sw !== '--version').map(sw => [sw]),
+    ...hostSwitches.map(sw => ['--patch', 'p.yml', sw]),
+  ]
+  for (const argv of switchCases) {
+    resetStubLog()
+    r = spawnSync(process.execPath, [join(root, 'bin', 'dst.js'), ...argv], {
+      env: { PATH: jsPath, HOME: tmp, DSH_HOME: home, DSH_STUB_LOG: stubLog, DSH_STUB_PKG_VERSION: ownVersion, NODE_OPTIONS: '--no-deprecation', DSH_TUI_NO_DELEGATE: '1' },
+      encoding: 'utf8',
+    })
+    const want = ['--profile', 'dsh-tui', ...argv].map(v => `<${v}>`).join('')
+    check(`dst ${argv.join(' ')}: plain dsh, no preload`, stubCalls().at(-1) === want && r.status === 0, stubCalls().at(-1))
+  }
 }
 
 // --- 5. 消息双语：缺 dsh 时的报错（契约同 TUI：DSH_TUI_LANG 指定才生效，否则默认中文）

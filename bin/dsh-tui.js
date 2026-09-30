@@ -1479,5 +1479,9 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // DSH consumes its own --; only the app tail belongs behind it. Preserve
   // the app-level separator too, and replay this same argv on a safe retry.
   const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
-  settleFirstResult(await startDshSession(firstArgs, PROFILE, process.env, { preboot: prebootRequested() }), firstArgs)
+  // One-shot host switches (--version, --dump-config*) print and exit; under
+  // the preload their output would be wiped by the alt-screen exit, so they
+  // always take the plain path.
+  const oneShot = hostArgs.some(a => dshSwitches.has(a))
+  settleFirstResult(await startDshSession(firstArgs, PROFILE, process.env, { preboot: prebootRequested() && !oneShot }), firstArgs)
 }
