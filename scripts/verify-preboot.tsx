@@ -20,7 +20,8 @@
  *   5. GOING LIVE: after `ready()` the same Chat shows the live model, the
  *      hint is gone, the draft is still in the composer, a live-channel
  *      notification reaches the screen through the pre-live subscription,
- *      and Enter now submits.
+ *      Enter now submits, and the handoff writes no scrollback/screen clear
+ *      (a later real session switch still repaints).
  *   6. FALLBACK + EXIT: `draft()` + `dispose()` carry the text into a fresh
  *      slot mounted already live (renderer mismatch path); a double Ctrl+C in
  *      the boot phase exits with 0 (a user exit, like the live funnel); the published slot is taken exactly once.
@@ -95,8 +96,11 @@ class FakeStdout extends Writable {
   columns = COLS
   rows = ROWS
   isTTY = true
+  /** Every byte written, for escape-sequence assertions. */
+  written = ''
   constructor(private readonly terminal: InstanceType<typeof XTerm>) { super() }
   _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void {
+    this.written += String(chunk)
     this.terminal.write(String(chunk), callback)
   }
 }
@@ -137,6 +141,7 @@ function makeLiveChannel() {
   const base = createBootChannel({ model: 'boot', effort: undefined, cwd: '/tmp/live', gitBranch: undefined, settings: {} })
   const listeners = new Set<() => void>()
   let version = 500
+  let agentId = 'live-agent-0001'
   let notifications: { id: number; text: string; timeoutMs: number }[] = []
   const submitted: string[] = []
   const emit = (): void => {
@@ -154,7 +159,7 @@ function makeLiveChannel() {
     notifications: { enumerable: true, get: () => notifications },
     ready: { enumerable: true, value: true },
     status: { enumerable: true, value: 'idle' },
-    agentId: { enumerable: true, value: 'live-agent-0001' },
+    agentId: { enumerable: true, get: () => agentId },
     sessionId: { enumerable: true, value: 'live-agent-0001' },
     model: { enumerable: true, value: 'live-model-x' },
     subscribe: {
@@ -184,7 +189,12 @@ function makeLiveChannel() {
       },
     },
   })
-  return { channel: Object.freeze(live) as unknown as ChannelUi, submitted, emit, listenerCount: () => listeners.size }
+  /** A real session switch on the live channel (resume, /new). */
+  const switchAgent = (id: string): void => {
+    agentId = id
+    emit()
+  }
+  return { channel: Object.freeze(live) as unknown as ChannelUi, submitted, emit, switchAgent, listenerCount: () => listeners.size }
 }
 
 // ── 1. settings layer → decisions ───────────────────────────────────────────
@@ -275,17 +285,27 @@ check('edit: bracketed paste inserts (wide chars)', await settled(() => slot.dra
 const live = makeLiveChannel()
 const versionBefore = slot.channel.version
 check('live: taking the slot removes it', takePrebootSlot() === slot && takePrebootSlot() === undefined)
+const bytesBeforeReady = stdout.written.length
 slot.ready({ channel: live.channel, props: { questionStore: new QuestionStore(), onExit: () => { exitCode = 0 } } })
 check('live: phase and channel flip in place', slot.phase === 'ready' && slot.channel.ready === true && slot.channel.version > versionBefore)
 check('live: same instance, no re-mount', instances.get(stdout as never) === liveInstance)
 check('live: boot hint gone', await settled(() => !screen().includes(BOOT_HINT), { timeoutMs: 2000 }), screen())
 check('live: live model on the status line', await settled(() => screen().includes('live-model-x'), { timeoutMs: 2000 }), screen())
 check('live: draft survived the session arriving', slot.draft() === 'hell 世界' && screen().includes('hell 世界'), slot.draft())
+// The live id arriving is adoption, not a session switch: the switch path's
+// scrollback clear (CSI 3J + 2J) would wipe inline scrollback and flash the
+// screen at the handoff. Give its setTimeout(0) repaint time to fire.
+await sleep(150) // 固定窗:探针 断言切换路径的 setTimeout(0) 重绘不发生
+const handoffBytes = stdout.written.slice(bytesBeforeReady)
+check('live: handoff writes no scrollback/screen clear', !handoffBytes.includes('\x1b[3J') && !handoffBytes.includes('\x1b[2J'), JSON.stringify(handoffBytes.slice(0, 200)))
 live.channel.notify('LIVE NOTICE ARRIVED', { timeoutMs: 0 })
 check('live: a live notification reaches the screen (pre-live subscription)', await settled(() => screen().includes('LIVE NOTICE ARRIVED'), { timeoutMs: 2000 }), screen())
 await type('\r')
 check('live: Enter now submits the draft', await settled(() => live.submitted[0] === 'hell 世界', { timeoutMs: 2000 }), JSON.stringify(live.submitted))
 check('live: composer cleared after the send', await settled(() => slot.draft() === '', { timeoutMs: 2000 }), slot.draft())
+const bytesBeforeSwitch = stdout.written.length
+live.switchAgent('live-agent-0002')
+check('live: a real session switch afterwards still repaints', await settled(() => stdout.written.slice(bytesBeforeSwitch).includes('\x1b[3J'), { timeoutMs: 2000 }))
 let readyTwiceThrew = false
 try { slot.ready({ channel: live.channel, props: { questionStore: new QuestionStore(), onExit: () => {} } }) } catch { readyTwiceThrew = true }
 check('live: ready() is one-shot', readyTwiceThrew)

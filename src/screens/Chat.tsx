@@ -929,9 +929,17 @@ export function Chat({
     }, 0)
   }
   const lastAgentIdRef = React.useRef<string | undefined>(undefined)
+  /** `channel.ready` as of the last run, for the boot edge below. */
+  const switchReadyRef = React.useRef(channel.ready)
   React.useEffect(() => {
     const id = channel.agentId
-    if (lastAgentIdRef.current === undefined) {
+    const becameReady = !switchReadyRef.current && channel.ready
+    switchReadyRef.current = channel.ready
+    // Boot phase → live (`dst` fast start): the id goes from the boot
+    // channel's empty placeholder to the real one, but no session is being
+    // replaced — nothing to reset, and the scrollback clear below would wipe
+    // inline scrollback and flash the screen at the handoff. Adopt it.
+    if (lastAgentIdRef.current === undefined || becameReady) {
       lastAgentIdRef.current = id
       return
     }
@@ -949,7 +957,7 @@ export function Chat({
     setSearchCurrent(0)
     closeBtw()
     repaintTranscript()
-  }, [channel.agentId]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [channel.agentId, channel.ready]) // eslint-disable-line react-hooks/exhaustive-deps
   /** The session attached when the agent view opened; a close on a
    *  DIFFERENT session means a switch happened inside the view, and the
    *  transcript repaint cannot be skipped. */
