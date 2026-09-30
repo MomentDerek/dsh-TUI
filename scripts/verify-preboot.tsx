@@ -452,17 +452,22 @@ takePrebootSlot()
   await type('\x7f\x7f\x7f')
   await settled(() => sixth.draft() === '', { timeoutMs: 2000 })
   await type('/settings')
+  // Enter goes in as its own event once the text has landed: under CI load two
+  // back-to-back writes can coalesce into one chunk (e.g. `e\r`).
+  await settled(() => sixth.draft() === '/settings', { timeoutMs: 2000 })
   await type('\r')
   await sleep(100) // 固定窗:探针 断言 /settings 不开空设置屏
   check('boot cmd: /settings refused, draft kept', sixth.draft() === '/settings' && !screen().includes('Settings unavailable'), `${JSON.stringify(sixth.draft())}\n${screen()}`)
   for (let i = 0; i < '/settings'.length; i++) await type('\x7f')
   await settled(() => sixth.draft() === '', { timeoutMs: 2000 })
   await type('/vim')
+  await settled(() => sixth.draft() === '/vim', { timeoutMs: 2000 })
   await type('\r')
   check('boot cmd: /vim runs during boot', await settled(() => sixth.draft() === '' && screen().includes('vim mode on') && screen().includes('INSERT'), { timeoutMs: 2000 }), `${JSON.stringify(sixth.draft())}\n${screen()}`)
   // The keyboard door to the session screen. The line itself is consumed, but
   // vim mode rides the parked draft snapshot even with no text.
   await type('/resume')
+  await settled(() => sixth.draft() === '/resume', { timeoutMs: 2000 })
   await type('\r')
   check('boot screen: /resume opens the session screen during boot', await settled(() => !screen().includes('INSERT'), { timeoutMs: 2000 }), screen())
   const liveSix = makeLiveChannel()
@@ -513,6 +518,7 @@ takePrebootSlot()
   // /lang would lose its settings-layer mirror (the boot channel has no
   // settings host), so it waits for the session like any other command.
   await type('/lang en ')
+  await settled(() => exiting.draft() === '/lang en ', { timeoutMs: 2000 })
   await type('\r')
   await sleep(100) // 固定窗:探针 断言 /lang 不执行、文字留在输入框
   check('boot cmd: /lang refused, draft kept', exiting.draft() === '/lang en ' && exitCode === undefined, JSON.stringify(exiting.draft()))
@@ -526,6 +532,7 @@ takePrebootSlot()
   for (let i = 0; i < 'piped line'.length; i++) await type('\x7f')
   await settled(() => exiting.draft() === '', { timeoutMs: 2000 })
   await type('/exit')
+  await settled(() => exiting.draft() === '/exit', { timeoutMs: 2000 })
   await type('\r')
   check('boot cmd: /exit during boot exits 0', await settled(() => exitCode === 0, { timeoutMs: 2000 }), `${String(exitCode)}\n${screen()}`)
   check('boot cmd: /exit tears the boot screen down', exiting.phase === 'disposed', exiting.phase)
@@ -558,6 +565,7 @@ const HOME_TITLE = '▣ Sessions'
   await type('\x1b')
   const closedHome = await settled(() => !screen().includes(HOME_TITLE) && screen().includes(BOOT_HINT), { timeoutMs: 2000 })
   await type('/home')
+  await settled(() => reopened.draft() === '/home', { timeoutMs: 2000 })
   await type('\r')
   const reopenedHome = await settled(() => screen().includes(HOME_TITLE), { timeoutMs: 2000 })
   takePrebootSlot()
