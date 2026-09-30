@@ -47,6 +47,15 @@
  *      prints why on the real stderr and exits non-zero; a slot that was
  *      taken or went live disarms it; a process exit while still booting
  *      restores the terminal and never reports success.
+ *  12. HOST COMPOSITION: on a 0.1.7+ host (app-boot exports
+ *      `readProfilePatches`) the settings come from the host-composed
+ *      `dsh-tui` row — profile dir, home and `--patch` overlays passed
+ *      through, the host's stderr muted during the call — with a leftover
+ *      settings.yaml layered on top; a host whose settings service still
+ *      has `register()` resolves its legacy document through the plugin's
+ *      settings schema first (`value ?? config`); an older host, a
+ *      non-profile launch, an unresolvable entry or a throwing host all fall
+ *      back to settings.yaml.
  *
  * Run: node --import tsx/esm scripts/verify-preboot.tsx
  */
@@ -96,7 +105,7 @@ writeFileSync(join(dshHome, 'settings.yaml'), [
 
 const { Terminal: XTerm } = xterm
 const [
-  { decidePreboot, mountPreboot, readTuiSettingsLayer },
+  { decidePreboot, mountPreboot, readPrebootSettingsLayer, readTuiSettingsLayer },
   { peekPrebootSlot, takePrebootSlot },
   { mountChatHost },
   { createBootChannel },
@@ -701,6 +710,130 @@ const HOME_TITLE = '▣ Sessions'
   check('backstop (real stack): stderr restored after teardown', /PHASE=disposed/.test(real.stderr), real.stderr.slice(-600))
   check('backstop (real stack): cursor shown and alt-screen left', /CURSOR=true ALT=(true|n\/a)/.test(real.stderr), real.stderr.slice(-600))
   check('backstop (real stack): exit 0 while booting becomes non-zero', real.status !== 0 && real.status !== null, `status=${real.status}`)
+}
+
+// ── 12. host-composed settings (0.1.7+ hosts) ──────────────────────────────
+{
+  const root = join(home, 'fake-hosts')
+  rmSync(root, { recursive: true, force: true })
+  /**
+   * A dsh install: package.json + lib/bin.js + its own app-boot copy. The
+   * fake composes like the real one only as far as the preload relies on
+   * it: it echoes the context it was handed into the dsh-tui row, applies
+   * overlays last-wins by id, and chatters on stderr like 0.1.7-rc.1 does
+   * for a skipped bundle.
+   */
+  const fakeHost = (name: string, appBoot: string, settings?: string): string => {
+    const dir = join(root, name)
+    mkdirSync(join(dir, 'lib'), { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', type: 'module' }))
+    writeFileSync(join(dir, 'lib', 'bin.js'), '')
+    const bootDir = join(dir, 'node_modules', '@deepseek-ai', 'dsh-app-boot')
+    mkdirSync(bootDir, { recursive: true })
+    writeFileSync(join(bootDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-app-boot', type: 'module', exports: { '.': { default: './index.js' } } }))
+    writeFileSync(join(bootDir, 'index.js'), appBoot)
+    if (settings !== undefined) {
+      const settingsDir = join(dir, 'node_modules', '@deepseek-ai', 'dsh-settings')
+      mkdirSync(settingsDir, { recursive: true })
+      writeFileSync(join(settingsDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-settings', type: 'module', exports: { '.': { default: './index.js' } } }))
+      writeFileSync(join(settingsDir, 'index.js'), settings)
+    }
+    return join(dir, 'lib', 'bin.js')
+  }
+  const modernBoot = [
+    "import { readFileSync } from 'node:fs'",
+    "import { join } from 'node:path'",
+    'export function loadProfileDirectory() { return {} }',
+    'export function loadOverlayPatches(_bin, file) { return JSON.parse(readFileSync(file, "utf8")) }',
+    'export function resolveProfileDir(name, home) { return join(home, "profiles", name) }',
+    'export function readProfilePatches(_bin, ctx) {',
+    "  process.stderr.write('dsh: skipping profile bundle x\\n')",
+    "  return [{ id: 'dsh-tui', config: { pageMargin: 'slim', whale: false, statusBar: { tps: true, cost: false }, preset: { __jsExpr: 'process.env.X' }, seenDir: ctx.dir, seenHome: ctx.home, seenAnchor: ctx.installAnchor, seenPatchPath: ctx.patchPath } }, ...ctx.overlays]",
+    '}',
+    'export function composeEntries(layers) {',
+    '  const rows = new Map()',
+    '  for (const row of layers.flat()) rows.set(row.id, { ...rows.get(row.id), ...row })',
+    '  return [...rows.values()]',
+    '}',
+    '',
+  ].join('\n')
+  const modern = fakeHost('modern', modernBoot, 'export class SettingsForms { describe() { return [] } }\n')
+  // A 0.1.7+ host whose settings service is patched back to register().
+  const patched = fakeHost('patched', modernBoot, 'export class SettingsForms { register() {} }\n')
+  // 0.1.5: loadProfileDirectory but no readProfilePatches; settings.yaml era.
+  const older = fakeHost('older', 'export function loadProfileDirectory() { return {} }\nexport function composeEntries() { return [] }\n')
+  const broken = fakeHost('broken', modernBoot.replace("process.stderr.write('dsh: skipping", "throw new Error('broken'); process.stderr.write('"))
+  const composedHome = join(root, 'dsh-home')
+  mkdirSync(composedHome, { recursive: true })
+  const profileArgv = ['--profile', 'dsh-tui', '--', 'hello']
+
+  // Record the real stderr to prove the host's chatter never reaches it.
+  const realWrite = process.stderr.write
+  let leaked = ''
+  process.stderr.write = ((chunk: unknown) => {
+    leaked += String(chunk)
+    return true
+  }) as typeof process.stderr.write
+  let composed: Record<string, unknown>
+  try {
+    composed = await readPrebootSettingsLayer({ dshHome: composedHome, argv: profileArgv, hostEntry: modern })
+  } finally {
+    process.stderr.write = realWrite
+  }
+  check('host: composed dsh-tui row is the settings layer', composed.pageMargin === 'slim' && composed.whale === false, JSON.stringify(composed))
+  check('host: profile dir resolved under $DSH_HOME/profiles', composed.seenDir === join(composedHome, 'profiles', 'dsh-tui') && composed.seenHome === composedHome, String(composed.seenDir))
+  check('host: the profile patch path is the profile\'s cordis.patch.yml', composed.seenPatchPath === join(composedHome, 'profiles', 'dsh-tui', 'cordis.patch.yml'), String(composed.seenPatchPath))
+  check('host: install anchor is the host package.json', composed.seenAnchor === join(root, 'modern', 'package.json'), String(composed.seenAnchor))
+  check('host: stderr muted during composition and restored', leaked === '' && process.stderr.write === realWrite, JSON.stringify(leaked))
+  const composedDecisions = decidePreboot(composed)
+  check('host: !!js values are ignored, not misread', composedDecisions.fullscreen === true && composedDecisions.minimalUi === false)
+
+  // --patch overlays (dsh's repeatable collector) reach the composition.
+  const overlay = join(root, 'overlay.json')
+  writeFileSync(overlay, JSON.stringify([{ id: 'dsh-tui', config: { pageMargin: 'roomy', effortDefault: 'high' } }]))
+  const withOverlay = await readPrebootSettingsLayer({ dshHome: composedHome, argv: ['--profile', 'dsh-tui', `--patch=${overlay}`, '--', '--patch', 'not-a-host-flag'], hostEntry: modern })
+  check('host: --patch overlays compose over the profile', withOverlay.pageMargin === 'roomy' && decidePreboot(withOverlay).effort === 'high', JSON.stringify(withOverlay))
+
+  // A settings.yaml still on disk is imported on this boot, so it wins; the
+  // status bar merges key by key like the host's layer merge.
+  writeFileSync(join(composedHome, 'settings.yaml'), 'dsh-tui:\n  pageMargin: none\n  statusBar:\n    cost: true\n')
+  const pending = await readPrebootSettingsLayer({ dshHome: composedHome, argv: profileArgv, hostEntry: modern })
+  const pendingBar = pending.statusBar as Record<string, unknown> | undefined
+  check('host: leftover settings.yaml layers over the composed row', pending.pageMargin === 'none' && pending.whale === false, JSON.stringify(pending))
+  check('host: statusBar merges per key', pendingBar?.tps === true && pendingBar?.cost === true, JSON.stringify(pendingBar))
+
+  // register() service: the plugin reads the service's legacy document
+  // through its settings schema (defaults decide), Config fills the rest.
+  const patchedHome = join(root, 'patched-home')
+  mkdirSync(patchedHome, { recursive: true })
+  writeFileSync(join(patchedHome, 'settings.yaml.imported'), 'dsh-tui:\n  effortDefault: high\n  whaleGirl: true\n')
+  const patchedArgv = ['--profile', 'dsh-tui', '--']
+  const legacyLayer = await readPrebootSettingsLayer({ dshHome: patchedHome, argv: patchedArgv, hostEntry: patched })
+  check('legacy host: document values win', legacyLayer.effortDefault === 'high' && legacyLayer.whaleGirl === true, JSON.stringify(legacyLayer))
+  // Config says whale: false; the document is silent, and the schema's
+  // default decides — exactly what register() hands the live plugin.
+  check('legacy host: a schema default shadows Config (as register() does)', legacyLayer.whale === true && legacyLayer.toolBackground === 'none', JSON.stringify(legacyLayer))
+  // pageMargin's default sits inside a transform, so an absent field resolves
+  // to undefined and the plugin's `?? config.pageMargin` takes the Config value.
+  check('legacy host: a field the schema leaves unset falls through to Config', legacyLayer.pageMargin === 'slim' && legacyLayer.seenDir === join(patchedHome, 'profiles', 'dsh-tui'), JSON.stringify(legacyLayer))
+  writeFileSync(join(patchedHome, 'settings-legacy.yaml'), 'dsh-tui:\n  pageMargin: roomy\n')
+  const rewritten = await readPrebootSettingsLayer({ dshHome: patchedHome, argv: patchedArgv, hostEntry: patched })
+  check('legacy host: the service\'s own settings-legacy.yaml beats .imported', rewritten.pageMargin === 'roomy' && rewritten.whaleGirl === false, JSON.stringify(rewritten))
+  const configOnly = await readPrebootSettingsLayer({ dshHome: patchedHome, argv: patchedArgv, hostEntry: modern })
+  check('host: a Config-only service ignores the legacy documents', configOnly.pageMargin === 'slim' && configOnly.whaleGirl === undefined, JSON.stringify(configOnly))
+
+  // Fallbacks: every one reads settings.yaml only.
+  const fallbackOf = (argv: readonly string[], hostEntry: string | undefined) =>
+    readPrebootSettingsLayer({ dshHome: composedHome, argv, hostEntry })
+  const olderLayer = await fallbackOf(profileArgv, older)
+  check('host: an older host (no readProfilePatches) falls back to settings.yaml', olderLayer.pageMargin === 'none' && olderLayer.whale === undefined, JSON.stringify(olderLayer))
+  const noProfile = await fallbackOf(['--', 'hello'], modern)
+  check('host: a non-profile launch falls back to settings.yaml', noProfile.whale === undefined && noProfile.pageMargin === 'none', JSON.stringify(noProfile))
+  const unresolvable = await fallbackOf(profileArgv, join(root, 'nowhere', 'bin.js'))
+  check('host: an unresolvable entry falls back to settings.yaml', unresolvable.whale === undefined, JSON.stringify(unresolvable))
+  const throwing = await fallbackOf(profileArgv, broken)
+  check('host: a throwing host falls back to settings.yaml', throwing.whale === undefined && throwing.pageMargin === 'none', JSON.stringify(throwing))
+  check('host: stderr restored after a throwing host', process.stderr.write === realWrite)
 }
 
 terminal.dispose()

@@ -4,14 +4,18 @@
  * Runs inside the dsh process from the `--import` preload, BEFORE dsh reads
  * the profile. Nothing here may import `@deepseek-ai/*` directly: the point
  * is to paint before that module graph loads (Chat's own adapter modules do
- * pull a few upstream packages in, ~70ms, which dsh would load anyway).
+ * pull a few upstream packages in, ~70ms, which dsh would load anyway; so
+ * does the settings read below, which imports the host's own app-boot — the
+ * same file dsh's bin imports right after, served from the module cache).
  * Renderer-affecting choices that the plugin later resolves through the
  * settings service (fullscreen, terminal images, page margin, minimal UI,
- * splash options, language) are read here straight from
- * `$DSH_HOME/settings.yaml` and the `~/.dsh-tui` preference files — including
- * the renderer decision the plugin recorded for the profile's cordis.yml
- * (rendererPrefs.ts); the plugin mounts a fresh slot if its own resolution
- * still disagrees (see plugin.ts). The landing page (workspace home or chat)
+ * splash options, language) are read here from where the host keeps them:
+ * on 0.1.7+ hosts the `dsh-tui` row's Config, composed by the host's own
+ * profile code (../dsh-adapter/hostProfileConfig.ts); on older hosts
+ * `$DSH_HOME/settings.yaml` plus the renderer decision the plugin recorded
+ * for the profile's cordis.yml (rendererPrefs.ts). The `~/.dsh-tui`
+ * preference files fill the rest. The plugin mounts a fresh slot if its own
+ * resolution still disagrees (see plugin.ts). The landing page (workspace home or chat)
  * uses the plugin's own rule (decideOpenHomeOnBoot) on the same inputs.
  *
  * Until the plugin takes the slot, this module owns how the boot phase ends
@@ -20,11 +24,12 @@
  * swallowed stderr, and exit non-zero. A deliberate user exit (double Ctrl+C,
  * `/exit`) takes the same teardown but exits 0.
  */
-import { readFileSync, statSync, writeSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { inspect } from 'node:util'
 import { parse as parseYaml } from 'yaml'
+import { readHostTuiConfig } from '../dsh-adapter/hostProfileConfig.js'
 import { QuestionStore } from '../dsh-adapter/questions.js'
 import { readEffortPref } from '../effortPrefs.js'
 import { decideOpenHomeOnBoot, readHomePrefs } from '../homePrefs.js'
@@ -57,8 +62,13 @@ export function resolveDshHome(env: NodeJS.ProcessEnv = process.env): string {
  * reason a launch fails.
  */
 export function readTuiSettingsLayer(dshHome: string = resolveDshHome()): TuiSettingsLayer {
+  return readTuiSettingsSection(join(dshHome, 'settings.yaml'))
+}
+
+/** The `dsh-tui` section of one settings document; missing/malformed → empty. */
+function readTuiSettingsSection(path: string): TuiSettingsLayer {
   try {
-    const document: unknown = parseYaml(readFileSync(join(dshHome, 'settings.yaml'), 'utf8'))
+    const document: unknown = parseYaml(readFileSync(path, 'utf8'))
     if (document === null || typeof document !== 'object') return {}
     const layer = (document as Record<string, unknown>)['dsh-tui']
     return layer !== null && typeof layer === 'object' ? layer as TuiSettingsLayer : {}
@@ -67,6 +77,66 @@ export function readTuiSettingsLayer(dshHome: string = resolveDshHome()): TuiSet
   }
 }
 
+export interface PrebootSettingsOptions {
+  dshHome?: string
+  /** The dsh process argv after `node <entry>`. */
+  argv: readonly string[]
+  /** The dsh entry script about to run (the preload's `process.argv[1]`). */
+  hostEntry: string | undefined
+}
+
+/**
+ * The legacy settings document a `register()`-patched settings service on a
+ * 0.1.7+ host reads (dsh-purge's order): its own `settings-legacy.yaml`, else
+ * the `settings.yaml.imported` the host renamed the old document to. The
+ * host's own `settings.yaml` is gone by then (it is imported and renamed).
+ */
+export function readLegacySettingsDocument(dshHome: string): TuiSettingsLayer {
+  for (const name of ['settings-legacy.yaml', 'settings.yaml.imported']) {
+    const path = join(dshHome, name)
+    if (!existsSync(path)) continue
+    return readTuiSettingsSection(path)
+  }
+  return {}
+}
+
+/**
+ * The `dsh-tui` settings the live plugin will boot with, as far as they can
+ * be known before dsh runs — resolved the way the plugin will resolve them
+ * (src/dsh-adapter/compat/settings.ts):
+ *
+ * - older hosts (no host composition): the `settings.yaml` layer;
+ * - a 0.1.7+ host with a `register()` settings service: its legacy document
+ *   through the plugin's settings schema, Config filling only what that
+ *   leaves unset (`value ?? config`);
+ * - a 0.1.7+ host otherwise: the composed row Config, with a settings.yaml
+ *   still waiting to be imported on top.
+ */
+export async function readPrebootSettingsLayer(options: PrebootSettingsOptions): Promise<TuiSettingsLayer> {
+  const dshHome = options.dshHome ?? resolveDshHome()
+  const pending = readTuiSettingsLayer(dshHome)
+  const host = await readHostTuiConfig({
+    hostEntry: options.hostEntry,
+    profile: resolveDshProfileName(options.argv),
+    dshHome,
+    argv: options.argv,
+  })
+  if (host === undefined) return pending
+  if (host.legacySettings) {
+    const { resolveTuiSettingsDocument } = await import('../dsh-adapter/tuiSettingsSchema.js')
+    const value = resolveTuiSettingsDocument(readLegacySettingsDocument(dshHome))
+    const defined = Object.fromEntries(Object.entries(value).filter(([, field]) => field !== undefined))
+    return { ...host.config, ...defined }
+  }
+  // Imported into the profile (merged over the row) on this very boot.
+  const statusBar = isRecord(host.config.statusBar) && isRecord(pending.statusBar)
+    ? { statusBar: { ...host.config.statusBar, ...pending.statusBar } }
+    : {}
+  return { ...host.config, ...pending, ...statusBar }
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
 const bool = (value: unknown, fallback: boolean): boolean => typeof value === 'boolean' ? value : fallback
 const str = (value: unknown): string | undefined => typeof value === 'string' && value !== '' ? value : undefined
 
@@ -116,7 +186,9 @@ export function decidePreboot(layer: TuiSettingsLayer, persisted?: RendererDecis
     fullscreen: bool(layer.fullscreen, persisted?.fullscreen ?? true),
     terminalImages: bool(layer.terminalImages, persisted?.terminalImages ?? true),
     minimalUi: bool(layer.minimal, false),
-    effort: str(layer.effortDefault) ?? readEffortPref(),
+    // The live order: the effortDefault setting (`auto` = unset) re-seats
+    // the route default over the Config `effort`, over effort.json.
+    effort: (layer.effortDefault === 'auto' ? undefined : str(layer.effortDefault)) ?? str(layer.effort) ?? readEffortPref(),
     model: readModelPref()?.model ?? 'DeepSeek',
   }
 }
@@ -179,6 +251,8 @@ export interface MountPrebootOptions {
   renderOptions?: Pick<RenderOptions, 'stdout' | 'stdin' | 'stderr' | 'patchConsole'>
   /** The dsh process argv after `node <dsh>` (default `process.argv.slice(2)`). */
   argv?: readonly string[]
+  /** The dsh entry script (default `process.argv[1]`); its install composes the profile. */
+  hostEntry?: string
   /** Boot watchdog bound (default: resolveBootTimeoutMs()); 0 disables it. */
   bootTimeoutMs?: number
 }
@@ -197,7 +271,11 @@ export const FIRST_FRAME_WAIT_MS = 700
  */
 export async function mountPreboot(options: MountPrebootOptions = {}): Promise<BootSlot> {
   const argv = options.argv ?? process.argv.slice(2)
-  const layer = readTuiSettingsLayer(options.dshHome)
+  const layer = await readPrebootSettingsLayer({
+    dshHome: options.dshHome,
+    argv,
+    hostEntry: options.hostEntry ?? process.argv[1],
+  })
   // Same precedence as plugin.ts before the first render: env → settings
   // user layer → persisted /lang choice → locale/zh. (cordis.yml `lang` is
   // not visible here; the plugin re-applies it, strings re-resolve live.)

@@ -171,7 +171,12 @@ row appearing.
   keys typed in that window can stall for up to about a second and then catch
   up. No keystrokes are lost.
 - The boot phase reads `fullscreen`, `terminalImages`, page margin, splash
-  and language settings from `settings.yaml`. If the profile's `cordis.yml`
+  and language settings from where DSH keeps them. On DSH 0.1.7+ that is the
+  `dsh-tui` row's config, composed by the installed DSH's own profile code
+  (bundle patches, the profile's `cordis.patch.yml`, `$DSH_HOME/cordis.patch.yml`
+  and `--patch` overlays — what `dsh --dump-config` prints); a `settings.yaml`
+  still waiting to be imported wins over it. Older DSH lines keep settings in
+  `settings.yaml`, which is read instead; there, if the profile's `cordis.yml`
   overrides `fullscreen` or `terminalImages`, the boot phase uses the values
   remembered from the previous launch (`~/.dsh-tui/renderer.json`, per
   profile), so the screen re-mounts at most once after such an edit (the draft
