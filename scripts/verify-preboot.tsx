@@ -24,6 +24,9 @@
  *   6. FALLBACK + EXIT: `draft()` + `dispose()` carry the text into a fresh
  *      slot mounted already live (renderer mismatch path); a double Ctrl+C in
  *      the boot phase exits with 0 (a user exit, like the live funnel); the published slot is taken exactly once.
+ *   7. FATAL: an uncaught error while dsh is still loading tears the boot
+ *      screen down, reaches stderr and exits 1 (the #185 process guard must
+ *      not rethrow it from its listener — exit 7, terminal left in alt-screen).
  *
  * Run: node --import tsx/esm scripts/verify-preboot.tsx
  */
@@ -99,7 +102,11 @@ class FakeStdout extends Writable {
 }
 class FakeStderr extends Writable {
   isTTY = true
-  _write(_c: unknown, _e: BufferEncoding, callback: () => void): void { callback() }
+  text = ''
+  _write(chunk: unknown, _e: BufferEncoding, callback: () => void): void {
+    this.text += String(chunk)
+    callback()
+  }
 }
 class FakeStdin extends PassThrough {
   isTTY = true
@@ -318,6 +325,41 @@ check('ctrl+c: first press only arms', await settled(() => screen().includes('ag
 await type('\x03')
 check('ctrl+c: second press exits 0 (user exit, not a crash)', await settled(() => exitCode === 0, { timeoutMs: 2000 }), String(exitCode))
 check('ctrl+c: renderer torn down', third.phase === 'disposed' && instances.get(stdout as never) === undefined)
+takePrebootSlot()
+
+// ── 7. fatal error while dsh is still loading ───────────────────────────────
+// The preboot Ink instance installs the #185 process guard before dsh runs;
+// without a boot-phase sink the guard rethrows from its listener (exit 7, no
+// terminal restore). An error dsh throws while composing must restore the
+// terminal, reach stderr, and exit 1 like the plain path.
+exitCode = undefined
+stderr.text = ''
+const fourth = await mountPreboot({ dshHome, renderOptions, exit: code => { exitCode = code } })
+await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 })
+let rethrown: unknown
+try {
+  process.emit('uncaughtException', new Error('profile does-not-exist-xyz not found'), 'uncaughtException')
+} catch (error) {
+  rethrown = error
+}
+check('fatal: boot-phase error claimed, not rethrown', rethrown === undefined, String(rethrown))
+check('fatal: exits 1 like the plain path', exitCode === 1, String(exitCode))
+check('fatal: boot screen torn down first', fourth.phase === 'disposed' && instances.get(stdout as never) === undefined)
+check('fatal: error reaches stderr', stderr.text.includes('profile does-not-exist-xyz not found'), JSON.stringify(stderr.text))
+takePrebootSlot()
+
+exitCode = undefined
+stderr.text = ''
+const fifth = await mountPreboot({ dshHome, renderOptions, exit: code => { exitCode = code } })
+await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 })
+rethrown = undefined
+try {
+  process.emit('unhandledRejection', undefined, Promise.resolve())
+} catch (error) {
+  rethrown = error
+}
+check('fatal: undefined rejection claimed and exits 1', rethrown === undefined && exitCode === 1 && fifth.phase === 'disposed', `${String(rethrown)} ${String(exitCode)}`)
+check('fatal: undefined reason named on stderr', stderr.text.includes('unhandledRejection with undefined reason'), JSON.stringify(stderr.text))
 takePrebootSlot()
 
 terminal.dispose()

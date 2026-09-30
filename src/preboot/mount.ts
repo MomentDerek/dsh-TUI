@@ -11,13 +11,15 @@
  * `$DSH_HOME/settings.yaml` and the `~/.dsh-tui` preference files; the plugin
  * mounts a fresh slot if its own resolution disagrees (see plugin.ts).
  */
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { inspect } from 'node:util'
 import { parse as parseYaml } from 'yaml'
 import { QuestionStore } from '../dsh-adapter/questions.js'
 import { readEffortPref } from '../effortPrefs.js'
 import { isLang, resolveStartupLang, setLang } from '../i18n.js'
+import { fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
 import { setMinimalUiMode } from '../minimalUiMode.js'
 import { readModelPref } from '../modelPrefs.js'
 import { applyPageMargin, normalizePageMargin } from '../tuiDisplayPrefs.js'
@@ -159,6 +161,35 @@ export async function mountPreboot(options: MountPrebootOptions = {}): Promise<B
         },
       },
     },
+  })
+  // Constructing the Ink instance installed the #185 process guard, whose
+  // listeners rethrow anything no sink claims — from inside the listener, so
+  // Node exits 7 without an 'exit' event and the terminal keeps the
+  // alt-screen, mouse tracking and hidden cursor. The plugin registers the
+  // real sink deep inside apply; until then (dsh composing the profile,
+  // loading plugins) a fatal error is dsh's, not ours: restore the terminal,
+  // print it the way Node would, and exit 1 — the plain path's behavior. The
+  // plugin's registration replaces this one before it takes the slot live.
+  const bootSlot = slot
+  const fatalOut = options.renderOptions?.stderr ?? process.stderr
+  registerProcessGuardFatalSink((error, origin) => {
+    if (bootSlot.phase !== 'booting') return false
+    // Best-effort restore: a throw here (EIO on a revoked TTY, an effect
+    // cleanup) would escape the listener as exit 7 and mask dsh's error.
+    try {
+      bootSlot.dispose()
+    } catch {}
+    // `Promise.reject()` / `throw undefined` would print a bare `undefined`.
+    const text = `${inspect(fatalReasonForExit(error, origin))}\n`
+    // Synchronous on the real fd: exit(1) follows immediately, and a stream
+    // write to a redirected stderr can be dropped (macOS pipes/files).
+    const fd = (fatalOut as { fd?: unknown }).fd
+    try {
+      if (typeof fd === 'number') writeSync(fd, text)
+      else fatalOut.write(text)
+    } catch {}
+    exit(1)
+    return true
   })
   publishPrebootSlot(slot)
   return slot
