@@ -16,6 +16,7 @@ import { Config } from '../src/dsh-adapter/index.ts'
 import { configValues, createSettingsScope, editableConfig, resolveSettingsNamespace } from '../src/dsh-adapter/compat/settings.ts'
 import { createSettingsHosts } from '../src/dsh-adapter/channel/settings-host.ts'
 import { SettingsForm } from '../src/dsh-adapter/settingsEditor.ts'
+import { createTuiSettingsSchema } from '../src/dsh-adapter/tuiSettingsSchema.ts'
 import TuiSettingsSectionsRuntime, { getHostSettingsSections, getLocalSettingsSectionsHost } from '../src/dsh-adapter/settings-sections.ts'
 import { DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, isPageMarginMode, normalizePageMargin, parsePageMarginSpec } from '../src/tuiDisplayPrefs.ts'
 import { SPLASH_FONTS, SPLASH_FONT_OPTIONS, normalizeSplashFont } from '../src/components/splashFonts.ts'
@@ -198,7 +199,7 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
       await ctx.plugin(async runtimeCtx => {
         await bindSettings({
           ctx: runtimeCtx, configOwner: ctx, runtimeConfig, config: configValues(runtimeConfig), Schema, SHORTCUT_ACTIONS,
-          DEFAULT_STATUS_BAR, normalizePageMargin, isLang, Config, configValues, createSettingsScope, resolveSettingsNamespace, setKeymapOverrides,
+          DEFAULT_STATUS_BAR, normalizePageMargin, isLang, Config, configValues, createTuiSettingsSchema, createSettingsScope, resolveSettingsNamespace, setKeymapOverrides,
           bootedFullscreen: true, bootedTerminalImages: true,
           t: key => key, notifyChannel: message => notices.push(message), channel: { notify: message => notices.push(message) },
           observe: value => observed.push(value),
