@@ -18,11 +18,12 @@
  * resolution still disagrees (see plugin.ts). The landing page (workspace home or chat)
  * uses the plugin's own rule (decideOpenHomeOnBoot) on the same inputs.
  *
- * Until the plugin takes the slot, this module owns how the boot phase ends
- * badly: a fatal error, a boot watchdog (dsh never mounts dsh-tui), or dsh
- * exiting on its own all restore the terminal, replay what dsh wrote to the
- * swallowed stderr, and exit non-zero. A deliberate user exit (double Ctrl+C,
- * `/exit`) takes the same teardown but exits 0.
+ * Until the slot leaves `booting`, this module owns how the boot phase ends
+ * badly: a fatal error, a boot watchdog (dsh never mounts dsh-tui, then the
+ * plugin never goes live), or dsh exiting on its own all restore the
+ * terminal, replay what dsh wrote to the swallowed stderr, and exit non-zero.
+ * A deliberate user exit (double Ctrl+C, `/exit`) takes the same teardown
+ * but exits 0.
  */
 import { existsSync, readFileSync, statSync, writeSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -140,6 +141,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 const bool = (value: unknown, fallback: boolean): boolean => typeof value === 'boolean' ? value : fallback
 const str = (value: unknown): string | undefined => typeof value === 'string' && value !== '' ? value : undefined
+/** Timeout bounds as the messages print them: 60_000 → 60, 250 → 2.5. */
+const secondsOf = (ms: number): number => Math.round(ms / 100) / 10
 
 /** Renderer decisions and route hints derived from the settings layer, exported for the regression. */
 export interface PrebootDecisions {
@@ -228,12 +231,14 @@ export function decidePrebootLanding(argv: readonly string[], env: NodeJS.Proces
  * The clock covers only dsh loading its module graph and composing the
  * profile up to the dsh-tui row's apply (normally 1–2s; a cold start on a
  * slow disk or under an on-access virus scanner can take several times
- * that, and the row waits for every service it injects). It stops the
- * moment the plugin takes the slot — resuming a large session, workspace
- * resolution and the rest of the plugin's startup are not on it. A slot
- * nobody takes by then means the profile has no dsh-tui row or its config
- * failed validation, and the alternative is a boot screen that never
- * leaves. `DSH_TUI_PREBOOT_TIMEOUT_MS` overrides it; `0` disables it.
+ * that, and the row waits for every service it injects). A slot nobody
+ * takes by then means the profile has no dsh-tui row or its config failed
+ * validation, and the alternative is a boot screen that never leaves.
+ *
+ * Taking the slot does NOT end the boot, so this clock hands over to
+ * HANDOFF_TIMEOUT_MS instead of disarming: the plugin's own startup (settings
+ * against the live services, workspace, resume, agent create) still runs
+ * behind it. `DSH_TUI_PREBOOT_TIMEOUT_MS` overrides it; `0` disables it.
  */
 export const BOOT_TIMEOUT_MS = 60_000
 
@@ -242,6 +247,29 @@ export function resolveBootTimeoutMs(env: NodeJS.ProcessEnv = process.env): numb
   if (raw === undefined || raw.trim() === '') return BOOT_TIMEOUT_MS
   const value = Number(raw)
   return Number.isFinite(value) && value >= 0 ? value : BOOT_TIMEOUT_MS
+}
+
+/**
+ * How long the boot screen waits, after the plugin has taken the slot, for
+ * `ready(live)` before giving up: 180s.
+ *
+ * `claimed` says only that the dsh-tui row's apply ran and owns the terminal;
+ * the plugin still resolves its settings against the live services, creates
+ * the agent, resolves the workspace and resumes the session before it replaces
+ * the boot channel — resuming a large session can take minutes, which is why
+ * this clock is several times the boot one. Disarming here instead (the old
+ * behavior) meant a boot stuck in that stretch sat on the boot screen forever,
+ * with the terminal in modes nothing would restore. A boot that reaches
+ * `ready` (or is disposed) clears it; `DSH_TUI_PREBOOT_HANDOFF_TIMEOUT_MS`
+ * overrides it; `0` disables it.
+ */
+export const HANDOFF_TIMEOUT_MS = 180_000
+
+export function resolveHandoffTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.DSH_TUI_PREBOOT_HANDOFF_TIMEOUT_MS
+  if (raw === undefined || raw.trim() === '') return HANDOFF_TIMEOUT_MS
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : HANDOFF_TIMEOUT_MS
 }
 
 export interface MountPrebootOptions {
@@ -256,6 +284,8 @@ export interface MountPrebootOptions {
   hostEntry?: string
   /** Boot watchdog bound (default: resolveBootTimeoutMs()); 0 disables it. */
   bootTimeoutMs?: number
+  /** Post-claim watchdog bound (default: resolveHandoffTimeoutMs()); 0 disables it. */
+  handoffTimeoutMs?: number
 }
 
 /**
@@ -307,10 +337,31 @@ export async function mountPreboot(options: MountPrebootOptions = {}): Promise<B
   let slot: BootSlot | undefined
   let capture: ReturnType<typeof captureBootStderr> | undefined
   let watchdog: ReturnType<typeof setTimeout> | undefined
-  /** Stop guarding: the plugin took the slot, or the slot left `booting`. */
-  const standDown = (): void => {
+  /** Drop the armed clock without touching anything else. */
+  const clearWatchdog = (): void => {
     if (watchdog !== undefined) clearTimeout(watchdog)
     watchdog = undefined
+  }
+  /**
+   * (Re-)arm the boot-phase clock; `0` disables it. `message` is called when
+   * it fires, so the language active at that point decides the text. The
+   * `booting` guard keeps a clock that lost the race with `ready`/`dispose`
+   * from reporting a boot that did end well.
+   */
+  const armWatchdog = (timeoutMs: number, message: () => string): void => {
+    clearWatchdog()
+    if (timeoutMs <= 0) return
+    watchdog = setTimeout(() => {
+      if (bootSlot.phase !== 'booting') return
+      failBoot(`${message()}\n`, 1)
+    }, timeoutMs)
+    // The boot screen's stdin keeps the loop alive while it waits; if
+    // nothing else does, the exit backstop above covers the exit.
+    watchdog.unref?.()
+  }
+  /** Stop guarding for good: the slot left `booting`, or was torn down. */
+  const standDown = (): void => {
+    clearWatchdog()
     capture?.release()
   }
   /** Leaving `booting` for good also drops the exit backstop. */
@@ -360,14 +411,27 @@ export async function mountPreboot(options: MountPrebootOptions = {}): Promise<B
     if (code === 0) process.exitCode = 1
   }
 
+  const bootTimeoutMs = options.bootTimeoutMs ?? resolveBootTimeoutMs()
+  const handoffTimeoutMs = options.handoffTimeoutMs ?? resolveHandoffTimeoutMs()
   const bootSlot = await mountChatHost({
     fullscreen: decisions.fullscreen,
     terminalImages: decisions.terminalImages,
     renderOptions: options.renderOptions,
     firstFrameWaitMs: FIRST_FRAME_WAIT_MS,
     onLifecycle: event => {
-      if (event === 'claimed') standDown()
-      else settle()
+      if (event === 'claimed') {
+        // Handed over, but not booted: the plugin still has its settings,
+        // workspace, resume and agent create in front of it before
+        // `ready(live)`. Stop capturing dsh's stderr (the plugin owns the
+        // terminal now) and swap this clock for the longer handoff one —
+        // standing down here is what let a stuck handoff sit on the boot
+        // screen with nothing left to end it.
+        capture?.release()
+        armWatchdog(handoffTimeoutMs, () =>
+          t('preboot-handoff-timeout', { seconds: secondsOf(handoffTimeoutMs) }))
+      } else {
+        settle()
+      }
     },
     initial: {
       channel,
@@ -406,17 +470,7 @@ export async function mountPreboot(options: MountPrebootOptions = {}): Promise<B
   })
   // Above Ink's own stderr/console patches (installed with the instance).
   capture = captureBootStderr()
-  const timeoutMs = options.bootTimeoutMs ?? resolveBootTimeoutMs()
-  if (timeoutMs > 0) {
-    watchdog = setTimeout(() => {
-      if (bootSlot.phase !== 'booting') return
-      const seconds = Math.round(timeoutMs / 100) / 10
-      failBoot(`${t('preboot-timeout', { seconds })}\n`, 1)
-    }, timeoutMs)
-    // The boot screen's stdin keeps the loop alive while it waits; if
-    // nothing else does, the exit backstop above covers the exit.
-    watchdog.unref?.()
-  }
+  armWatchdog(bootTimeoutMs, () => t('preboot-timeout', { seconds: secondsOf(bootTimeoutMs) }))
   publishPrebootSlot(bootSlot)
   return bootSlot
 }

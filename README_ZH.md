@@ -153,7 +153,9 @@ channel"——头部、输入框、状态栏都是平时那一套，输入框立
 - 首次启动时开屏直接落在工作区主页，与真实会话落地的页面一致。
 - 若 dsh 始终没有把开屏交给 dsh-tui（例如 profile 没有 dsh-tui 行，或其配置校验
   失败），`dst` 在 60 秒后恢复终端、打印 dsh 写到 stderr 的内容并以非零码退出；
-  `DSH_TUI_PREBOOT_TIMEOUT_MS` 可调整时限（`0` 关闭）。会话就绪前主动退出
+  `DSH_TUI_PREBOOT_TIMEOUT_MS` 可调整时限（`0` 关闭）。开屏已经被接管、却一直没
+  进入会话就绪（例如恢复超大历史会话卡住）时另有一道 180 秒的保护，
+  `DSH_TUI_PREBOOT_HANDOFF_TIMEOUT_MS` 可调整（`0` 关闭）。会话就绪前主动退出
   （`/exit`、双击 Ctrl+C）仍以 0 退出。
 - `PATH` 上的 `dsh` 不是 JavaScript 入口、或 profile 副本没有编译产物时，自动
   回退到普通的 `dsh --profile dsh-tui` 启动。

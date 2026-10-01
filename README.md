@@ -192,8 +192,11 @@ row appearing.
   no dsh-tui row, or its config fails validation), `dst` restores the
   terminal after 60 seconds, prints what dsh wrote to stderr and exits
   non-zero. `DSH_TUI_PREBOOT_TIMEOUT_MS` changes the limit (`0` turns it off).
-  A deliberate exit before the session is up (`/exit`, double Ctrl+C) exits
-  with 0.
+  Once the screen IS handed over, a second clock (180 seconds) covers the
+  plugin's own startup, so a resume that never finishes cannot sit on the
+  boot screen forever; `DSH_TUI_PREBOOT_HANDOFF_TIMEOUT_MS` changes it
+  (`0` turns it off). A deliberate exit before the session is up (`/exit`,
+  double Ctrl+C) exits with 0.
 - The fast path falls back to the plain `dsh --profile dsh-tui` launch when the
   `dsh` on `PATH` is not a JavaScript entry or the profile copy has no compiled
   preload.
