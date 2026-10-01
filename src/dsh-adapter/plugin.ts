@@ -35,7 +35,8 @@ import { composePreset, filterMinimalPresetTools, resolvePersistedPreset, resolv
 import { ensurePackagedPresets } from './packaged-presets.js'
 import { registerBundledPresets } from './bundled-presets.js'
 import { ensureLegacySessionEventTypes, snapshotLiveSessionEvents } from './compat/index.js'
-import { clearResumeTarget, initialPromptFromCmdlineArgs, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
+import { clearResumeTarget, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
+import { initialPromptFromCmdlineArgs } from './startup-args.js'
 import { decideOpenHomeOnBoot, readHomePrefs } from '../homePrefs.js'
 import { writeRendererDecision } from '../rendererPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
@@ -102,9 +103,8 @@ let lastBootedFullscreen: boolean | undefined
 // Image preferences also stay fixed across host recomposes until /restart.
 let lastBootedTerminalImages: boolean | undefined
 
-// Lives next to resumeTargetFromArgv (no upstream imports) so the `dst`
-// preload parses app argv exactly like this plugin; re-exported for the
-// argv regressions that import it from here.
+// Kept importable from here: the startup parser moved to its own dependency-free
+// module so argv probes can load it without the whole plugin graph.
 export { initialPromptFromCmdlineArgs }
 
 /**
