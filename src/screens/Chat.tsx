@@ -4071,7 +4071,7 @@ export function Chat({
       return
     }
     if (actionMatches('history', input, key) && !helpOpen) {
-      setHistoryEntries(loadHistory())
+      setHistoryEntries(loadHistory(channel.cwd))
       dispatchOverlay({
         type: 'open',
         overlay: { kind: 'history', query: '', cursor: 0, focus: 0 },
