@@ -181,6 +181,11 @@ row appearing.
   remembered from the previous launch (`~/.dsh-tui/renderer.json`, per
   profile), so the screen re-mounts at most once after such an edit (the draft
   is carried over) instead of updating in place.
+- The fast start enables Node's compile cache for the dsh process
+  (`~/.dsh-tui/compile-cache`, about 13 MB), so later launches paint and go
+  live sooner; it is rebuilt automatically after an upgrade. An explicit
+  `NODE_COMPILE_CACHE` keeps its own directory; `NODE_DISABLE_COMPILE_CACHE=1`
+  turns it off.
 - On a first launch the boot screen already opens on the workspace home, the
   same page the live session lands on.
 - If dsh never hands the boot screen to dsh-tui (for example the profile has

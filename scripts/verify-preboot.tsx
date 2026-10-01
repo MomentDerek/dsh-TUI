@@ -56,6 +56,10 @@
  *      settings schema first (`value ?? config`); an older host, a
  *      non-profile launch, an unresolvable entry or a throwing host all fall
  *      back to settings.yaml.
+ *  13. COMPILE CACHE: the preload enables Node's compile cache under
+ *      `~/.dsh-tui/compile-cache` when the marker env is set, keeps an
+ *      explicit NODE_COMPILE_CACHE directory, honors
+ *      NODE_DISABLE_COMPILE_CACHE, and leaves a run without the marker alone.
  *
  * Run: node --import tsx/esm scripts/verify-preboot.tsx
  */
@@ -834,6 +838,33 @@ const HOME_TITLE = '▣ Sessions'
   const throwing = await fallbackOf(profileArgv, broken)
   check('host: a throwing host falls back to settings.yaml', throwing.whale === undefined && throwing.pageMargin === 'none', JSON.stringify(throwing))
   check('host: stderr restored after a throwing host', process.stderr.write === realWrite)
+}
+
+// ── 13. compile cache (preload entry) ──────────────────────────────────────
+{
+  const entry = new URL('../src/preboot/entry.ts', import.meta.url).href
+  const cacheDirOf = (env: Record<string, string | undefined>): string => {
+    const run = spawnSync(process.execPath, [
+      '--import', 'tsx/esm', '--import', entry,
+      '--input-type=module', '-e', "import { getCompileCacheDir } from 'node:module'; process.stdout.write(String(getCompileCacheDir()))",
+    ], {
+      cwd: fileURLToPath(new URL('..', import.meta.url)),
+      // Piped stdio: the preload must not mount a boot screen here.
+      env: { ...process.env, NODE_COMPILE_CACHE: undefined, NODE_DISABLE_COMPILE_CACHE: undefined, ...env },
+      encoding: 'utf8',
+      timeout: 30000,
+    })
+    return run.status === 0 ? run.stdout : `exit ${run.status}: ${run.stderr.slice(-300)}`
+  }
+  const own = join(home, 'own-compile-cache')
+  const defaultDir = cacheDirOf({ DSH_TUI_PREBOOT: '1' })
+  check('compile cache: on under ~/.dsh-tui/compile-cache with the marker', defaultDir.startsWith(join(dataDir, 'compile-cache')), defaultDir)
+  const explicit = cacheDirOf({ DSH_TUI_PREBOOT: '1', NODE_COMPILE_CACHE: own })
+  check('compile cache: an explicit NODE_COMPILE_CACHE keeps its directory', explicit.startsWith(own), explicit)
+  const disabled = cacheDirOf({ DSH_TUI_PREBOOT: '1', NODE_DISABLE_COMPILE_CACHE: '1' })
+  check('compile cache: NODE_DISABLE_COMPILE_CACHE=1 turns it off', disabled === 'undefined', disabled)
+  const unmarked = cacheDirOf({ DSH_TUI_PREBOOT: undefined })
+  check('compile cache: untouched without the preboot marker', unmarked === 'undefined', unmarked)
 }
 
 terminal.dispose()

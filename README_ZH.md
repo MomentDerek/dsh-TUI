@@ -147,6 +147,9 @@ channel"——头部、输入框、状态栏都是平时那一套，输入框立
   改为读取该文件；此时若 profile 的 `cordis.yml` 覆盖了 `fullscreen` 或
   `terminalImages`，启动态沿用上次启动记下的值（`~/.dsh-tui/renderer.json`，按
   profile 区分），因此改动 `cordis.yml` 后最多重挂一次（草稿会带过去）而不是原地更新。
+- 快速启动会为 dsh 进程开启 Node 编译缓存（`~/.dsh-tui/compile-cache`，约 13 MB），
+  之后的启动首帧与就绪都更快；升级后自动重建。已设置的 `NODE_COMPILE_CACHE` 沿用其目录；
+  `NODE_DISABLE_COMPILE_CACHE=1` 可关闭。
 - 首次启动时开屏直接落在工作区主页，与真实会话落地的页面一致。
 - 若 dsh 始终没有把开屏交给 dsh-tui（例如 profile 没有 dsh-tui 行，或其配置校验
   失败），`dst` 在 60 秒后恢复终端、打印 dsh 写到 stderr 的内容并以非零码退出；
