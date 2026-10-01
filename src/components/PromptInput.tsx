@@ -440,10 +440,9 @@ const EDITOR_CHROME_ROWS = 5
 const DOUBLE_CLICK_MS = 500
 
 /**
- * Imperative handle for the Chat-level Ctrl+C rule: Chat's useInput listener
- * runs BEFORE this component's (EventEmitter registration order), so Chat
- * asks the prompt whether it holds text (→ clear it) or not (→ arm the
- * double-press exit). Populated every render; null while unmounted.
+ * Live composer handle for Chat's global key rules and external draft actions.
+ * Chat listens first, so delegated editing actions stay with their state owner.
+ * Populated after each commit; null while unmounted or suspended.
  */
 export interface PromptController {
   hasText(): boolean
@@ -466,6 +465,8 @@ export interface PromptController {
    * branch calls this first, before its clear/exit semantics.
    */
   consumeSelectionCopy(): boolean
+  /** Consume selection/editor Esc before Chat's working-turn interrupt. */
+  consumeEscape(): boolean
   /** Toggle vim editing mode (`/vim`); returns the new state (true = on). */
   toggleVim(): boolean
   /** True while vim mode is on (either submode). Esc belongs to vim then —
@@ -935,6 +936,7 @@ export function PromptInput({
         // The selection stays: copy never clears it (Esc/typing/delete do).
         return true
       },
+      consumeEscape: consumeEditingEscape,
       toggleVim: () => {
         const next = !vimEnabledRef.current
         vimEnabledRef.current = next
@@ -1709,6 +1711,20 @@ export function PromptInput({
     lastClickRowRef.current = -1
   }
 
+  /** Local Esc layers, shared by the prompt listener and Chat's delegation.
+   * Refs preserve this order even when expansion and Esc share a stdin batch. */
+  const consumeEditingEscape = (): boolean => {
+    if (selectionRef.current && !helpOpen && !overlayOpen && !fileOverlayOpen) {
+      clearSelection()
+      return true
+    }
+    if (expandedRef.current) {
+      collapseEditor()
+      return true
+    }
+    return false
+  }
+
   /** The editor's explicit send (Ctrl+Enter / Send button): the Enter main
    *  path, then collapse — an empty draft just collapses. */
   const submitFromEditor = () => {
@@ -1886,26 +1902,14 @@ export function PromptInput({
     // ONLY drops the highlight (text untouched), and Backspace/Delete
     // delete the selected span. Arrows/typing handle the selection at their
     // own arms below.
-    if (key.escape && selection && !helpOpen && !overlayOpen && !fileOverlayOpen) {
+    if (key.escape && consumeEditingEscape()) {
       event.stopImmediatePropagation()
-      clearSelection()
       return
     }
     if ((key.backspace || key.delete) && selection) {
       deleteInputRange(selection.start, selection.end)
       setSelectedCommand(0)
       setFileSelected(0)
-      return
-    }
-
-    // ── 全屏草稿编辑（expandEditor，默认 Ctrl+Shift+E / 输入行 ✎）─────
-    // 展开态拥有屏幕；Esc 收起（有选区时上面的 selection 分支已先行只清
-    // 选区）。滚轮不经此——编辑区的 onWheel 位置路由直接驱动滚动窗口。
-    if (key.escape && expandedRef.current) {
-      // Collapse runs AHEAD of the fold-block/vim Esc meanings: the
-      // fullscreen cover is the outermost modal layer.
-      event?.stopImmediatePropagation()
-      collapseEditor()
       return
     }
 

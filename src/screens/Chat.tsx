@@ -4091,6 +4091,10 @@ export function Chat({
         setSelectionActive(false)
         setSelectedId(null)
       }
+    } else if (key.escape && promptControllerRef.current?.consumeEscape()) {
+      // Selection/editor Esc stays with the composer even though Chat's
+      // global listener runs first. Consume it before interrupting the turn.
+      event.stopImmediatePropagation()
     } else if (key.escape && channel.working && !helpOpen && !promptControllerRef.current?.vimActive()) {
       // Esc interrupts a running turn (the prompt input
       // only sees esc when idle, where it has the double-tap-clear meaning).
@@ -4239,6 +4243,13 @@ export function Chat({
       // (wired to the toast below).
       event.stopImmediatePropagation()
     }
+  }, {
+    // Chat's global layer must see every key before the composer and the
+    // panels it hosts (the handler's yield guards and readline shadowing
+    // both assume it), whether or not they mounted in the same
+    // commit — child effects run first, so append order would put a
+    // first-mount PromptInput ahead of Chat (#1155).
+    prepend: true,
   })
 
   // Working-activity line (spinner slot): context-pressure prefix shares the
