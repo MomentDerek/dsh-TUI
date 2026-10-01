@@ -117,7 +117,7 @@ workspace. Change into the target project before starting it.
 `dsh-tui` is equivalent to the command above. `dst` is the fast-start entry: it
 paints the splash and prompt while dsh is still loading and accepts typing
 (sending waits until the real screen takes over; the draft carries across).
-Details and limits: [Fast start in the README](../README.md#fast-start-dst).
+Details and limits: [Fast start in the README](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/README.md#fast-start-dst).
 
 On Windows, the checkout also provides:
 

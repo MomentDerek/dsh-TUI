@@ -123,7 +123,7 @@ dsh --profile dsh-tui
 
 `dsh-tui` 与上面这条等价；`dst` 是快速启动入口——dsh 还在加载时就先画出开屏与
 输入框并接受输入（此时不能发送，就绪后草稿原样带入）。细节与限制见
-[README 的快速启动一节](../README_ZH.md#快速启动dst)。
+[README 的快速启动一节](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/README_ZH.md#快速启动dst)。
 
 Windows 仓库检出还提供：
 
