@@ -178,7 +178,7 @@ const screen = (): string => {
 }
 const type = async (data: string): Promise<void> => {
   stdin.write(data)
-  await sleep(40)
+  await sleep(40) // 固定窗:pacing 每次写入后让 Ink 处理一拍
 }
 const renderOptions = { stdout: stdout as never, stdin: stdin as never, stderr: stderr as never, patchConsole: false }
 const BOOT_HINT = 'DeepSeek Harness is starting'
@@ -313,7 +313,7 @@ check('settings: missing file → schema defaults', defaults.fullscreen && defau
   check('boot: submit refuses with a notice', boot.notifications.some(item => item.text.includes('Not ready')) && boot.version > v0)
   const dismiss = boot.notify('short', { timeoutMs: 60 })
   check('boot: notify returns a dismiss handle', typeof dismiss === 'function')
-  await sleep(120)
+  await sleep(120) // 固定窗:墙钟 等 60ms 通知到期
   check('boot: notices expire on their timeout', !boot.notifications.some(item => item.text === 'short'))
   check('boot: completions come from the local catalog', boot.commandCompletions('/mod').length > 0)
   check('boot: queries answer neutrally', (await boot.listSessions()).length === 0 && boot.settingsHost() === undefined && (await boot.resumeTo('x')).ok === false)
@@ -481,6 +481,9 @@ takePrebootSlot()
   // vim mode rides the parked draft snapshot even with no text.
   await type('/resume')
   await settled(() => sixth.draft() === '/resume', { timeoutMs: 2000 })
+  // PromptInput drops an Enter within 80ms of the previous one (one keypress
+  // split into two events); a fast runner gets here sooner after /vim's Enter.
+  await sleep(100) // 固定窗:墙钟 跨过 handleEnter 的 80ms Enter 去重窗
   await type('\r')
   check('boot screen: /resume opens the session screen during boot', await settled(() => !screen().includes('INSERT'), { timeoutMs: 2000 }), screen())
   const liveSix = makeLiveChannel()
@@ -503,7 +506,8 @@ takePrebootSlot()
   const seventh = await mountPreboot({ dshHome: fullHome, renderOptions, exit: code => { exitCode = code } })
   check('boot screen (fullscreen): mounted', await settled(() => screen().includes(BOOT_HINT), { timeoutMs: 3000 }), screen())
   await type('keep me')
-  await settled(() => seventh.draft() === 'keep me', { timeoutMs: 2000 })
+  // The ⌸ lookup below reads the painted screen, which can trail the draft.
+  await settled(() => seventh.draft() === 'keep me' && screen().includes('keep me'), { timeoutMs: 2000 })
   const lines = screen().split('\n')
   const homeRow = lines.findIndex(line => line.includes('⌸') && line.includes('keep me'))
   const homeCol = homeRow < 0 ? -1 : lines[homeRow]!.indexOf('⌸')
