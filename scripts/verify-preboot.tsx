@@ -91,6 +91,16 @@ const setHomeSeenForTest = (seen: boolean): void => {
   else rmSync(homePrefsFile, { force: true })
 }
 setHomeSeenForTest(true)
+// The sections below exercise the chat screen, so the launchpad and the
+// first-run guide are off (section 9b turns them back on). Same files and
+// escape hatch the plugin reads (homePrefs.ts / onboardingPrefs.ts).
+const onboardingPrefsFile = join(dataDir, 'onboarding.json')
+const setOnboardingDoneForTest = (done: boolean): void => {
+  if (done) writeFileSync(onboardingPrefsFile, `${JSON.stringify({ completed: true, version: 1 })}\n`)
+  else rmSync(onboardingPrefsFile, { force: true })
+}
+setOnboardingDoneForTest(true)
+process.env.DSH_TUI_NO_LAUNCHPAD = '1'
 delete process.env.DSH_TUI_RESUME_SESSION
 delete process.env.DSH_TUI_WORKSPACE_TARGET
 delete process.env.DSH_TUI_PREBOOT_TIMEOUT_MS
@@ -109,7 +119,7 @@ writeFileSync(join(dshHome, 'settings.yaml'), [
 
 const { Terminal: XTerm } = xterm
 const [
-  { decidePreboot, mountPreboot, readPrebootSettingsLayer, readTuiSettingsLayer },
+  { decidePreboot, decidePrebootLanding, mountPreboot, readPrebootSettingsLayer, readTuiSettingsLayer },
   { peekPrebootSlot, takePrebootSlot },
   { mountChatHost },
   { createBootChannel },
@@ -620,6 +630,45 @@ const HOME_TITLE = '▣ Sessions'
   await chatFirst('landing: a launcher resume target keeps the chat screen', [])
   delete process.env.DSH_TUI_RESUME_SESSION
   setHomeSeenForTest(true)
+}
+
+// ── 9b. launchpad / first-run guide decided before the first frame ──────────
+// Chat seeds both once at mount (no prop reconcile), so the preload must reach
+// the plugin's own answer (homePrefs.ts) or an ordinary `dst` launch would
+// never show them.
+{
+  const LAUNCHPAD_PLACEHOLDER = 'Say something, or type / for commands'
+  delete process.env.DSH_TUI_NO_LAUNCHPAD
+  const plain = decidePrebootLanding([])
+  check('launchpad: an ordinary launch starts on it', plain.launchpadOnBoot && !plain.onboardingOnBoot, JSON.stringify(plain))
+  const resumed = decidePrebootLanding(['--profile', 'dsh-tui', '--', '--resume', 'abc123'])
+  check('launchpad: --resume skips it', !resumed.launchpadOnBoot, JSON.stringify(resumed))
+  const prompted = decidePrebootLanding(['--profile', 'dsh-tui', '--', 'fix', 'the', 'bug'])
+  check('launchpad: a first prompt skips it', !prompted.launchpadOnBoot, JSON.stringify(prompted))
+  const targeted = decidePrebootLanding([], { ...process.env, DSH_TUI_WORKSPACE_TARGET: '/tmp' })
+  check('launchpad: a workspace target still starts on it (dst passes cwd)', targeted.launchpadOnBoot, JSON.stringify(targeted))
+  const launcherResume = decidePrebootLanding([], { ...process.env, DSH_TUI_RESUME_SESSION: 'abc123' })
+  check('launchpad: a launcher resume target skips it', !launcherResume.launchpadOnBoot && !launcherResume.onboardingOnBoot, JSON.stringify(launcherResume))
+  const optedOut = decidePrebootLanding([], { ...process.env, DSH_TUI_NO_LAUNCHPAD: '1' })
+  check('launchpad: DSH_TUI_NO_LAUNCHPAD=1 skips it', !optedOut.launchpadOnBoot, JSON.stringify(optedOut))
+  setOnboardingDoneForTest(false)
+  const fresh = decidePrebootLanding([])
+  check('onboarding: an unconfigured install opens the guide', fresh.onboardingOnBoot, JSON.stringify(fresh))
+  setOnboardingDoneForTest(true)
+
+  const pad = await mountPreboot({ dshHome, renderOptions, argv: [], exit: () => {} })
+  const sawPad = await settled(() => screen().includes(LAUNCHPAD_PLACEHOLDER), { timeoutMs: 3000 })
+  check('launchpad: first frame is the launchpad', sawPad, screen())
+  takePrebootSlot()
+  pad.ready({ channel: makeLiveChannel().channel, props: { questionStore: new QuestionStore(), onExit: () => {}, launchpadOnBoot: true } })
+  const padFrames: string[] = []
+  for (let i = 0; i < 6; i += 1) {
+    await sleep(40) // 固定窗:探针 逐帧采样交接后的屏幕，断言落地页不被翻走
+    padFrames.push(screen())
+  }
+  check('launchpad: stays put across the handoff (no flip)', padFrames.every(frame => frame.includes(LAUNCHPAD_PLACEHOLDER)), padFrames.find(frame => !frame.includes(LAUNCHPAD_PLACEHOLDER)) ?? '')
+  pad.dispose()
+  process.env.DSH_TUI_NO_LAUNCHPAD = '1'
 }
 
 // ── 10. persisted renderer decision (M6) ────────────────────────────────────

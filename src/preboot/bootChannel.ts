@@ -17,6 +17,7 @@
  * This module never imports `@deepseek-ai/*`: it must be cheap to load
  * before dsh does.
  */
+import type { AgentCapabilities } from '../adapter/ports/channel-capabilities.js'
 import type { ChannelUi } from '../adapter/ports/channel-ui.js'
 import type { NotificationItem } from '../adapter/ports/channel-view.js'
 import { completeCommands, LOCAL_COMMANDS } from '../commands.js'
@@ -52,6 +53,14 @@ export interface BootChannel extends ChannelUi {
 }
 
 const bool = (value: unknown, fallback: boolean): boolean => typeof value === 'boolean' ? value : fallback
+const BOOT_CAPABILITIES: AgentCapabilities = Object.freeze({
+  compact: Object.freeze({ route: 'local' }),
+  plan: Object.freeze({ route: 'registry' }),
+  compaction: true,
+  pruner: true,
+  questionTool: true,
+  skills: true,
+})
 const ZERO_BUCKET = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 // Snapshot-returning queries feed `useSyncExternalStore`, which re-renders
 // until two consecutive reads are identical: hand back the same frozen
@@ -145,6 +154,8 @@ export function createBootChannel(snapshot: BootSnapshot): BootChannel {
       return notifications
     },
     contextWindow: undefined,
+    contextOccupancy: undefined,
+    attachedContexts: NO_ROWS,
     reasoningEffort: snapshot.effort,
     effortLevels: undefined,
     lastUsage: undefined,
@@ -202,9 +213,16 @@ export function createBootChannel(snapshot: BootSnapshot): BootChannel {
     submit: () => refuse(),
     steer: () => refuse(),
     removePending: () => false,
+    // ── panel contexts (no session to attach them to yet) ────────────────
+    attachContext: () => refuse(),
+    detachContext: () => {},
     cancel: () => {},
     interruptAndDeliver: () => refused(0),
     commandCompletions: input => completeCommands(input, LOCAL_COMMANDS),
+    // No agent yet: report the full composition so Help and `/` completion do
+    // not mark entries unavailable for the boot frames and then flip back.
+    // Every route still refuses below until the live channel takes over.
+    capabilities: () => BOOT_CAPABILITIES,
     runExternalCommand: () => refusedAsync(undefined),
     runExternalCommandOutcome: () => refusedAsync(undefined),
     // ── staged images (no attachment service yet) ────────────────────────

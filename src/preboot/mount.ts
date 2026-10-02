@@ -16,7 +16,8 @@
  * for the profile's cordis.yml (rendererPrefs.ts). The `~/.dsh-tui`
  * preference files fill the rest. The plugin mounts a fresh slot if its own
  * resolution still disagrees (see plugin.ts). The landing page (workspace home or chat)
- * uses the plugin's own rule (decideOpenHomeOnBoot) on the same inputs.
+ * and the launchpad / first-run guide use the plugin's own rules
+ * (homePrefs.ts) on the same inputs.
  *
  * Until the slot leaves `booting`, this module owns how the boot phase ends
  * badly: a fatal error, a boot watchdog (dsh never mounts dsh-tui, then the
@@ -33,7 +34,7 @@ import { parse as parseYaml } from 'yaml'
 import { readHostTuiConfig } from '../dsh-adapter/hostProfileConfig.js'
 import { QuestionStore } from '../dsh-adapter/questions.js'
 import { readEffortPref } from '../effortPrefs.js'
-import { decideOpenHomeOnBoot, readHomePrefs } from '../homePrefs.js'
+import { decideLaunchpadOnBoot, decideOnboardingOnBoot, decideOpenHomeOnBoot, readHomePrefs } from '../homePrefs.js'
 import { isLang, resolveStartupLang, setLang, t } from '../i18n.js'
 import { fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
 import { setMinimalUiMode } from '../minimalUiMode.js'
@@ -207,21 +208,36 @@ export function appArgsFromHostArgv(argv: readonly string[]): readonly string[] 
   return separator === -1 ? [] : argv.slice(separator + 1)
 }
 
+/** The boot-screen choices Chat seeds once at mount (see PrebootLanding). */
+export interface PrebootLanding {
+  readonly openHomeOnBoot: boolean
+  readonly launchpadOnBoot: boolean
+  readonly onboardingOnBoot: boolean
+}
+
 /**
- * The plugin's landing decision (plugin.ts, `openHomeOnBoot`), from what the
- * preload can see: the same env handoffs cordis.patch.yml feeds into
- * `sessionId` / `workspace`, and the same argv parsers. A literal
- * `sessionId:` / `workspace:` in a hand-written cordis.yml is invisible
- * here; the plugin's value still arrives at the handoff (Chat follows it).
+ * The plugin's landing decisions (plugin.ts, `openHomeOnBoot` /
+ * `launchpadOnBoot` / `onboardingOnBoot`), from what the preload can see: the
+ * same env handoffs cordis.patch.yml feeds into `sessionId` / `workspace`,
+ * and the same argv parsers and rules. A literal `sessionId:` /
+ * `workspace:` in a hand-written cordis.yml is invisible here; the plugin's
+ * value still arrives at the handoff (Chat follows it for the home).
  */
-export function decidePrebootLanding(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): boolean {
+export function decidePrebootLanding(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): PrebootLanding {
   const appArgs = appArgsFromHostArgv(argv)
-  return decideOpenHomeOnBoot({
-    homeSeen: readHomePrefs().seen === true,
+  const launch = {
     launchSessionId: env.DSH_TUI_RESUME_SESSION ?? resumeTargetFromArgv(appArgs),
-    requestedWorkspace: env.DSH_TUI_WORKSPACE_TARGET,
     initialPrompt: initialPromptFromCmdlineArgs(appArgs),
-  })
+  }
+  return {
+    openHomeOnBoot: decideOpenHomeOnBoot({
+      ...launch,
+      homeSeen: readHomePrefs().seen === true,
+      requestedWorkspace: env.DSH_TUI_WORKSPACE_TARGET,
+    }),
+    launchpadOnBoot: decideLaunchpadOnBoot(launch, env),
+    onboardingOnBoot: decideOnboardingOnBoot(launch),
+  }
 }
 
 /**
@@ -439,9 +455,9 @@ export async function mountPreboot(options: MountPrebootOptions = {}): Promise<B
         // Inert until the plugin's `ready(live)` replaces it: no ask can be
         // parked before a session exists.
         questionStore: new QuestionStore(),
-        // Same rule as the plugin (decideOpenHomeOnBoot), so the first frame
-        // is already the page the live session lands on.
-        openHomeOnBoot: decidePrebootLanding(argv),
+        // Same rules as the plugin (homePrefs.ts), so the first frame is
+        // already the page the live session lands on.
+        ...decidePrebootLanding(argv),
         // Chat's double Ctrl+C (or a boot-safe /exit) while dsh is still
         // loading is a user exit, so it leaves with 0 like the plugin's exit
         // funnel does. Any other code reads as a crash to the launcher, which

@@ -65,6 +65,7 @@ export function createTuiSettingsSchema() {
       contextUsage: Schema.boolean().default(DEFAULT_STATUS_BAR.contextUsage),
       cache: Schema.boolean().default(DEFAULT_STATUS_BAR.cache),
       tokens: Schema.boolean().default(DEFAULT_STATUS_BAR.tokens),
+      cost: Schema.boolean().default(DEFAULT_STATUS_BAR.cost),
       tps: Schema.boolean().default(DEFAULT_STATUS_BAR.tps),
       gitBranch: Schema.boolean().default(DEFAULT_STATUS_BAR.gitBranch),
       sessionTitle: Schema.boolean().default(DEFAULT_STATUS_BAR.sessionTitle),
@@ -76,6 +77,22 @@ export function createTuiSettingsSchema() {
       trajectory: Schema.boolean().default(DEFAULT_STATUS_BAR.trajectory),
       shortcutHint: Schema.boolean().default(DEFAULT_STATUS_BAR.shortcutHint),
     }).default({ ...DEFAULT_STATUS_BAR }),
+    // Side-panel preferences. No schema defaults on purpose (same rule as
+    // foldTerminalCommand/expandEditor above): a default here would come
+    // back from scope.get()/watch() and shadow an explicit cordis.yml
+    // `sidePanel` block while the user layer is unset. applyDisplay
+    // resolves `?? config.sidePanel?.x` and the apply* stores normalize
+    // undefined to the documented defaults (true / false / 0.68 / the
+    // built-in panel trio).
+    sidePanel: Schema.object({
+      splitEnabled: Schema.boolean(),
+      open: Schema.boolean(),
+      ratio: Schema.number(),
+      panels: Schema.string(),
+    }),
+    companion: Schema.object({
+      skin: Schema.string(),
+    }),
     // Header pixel whale art; on unless settings.yaml says otherwise.
     whale: Schema.boolean().default(true),
     // Idle whale behaviors after the intro settles; on by default —

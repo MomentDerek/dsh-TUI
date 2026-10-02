@@ -20,6 +20,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { shouldOfferOnboarding } from './onboardingPrefs.js'
 import { DATA_DIR } from './utils/paths.js'
 
 const PREFS_FILE = join(DATA_DIR, 'home.json')
@@ -87,4 +88,49 @@ export function decideOpenHomeOnBoot(inputs: HomeLandingInputs): boolean {
     && inputs.launchSessionId === undefined
     && inputs.requestedWorkspace === undefined
     && inputs.initialPrompt === ''
+}
+
+/**
+ * 落地页 / 首启引导该不该在这次启动出现。
+ *
+ * 只看「用户有没有说要回到哪儿」：`--resume` 目标与首句都算他知道自己要去哪。
+ * **工作区目标不算**——`dst` 默认把 cwd 当工作区目标喂进来，算进去就等于在本机
+ * 最主流的启动方式下把这两个屏永久关掉（实测事故）。home（会话与工作区）还多认
+ * 一条「没说在哪儿干活」，见 decideOpenHomeOnBoot。
+ *
+ * @param input.launchSessionId - 本次要恢复的会话（--resume / DSH_TUI_RESUME_SESSION）。
+ * @param input.initialPrompt - 命令行里带的首句提示词（无则空串）。
+ * @returns true 表示这次是「普通启动」。
+ */
+export function isLandingLaunch(input: { launchSessionId?: string; initialPrompt: string }): boolean {
+  return input.launchSessionId === undefined && input.initialPrompt === ''
+}
+
+/**
+ * Whether this launch starts on the launchpad.
+ *
+ * The launchpad is NOT one-shot the way the workspace home is: every
+ * ordinary launch starts on it, because it is where the first sentence gets
+ * typed rather than a tutorial that retires itself. `DSH_TUI_NO_LAUNCHPAD=1`
+ * is the escape hatch (an automation that wants the old blank conversation
+ * and no dialog in front of it).
+ *
+ * Shared by the plugin and the `dst` preload, like decideOpenHomeOnBoot:
+ * Chat seeds the launchpad once, so the boot frame must already agree.
+ */
+export function decideLaunchpadOnBoot(
+  input: { launchSessionId?: string; initialPrompt: string },
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isLandingLaunch(input) && env.DSH_TUI_NO_LAUNCHPAD !== '1'
+}
+
+/**
+ * Whether this launch opens the first-run guide. Gated on its own preference
+ * (not on the home's `seen`): the two answer different questions, and an
+ * install that already knows its workspace may still never have configured a
+ * key. Shared by the plugin and the `dst` preload.
+ */
+export function decideOnboardingOnBoot(input: { launchSessionId?: string; initialPrompt: string }): boolean {
+  return isLandingLaunch(input) && shouldOfferOnboarding()
 }
