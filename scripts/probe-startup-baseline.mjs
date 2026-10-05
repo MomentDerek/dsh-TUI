@@ -24,7 +24,8 @@
  * `inject`/`prompt` stay empty there; the trace columns do not depend on it.
  *
  * Debug switches: PROBE_TIMEOUT_MS (per-run wait for render, default 90000),
- * PROBE_DEBUG=1 (byte counter on stderr), PROBE_KEEP=1 (keep the isolated
+ * PROBE_DEBUG=1 (byte counter on stderr), PROBE_SCREEN=1 (print each run's
+ * final screen on stderr), PROBE_KEEP=1 (keep the isolated
  * root and print its path).
  */
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -41,6 +42,10 @@ const option = (name, fallback) => {
   return index === -1 ? fallback : args[index + 1]
 }
 const backend = option('--backend', 'dsh')
+// `--entry spike` (Phase 1 spike, uncommitted): start the TUI runtime on a bare
+// Cordis root via lib/types/dsh-adapter/spike-entry.js, no DSH profile at all.
+// Timings then count from spawning that node process, not the launcher chain.
+const entryMode = option('--entry', 'profile')
 const runs = Number(option('--runs', '5'))
 const repo = fileURLToPath(new URL('..', import.meta.url))
 if (!existsSync(join(repo, 'lib', 'types', 'index.js'))) throw new Error('run pnpm compile first')
@@ -102,7 +107,9 @@ mkdirSync(join(modules, '@anthropic-ai'))
 symlinkSync(realpathSync(join(repo, 'node_modules', '@anthropic-ai', 'claude-agent-sdk')), join(modules, '@anthropic-ai', 'claude-agent-sdk'), 'dir')
 const fallback = join(sourceHome, 'profiles', 'node_modules')
 if (existsSync(fallback)) symlinkSync(fallback, join(targetHome, 'profiles', 'node_modules'), 'dir')
-const launcher = join(tuiPackage, 'bin', 'dsh-tui.js')
+const launcher = entryMode === 'spike'
+  ? join(tuiPackage, 'lib', 'types', 'dsh-adapter', 'spike-entry.js')
+  : join(tuiPackage, 'bin', 'dsh-tui.js')
 
 // ── one run ────────────────────────────────────────────────────────────────
 const COLS = 100
@@ -155,6 +162,7 @@ async function run(index) {
     const ok = await settled(() => exit !== undefined || traced('render-done'), { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS ?? 90000) })
     if (!ok || exit !== undefined) throw new Error(`run ${index}: no render (exit ${exit?.exitCode})\ntrace: ${existsSync(trace) ? readFileSync(trace, 'utf8') : 'none'}\nraw(${output.length}): ${JSON.stringify(output.slice(-1500))}`)
     await settled(() => at.inject !== undefined && at.prompt !== undefined, { timeoutMs: 1500 })
+    if (process.env.PROBE_SCREEN === '1') console.error(`[probe] screen of run ${index}:\n${screen()}`)
     child.kill('SIGTERM')
     await settled(() => exit !== undefined, { timeoutMs: 10000 })
   } finally {
@@ -171,7 +179,7 @@ async function run(index) {
   return result
 }
 
-const COLUMNS = ['dsh-process', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'render-start', 'render-done', 'inject', 'prompt']
+const COLUMNS = ['dsh-process', 'entry-start', 'entry-modules', 'entry-config', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'settings-wait-start', 'settings-wait-end', 'render-start', 'render-done', 'inject', 'prompt']
 const results = []
 try {
   for (let index = 0; index < runs; index += 1) {
@@ -187,6 +195,6 @@ const median = values => {
   const sorted = values.filter(value => typeof value === 'number').sort((a, b) => a - b)
   return sorted.length === 0 ? '-' : sorted[Math.floor(sorted.length / 2)]
 }
-console.log(`\nbackend=${backend} runs=${runs} (ms from spawn of the profile launcher, median)`)
+console.log(`\nbackend=${backend} entry=${entryMode} runs=${runs} (ms from spawn of ${entryMode === 'spike' ? 'the spike node process' : 'the profile launcher'}, median)`)
 for (const name of COLUMNS) console.log(`  ${name.padEnd(20)} ${median(results.map(result => result[name]))}`)
 process.exit(0)

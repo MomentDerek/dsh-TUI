@@ -2,7 +2,9 @@
 
 [文档索引](README.md) · [架构与限制](architecture.md) · [多后端架构](agent-backend-design.md)
 
-状态：设计草案，未实现。基于 `main`（ec48de22）与 `@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。
+状态：Phase 0 完成，Phase 1 进行中（原型分支 `feat/standalone-host`）。基于 `main`（ec48de22）与
+`@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。2026-10-06 修订分期：Phase 1 只做「DSH 无关」，
+TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 
 ## 一句话
 
@@ -101,7 +103,11 @@ bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析——保留�
                           └─ 交给 TuiHost：channel.adoptStartup(dshSession) + 挂 DSH 扩展
 ```
 
-依赖方向：界面 → ports；channel 核心 → agent + ports + **TuiHost 接口**；Cordis 只出现在
+上图是 Phase 2 之后的终态。Phase 1 的入口不建 TuiHost：它自己 `new Context()` 持有一个裸
+Cordis 根，`plugin.ts` 的 `apply` 原样挂在上面，`tui*` 服务照旧住在这个根里；Claude 内核下
+没有 DSH profile，也就没有桥接行。
+
+依赖方向（终态）：界面 → ports；channel 核心 → agent + ports + **TuiHost 接口**；Cordis 只出现在
 `src/dsh-adapter/`（DSH 后端与桥接行）。
 
 ## 4. 现状的 Cordis 依赖与归属
@@ -126,6 +132,11 @@ channel 核心里还直接读 `ctx` 的位置（`CoreHost` 没盖住的）：`cr
 ## 5. 关键设计
 
 ### 5.1 TuiHost：把 CoreHost 补全
+
+> 2026-10-06 修订：TuiHost 推迟到 **Phase 2**。Phase 1 spike 证明 `plugin.ts` 的 `apply` 在裸
+> Cordis 根上零改动即可跑 Claude 内核，Phase 1 不需要「Cordis 无关」。TuiHost 真正必要的时刻
+> 是 Phase 2：`runProfile` 的 `boot()` 会另建一个 Cordis 根，两根并存时第三方插件在 DSH 根里
+> 看不到 TUI 根的服务，需要 TuiHost + 桥接行。下文按终态描述。
 
 不新造抽象，扩展现有的 `CoreHost`（`core/host.ts`）：
 
@@ -237,19 +248,24 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
   `ctx.root.fiber.dispose()`。
 - raw 模式下 Ctrl+C 不产生 SIGINT，与今天一致。
 
-### 5.6 设置存储（需要维护者决定）
+### 5.6 设置存储（已定：(a)）
 
 `dsh-tui.*` 的值（fullscreen、diffLayout、sidePanel、shortcuts…）在 0.1.7+ 宿主下住在
 profile 的 Config 行里，`/settings` 通过 DSH 的 `settings.mutate`（带版本号的围栏写入）
 写回。Claude 内核不加载 DSH 时，**读**可以借 app-boot 组合，**写**没有去处。
 
-- **(a) TUI 自有设置文件（推荐）。**如 `~/.dsh-tui/settings.json`，首次启动从 profile
+- **(a) TUI 自有设置文件（2026-10-06 选定）。**如 `~/.dsh-tui/settings.json`，首次启动从 profile
   Config 一次性导入，之后 `dsh-tui` 行不再拥有这些键（Config 里残留的值作为只读的旧层，
   文档说明）。理由：两个内核同一份设置，首帧读设置不需要 app-boot，和
   `~/.dsh-tui/*.json` 现有偏好放在一起。代价：用户可见的文件布局变化与迁移；手写
   cordis.yml 里 `dsh-tui:` 配置的用户需要迁移说明。
 - **(b) 继续住 Config。**Claude 内核下设置只读，改设置提示「切回 DSH 内核再改」或
   通过 app-boot 直接写 profile 文件（绕过 DSH 的版本围栏，有并发写风险）。
+
+Phase 1 落地 (a) 时要定的实现细节：导入的触发点（Claude 内核首启时直接读 profile 的
+`cordis.yml` / settings 层，还是由 DSH 内核在下次启动时写出）、导入标记（只导入一次）、
+DSH 内核下 `/settings` 改写的目标从 `settings.mutate` 切到本文件后，Config 里残留值的
+优先级（文件优先，Config 只作导入源）。
 
 无论选哪个，`src/settings/definitions.ts`（纯元数据）与 `tuiSettingsSchema` 继续是唯一
 定义来源。
@@ -308,11 +324,12 @@ IPC 协议，维护成本比手写镜像更高。
 | 期 | 内容 | 验收 | 回滚 |
 | --- | --- | --- | --- |
 | 0 | TuiHost 接口，`cordisTuiHost(ctx)` 实现；channel 核心改收 TuiHost；**测基线**：dsh / claude 两个内核从进程启动到首帧、到可发送的时间 | 行为零变化（现有 CI 组全过）；`verify:boundary` 新规则：`channel/core/` 不 import Cordis；基线数字写进本文 | 纯重构，直接 revert |
-| 1 | 设置存储落地（按 5.6 的决定）；本包 entry；占位会话 + `adoptStartup`；Claude 内核走 entry、不加载 DSH。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
-| 2 | DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；第三方插件示例（主题、面板、决策拦截）在新路径下通过；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
+| 1 | 设置存储落地（5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入）；本包 entry——自持裸 Cordis 根，`plugin.ts` 的 `apply` 原样挂载（**不建 TuiHost**，见 5.1 修订）；占位会话 + `adoptStartup`（1b）；Claude 内核走 entry、不加载 DSH。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
+| 2 | TuiHost（5.1，由 Phase 0 的 `ChannelHost` 补全）与 Cordis 无关的组装根；DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；第三方插件示例（主题、面板、决策拦截）在新路径下通过；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
 | 3 | 删除 `src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js`；决定直启路径去留；改写 AGENTS.md 与架构文档 | 构建门禁与全部 CI 组 | — |
 
-Phase 1 是收益最大、风险最小的一期，也是检验 Phase 0 抽象够不够用的试金石。
+Phase 1 是收益最大、风险最小的一期。分期于 2026-10-06 按 spike 结果修订：原 Phase 1 的
+TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设置存储、入口与 1b。
 
 ## 8. 与 PR #1216（预载）的关系
 
@@ -341,7 +358,8 @@ Phase 1 是收益最大、风险最小的一期，也是检验 Phase 0 抽象够
 
 1. 方案方向本身：AGENTS.md 开头的「零核心改动、纯插件挂载的终端界面插件」定位会变成
    「拥有入口的终端应用，DSH 是后端之一」。这一句要改写。
-2. 设置存储：5.6 的 (a) 还是 (b)。
+2. ~~设置存储：5.6 的 (a) 还是 (b)。~~ 已定 (a)（2026-10-06）。
+2a. ~~分期修订（TuiHost 推迟到 Phase 2）。~~ 已接受（2026-10-06）。
 3. DSH 内核走 D1（扩展晚挂、预载整体删除）还是 D2（DSH 保留预载）。
 4. `dsh --profile dsh-tui` 直启路径是否继续支持。
 5. PR #1216 先合入还是关闭（第 8 节）。
@@ -450,3 +468,159 @@ ec48de22）。本节按时间记录每一步做了什么、发现了什么、设
    lib 与原版 0.13.0 一样；全新 HOME 与复制的真实偏好一样；fullscreen 与 inline 一样；
    直接起 profile 副本与经全局启动器一样；PTY 尺寸正常（100×32），没有崩溃日志。原因未查明；
    时间点打点不依赖屏幕，所以基线仍有效。可见首帧要在真实终端里手测。
+
+### 2026-10-06 · Phase 1 spike：Claude 内核不组合 DSH profile 的上限
+
+（写于下面的交接一节之后；交接一节保持在末尾作为新会话的入口。）做法按交接一节的 1–7 条执行，有一处偏离：入口放在 `src/dsh-adapter/spike-entry.ts`
+而不是 `src/host/`——它要 import `@deepseek-ai/cordis`，放在 `dsh-adapter/` 外会让
+`verify:boundary` 失败。内容：`markBoot('entry-start')` → 并行动态 import cordis 的
+`Context`、`./index.js` 的 `Config`、`./plugin.js` 的 `apply` → `new Context()` → 照
+dsh-tui 行从环境变量构造 `Config` → `await apply(ctx, config, ctx)`。探针加了
+`--entry spike`（spawn `node <隔离副本>/lib/types/dsh-adapter/spike-entry.js`）和
+`PROBE_SCREEN=1`（打印末屏）；`plugin.ts` 在 `await settingsReady` 前后加了
+`settings-wait-start/end` 两个打点（基线路径同样受益）。spike 入口与探针改动均未提交。
+
+**耦合度结论：零守卫。**裸 `new Context()` 上 `plugin.ts` 的 `apply` 不改一行就跑通了
+Claude 内核：交接里预期会撞的点全部已有降级——`registerBundledPresets` 在没有
+`agentPresets` 时返回 false、退回打包预设目录；`userQuestions` 不存在就地 new；
+`agentDefaultModel` 是可选查找；`tui*` 服务缺失只在 profile 启动时告警（这里不告警）。
+唯一的代价是 `settingsReady` 的 300ms 兜底（见下表）。注意「零守卫」只覆盖到首帧：
+退出路径（`/quit`、信号后 `disposeRootAndThen` 对裸根的 `ctx.root.fiber.dispose()`、终端
+状态恢复）在 spike 里没验证——探针只发 SIGTERM，不检查退出码与终端恢复。末屏确认是 Claude 内核：启动台、
+模型 `claude-opus-5-5`、状态栏 `Claude · Checking…`，没有降级到 dsh 的提示。
+
+数字（5 轮中位数，ms，**从 spawn spike 的 node 进程算起**；基线是从 spawn profile 启动器
+算起、含约 107ms 启动器链，见上一节）：
+
+| 时间点 | spike（Claude） | 基线（Claude） |
+| --- | --- | --- |
+| entry-start（spike 模块开始执行） | 25 | — |
+| entry-modules（cordis + index + plugin 模块图加载完） | 688 | — |
+| runtime-apply | 693 | 1688 |
+| 会话打开开始 | 697 | 2025 |
+| 会话打开结束 | 1324 | 2620 |
+| settings 等待开始 / 结束 | 1341 / 1640 | — |
+| render 完成 | 1653 | 2677 |
+| 注入端点出现 | 1658 | 2682 |
+| prompt 画出（屏幕上出现 `❯`） | 1736 | 未测到 |
+
+读法：
+
+- 原样 spike 的 render 完成比基线早约 1.0s（1653 vs 2677）。其中 300ms 是 settings 兜底
+  白等（裸根没有 settings 服务，`ctx.inject(['settings'])` 回调永不执行）；Phase 1 的入口
+  自带设置存储后这段消失，render 完成约 **1.35s**，即基线的一半左右。
+- 剩下的 1.35s 构成：模块图约 660ms、Claude 后端打开约 630ms、其余（预设、会话前准备、
+  Chat 元素构造、首帧）不到 70ms。DSH 组合那约 2.0s 已经整段拿掉。
+- 模块图 660ms 几乎全在 `plugin.js` 的依赖图里（cordis 3ms、index 14ms）。按 `plugin.js`
+  的顶层 import 逐个计时（先到者付共享依赖，只作量级参考）：`./channel.js` 约 270ms、
+  `../screens/Chat.js` 约 270ms、`@deepseek-ai/dsh-user-questions` 约 57ms、
+  `@deepseek-ai/dsh-session` 约 21ms。Claude 内核下 DSH 包只占约 80ms，大头是 TUI 自己。
+- 1b 的空间：首帧依赖模块图与配置，不依赖后端会话。占位会话先挂界面时，首帧可以落在
+  约 700–750ms（模块 + 配置 + 首帧），后端打开的 630ms 与界面并行。
+- 环境发现 3 的范围缩小了：spike 下同一个 node-pty 能正常画出完整界面（启动台、输入框、
+  状态栏），所以空帧只出现在「dsh-tui 启动器 → dsh」这条链上，与 TUI 渲染本身无关。原因
+  仍未查明。
+
+**对设计的影响（待用户/chimney 决定）**：交接里的推论成立——Phase 1 需要的是「DSH 无关」，
+不是「Cordis 无关」。TUI 自己持有一个裸 Cordis 根就能跑，`tui*` 服务原样住在里面；5.1 的
+TuiHost 抽象与 `plugin.ts` 的重写可以推迟到 Phase 2（`runProfile` 的 `boot()` 另建根、两根
+并存时才必要）。Phase 1 真正要补的只有：设置存储（5.6，消掉 300ms 兜底且让 /settings 能写）、
+本包入口与启动器分流、1b 的占位会话。
+
+### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
+
+**仓库与分支状态**
+
+- 本 worktree：`/home/moment/Code/working/dsh-TUI-standalone`，分支 `feat/standalone-host`。
+  - `c966caff` Phase 0（channel 核心改收 `ChannelHost`、boundary 门禁收紧、启动打点、
+    基线探针、本文档）——已提交，未 push。
+  - 本节（交接说明）写于提交之后，尚未提交。
+- 预载方案的 rebase 分支：`/home/moment/Code/working/dsh-TUI-preboot-rebased`，分支
+  `feat/preboot-fast-start-rebased`，`07a240c2`（PR #1216 的净改动压成一个提交，重建在
+  ec48de22 上，含与 main 的整合修补）——已提交，未 push，PR 未更新。PR #1216 是先合入还是
+  关闭，等方案 B 有结论后与 chimney 决定（本文第 8 节）。该分支本地 CI：channel-ui 组 4 个
+  失败已确认与 PR 无关；render-scroll 组 3 个（含 `verify-launchpad`）、session-workspace
+  组 2 个失败**未对照**，若走「先合入」必须补跑。
+- 原 PR 分支工作区 `/home/moment/Code/working/dsh-TUI-preboot`（`beb04980`）保留未动。
+
+**Phase 1 进行到哪**
+
+**更新：spike 已跑完，结论与数字见上一节「Phase 1 spike」。**下面保留 spike 前的计划原文
+作记录。spike 代码（`src/dsh-adapter/spike-entry.ts`、探针的 `--entry spike`）未提交，等用户
+看过数字再定去留。下一步是向用户/chimney 提「Phase 1 只做 DSH 无关」的分期修订，然后做 1b。
+
+spike 的定位：**上限测量**，不是 Phase 1 交付——量出「Claude 内核完全不组合 DSH profile」能
+快到多少，再决定是否值得重写组装根。
+
+为什么做 spike 而不是直接按 5.1 写 Cordis 无关的组装根：`plugin.ts` 的 `apply` 约 2000 行，
+深度依赖 Cordis（设置 inject、问卷服务、预设、各 tui 接缝、退出漏斗、给 Chat 的约 100 个
+props）。按设计重写等于重写这 2000 行，先量收益再付成本。
+
+spike 做法（已与 advisor 对齐）：
+
+1. 新文件 `src/host/spike-entry.ts`：`markBoot('entry-start')` → 动态 import
+   `@deepseek-ai/cordis` 的 `Context`、`../dsh-adapter/index.js` 的 `Config`、
+   `../dsh-adapter/plugin.js` 的 `apply` → `markBoot('entry-modules')` →
+   `const ctx = new Context()` → 照 `cordis.patch.yml` dsh-tui 行（约 452–503 行）从环境
+   变量构造 `Config({ provider: 'deepseek-official', fullscreen: true, terminalImages: true,
+   effort: 'max', preset: env.DSH_TUI_PRESET, workspace: env.DSH_TUI_WORKSPACE_TARGET,
+   sessionId: env.DSH_TUI_RESUME_SESSION, backend: env.DSH_TUI_BACKEND })` →
+   `await apply(ctx, config, ctx)`（跳过 `index.ts` 那层 loader 等待）。设置层用默认值、只读
+   （已与用户约定；不要用 app-boot `composeEntries`，那会把 dsh-app-boot 拉回依赖图）。
+2. 已确认：裸 `new Context()` 自带 `logger`、`effect`、`plugin`、`inject`、`on`、`get`、
+   `root`、`fiber`。`resolveTuiHostMode()` 在 stdout 是 TTY 时返回 `interactive`，不挡路。
+   注意 `isStandaloneRuntime()`（`update.ts`）会把 `DSH_HOME` 含 `dsh-tui-standalone` 的
+   情况当成独立运行时——本 worktree 路径是 `dsh-TUI-standalone`（大小写不同），不触发。
+3. 预期会撞上的「服务不存在」点：`registerBundledPresets`、`UserQuestionService` /
+   `toolAskUser`、`agentDefaultModel`、`compositionRoot`、退出漏斗的
+   `ctx.root.fiber.dispose`，以及 `plugin.ts` 约 855–866 行 `ctx.inject(['settings'], …)`
+   的 `settingsReady`：裸根没有 settings 服务，回调不跑，首帧会白等 300ms 兜底——要么在
+   比较数字时扣掉，要么加「服务不存在就立即 resolve」的分支。
+4. **时间盒**：每处只加「不存在就跳过」的守卫，不改语义。守卫超过五六处，或某处必须改行为
+   才能过，就停——那本身就是「组装根耦合度」的量化结论，记进本文档。
+5. 探针加 `--entry spike`：spawn `node <隔离副本>/lib/types/host/spike-entry.js`（模块解析仍走
+   隔离 profile 的 node_modules）。对比口径：baseline 从 spawn 启动器算起，含约 107ms 启动
+   器链；spike 是直接起进程，要注明。
+6. 跑通后量两组：Claude 内核 spike 5 轮（entry-start → session-open → render-done）；spike
+   下 `session-open-start` 之前的拆分（模块加载、plugin 前期准备各多少）——后者决定 1b
+   （先挂界面、占位会话、后接管）首帧能提前到哪。
+7. spike 代码这一轮不提交，等用户看过数字再定去留。
+
+**待提给用户/chimney 的推论（spike 跑完再提）**：如果 spike 只需少量守卫就能跑，说明
+Phase 1 真正需要的是「DSH 无关」而不是「Cordis 无关」——TUI 自己持有一个 Cordis 根，`tui*`
+服务原样住在里面，不需要桥。「Cordis 无关」要到 Phase 2 才必要：`runProfile` 的 `boot()`
+会新建自己的根，两个根并存时第三方插件在 DSH 根里看不到 TUI 根的服务。这会实质修改 5.1 与
+分期表（TuiHost 抽象推迟到 Phase 2），由用户和 chimney 决定。
+
+**决定（2026-10-06，spike 之后）**：5.6 选 (a)；接受分期修订（Phase 1 只做 DSH 无关，TuiHost
+推迟到 Phase 2）。正文 5.1、5.6、第 3、7、10 节已同步。Phase 1 剩下三块：1b（占位会话，
+下一步）、设置存储 (a)、本包入口与启动器分流（spike 入口转正）。退出路径待用户在真实终端
+验证 `/quit`。
+
+**之后的 1b（spike 之后）**：占位会话 + `adoptStartup`（5.3），首帧先于后端打开。依据会话
+接管调研：`createBackendOpener.adoptWith`（`core/session-switch.ts`）是现成的接管尾段；不能
+复用 `newSession`/`resumeSession`（`working` 时拒绝、`raceProbe` 遇排队输入放弃候选、触发
+`tui/session-switch` 否决与提示）；构造时定死的字段（`backendLabel`、`messaging`、
+`subagentControl.history`、`defaultOpeners`、`snapshotOf` 的 `dsh:false`、working-activity
+挂载）要改成可延后；`core.extend` 在 `start` 之后会抛错。
+
+**测量工具与注意事项**
+
+- `DSH_TUI_BOOT_TRACE=<文件>` 打点：`row-apply`（index.ts）、`runtime-apply`、
+  `session-open-start/end`、`render-start/done`（plugin.ts）。
+- `scripts/probe-startup-baseline.mjs --backend dsh|claude --runs N`（需先 `pnpm compile`）。
+  调试开关见文件头：`PROBE_TIMEOUT_MS`、`PROBE_DEBUG=1`、`PROBE_KEEP=1`、`PROBE_SCREEN=1`
+  （打印每轮末屏）。`--entry spike` 改起 `lib/types/dsh-adapter/spike-entry.js`（依赖未提交的
+  spike 入口，两者同去留）。
+- `plugin.ts` 另有 `settings-wait-start/end` 打点，量 `settingsReady` 等待（裸根下恒为 300ms 兜底）。
+- 探针必须排除 dsh-purge（已实现），否则会改坏全局 dsh 的 `bin.js`（见上一节环境发现 1）。
+  若全局 dsh 又报 `profile-boot-BP_C0vpU.js` 找不到，就是被改坏了，需要用户修复。
+- 本机 PTY 下 TUI 只画空帧（环境发现 3），可见首帧只能在真实终端手测；时间点打点不受影响。
+- `verify-settings-compat.mjs` 在 main 上本就失败（harness 漏注入 `normalizeBrandSetting`
+  与 `BTW_CONTEXT_*`）；预载 rebase 分支里有修法可参考，本分支未修。
+
+**协作约定**
+
+- 本文档是方案 B 的主要参考与记录：每一步、每个发现、每处设计变更都同步写进本节和相关正文。
+- 未经用户要求不提交；只暂存明确路径；提交不加 Claude 署名（无 Co-Authored-By）。
+- 验证按 AGENTS.md：改动面相关的聚焦脚本 + `pnpm build`；仓库没有 `test`/`lint` 脚本。

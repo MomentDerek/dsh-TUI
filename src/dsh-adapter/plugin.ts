@@ -2004,7 +2004,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // when the element is created, so wait for the settings first-application
   // BEFORE creating Chat: the element must see the same bootedFullscreen the
   // root tree resolves after settingsReady below.
+  markBoot('settings-wait-start')
   await settingsReady
+  markBoot('settings-wait-end')
   /**
    * One-shot workspace-home landing.
    *
