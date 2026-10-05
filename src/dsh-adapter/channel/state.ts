@@ -126,6 +126,21 @@ export interface ChannelLaunchOptions {
   /** The startup session's durable history, read before construction so
    *  the first bind paints it ahead of any live event. */
   initialHistory?: readonly AgentEvent[]
+  /**
+   * The settings service the channel's `/settings` surface reads and writes
+   * (the TUI's own file-backed layer over the host's; ../tui-settings.ts).
+   * Absent → the host's `settings` service.
+   */
+  settingsService?: unknown
+  /**
+   * The startup session still opening (docs/standalone-host-design.md 5.3):
+   * the channel is constructed on a placeholder session (`ready` false), and
+   * `start()` adopts the real one with its history once this settles. A
+   * rejection leaves the placeholder bound and says why in the transcript;
+   * `/new` then retries through `openSession`. Absent → the session handed
+   * to construction is the real one.
+   */
+  startup?: Promise<{ readonly session: AgentSession; readonly history: readonly AgentEvent[] }>
   /** How a user re-enters a session of this backend from a shell (the
    *  `/fork` notice); absent → the in-TUI `/resume` hint. */
   resumeCommand?: (sessionId: string) => string
@@ -152,7 +167,7 @@ export function createInitialChannelView(
   options: ChannelLaunchOptions,
   input: { agentId: string; sessionId: string; mode: ChannelState['mode']; cwdDescription: string },
 ): Pick<ChannelState,
-  'effortLevels' | 'version' | 'rows' | 'status' | 'sessionTitle' | 'sessionColor' |
+  'effortLevels' | 'version' | 'ready' | 'rows' | 'status' | 'sessionTitle' | 'sessionColor' |
   'agentId' | 'sessionId' | 'agentBindingGeneration' | 'model' | 'modelDisplay' | 'provider' | 'tokens' | 'cwd' |
   'displayCwd' | 'gitBranch' | 'working' | 'compaction' | 'cancelPending' | 'spinnerMode' |
   'responseChars' | 'activeToolCount' | 'turnStart' | 'lastUserText' |
@@ -167,7 +182,7 @@ export function createInitialChannelView(
   'lastUsage' | 'turnUsage' | 'tps' | 'tpsSamples' | 'contextSegments' | 'mainCost' | 'subagentCost' | 'subagents' | 'backgroundJobs' | 'selection'
 > {
   return {
-    effortLevels: undefined, version: 0, rows: [], selection: undefined, status: 'starting', sessionTitle: '', sessionColor: '',
+    effortLevels: undefined, version: 0, ready: options.startup === undefined, rows: [], selection: undefined, status: 'starting', sessionTitle: '', sessionColor: '',
     agentId: input.agentId, sessionId: input.sessionId, agentBindingGeneration: 0, model: options.model, modelDisplay: undefined, provider: options.provider,
     tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, peak: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, idle: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
     cwd: options.cwd, displayCwd: input.cwdDescription, gitBranch: undefined, working: false,

@@ -104,6 +104,10 @@ IDs. It requires matching profile dependencies with `@deepseek-ai/schemastery`
 3.18.3 or newer; an incompatible schema stops TUI startup with repair guidance
 instead of showing an uneditable settings page. Older hosts keep their legacy settings scope.
 
+The `dsh-tui` section of `/settings` is saved in `~/.dsh-tui/settings.json`, shared by
+both kernels; the first launch imports it once from the profile's `cordis.patch.yml`
+(see [configuration](docs/configuration.en.md#tui-configuration)).
+
 ```sh
 # Install the CLI and this plugin globally (ships the dsh-tui command)
 npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui

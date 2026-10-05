@@ -11,11 +11,15 @@ import { Config } from './index.js'
 import { configValues, createSettingsScope, resolveSettingsNamespace, type RuntimeConfig } from './compat/settings.js'
 import { createChannel } from './channel.js'
 import { createDshSession } from './backend/session.js'
+import { createTuiSettingsService, type DelegateSettings } from './tui-settings.js'
+import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 import { kernelEntriesOf } from '../components/kernelCatalog.js'
-import { openBackendStartup, probeKernels, installSurfaceFor } from './backends.js'
+import { openBackendStartup, prepareBackendStartup, probeKernels, installSurfaceFor } from './backends.js'
 import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
 import { formatSessionRef } from '../agent/refs.js'
+import type { AgentEvent } from '../agent/events.js'
 import type { AgentSession } from '../agent/session.js'
+import { createStartingSession } from '../agent/starting-session.js'
 import { mountFailureText } from '../sessions/resumeFailure.js'
 import { createChannelSceneOutlet } from './channel-scene-outlet.js'
 import { mountChannelUi } from './channel-ui.js'
@@ -173,7 +177,19 @@ export function resolveTuiHostMode(
   return explicitTuiLaunch ? 'invalid-explicit-launch' : 'headless-host'
 }
 
-export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx): Promise<void> {
+/** How a host other than the dsh-tui Config row starts the runtime. */
+export interface RuntimeApplyOptions {
+  /**
+   * Mount the screen before the non-DSH startup session has opened, and adopt
+   * it once it has (docs/standalone-host-design.md 5.3). Only the standalone
+   * entry sets it: it has no DSH to fall back to, whereas the profile path
+   * falls back to DSH when a remembered kernel cannot open, which needs the
+   * open to settle before the mount.
+   */
+  readonly deferBackendOpen?: boolean
+}
+
+export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx, runtimeOptions: RuntimeApplyOptions = {}): Promise<void> {
   markBoot('runtime-apply')
   const config = configValues<Config>(runtimeConfig)
   // /restart handoff diagnosis: the replacement process is marked by env and
@@ -252,6 +268,15 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
 
   // Validate settings before creating an agent or taking over the terminal.
   const tuiSettingsNs = resolveSettingsNamespace(configOwner, Config) as SettingsNamespace
+  // The TUI's own settings layer (~/.dsh-tui/settings.json; design 5.6 (a)):
+  // the same document on every kernel and entry. Other namespaces still go
+  // to the host's settings service (absent in the standalone entry).
+  const tuiSettings = createTuiSettingsService({
+    ns: tuiSettingsNs,
+    profile: resolveDshProfileName() ?? process.env.DSH_TUI_PROFILE ?? 'dsh-tui',
+    keys: EDITABLE_CONFIG_KEYS as readonly string[],
+    delegate: () => ctx.get('settings') as DelegateSettings | undefined,
+  })
 
   // Modern hosts own a declarative registry; old hosts discover directories.
   // A modern bundle failure must not silently fall back to obsolete files.
@@ -602,21 +627,45 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // Explicit choices (flag/Config/handoff) and explicit resume targets keep
   // the hard failure: silently swapping what the user named would be worse.
   let backendStart: Awaited<ReturnType<typeof openBackendStartup>> | undefined
+  /** The startup session still opening (`deferBackendOpen`); the channel adopts it. */
+  let backendStartup: Promise<{ readonly session: AgentSession; readonly history: readonly AgentEvent[] }> | undefined
+  /** Set once the channel holds `backendStartup` (its binding then owns the session). */
+  let backendStartupAdopted = false
   let backendFallbackNotice: string | undefined
+  const deferBackendOpen = runtimeOptions.deferBackendOpen === true
+  if (deferBackendOpen && backendChoice === 'dsh') {
+    throw new Error('dsh-tui: the standalone entry cannot host the DSH kernel; start it through the profile launcher')
+  }
   markBoot('session-open-start')
   if (backendChoice !== 'dsh') {
     try {
-      backendStart = await openBackendStartup(ctx, await loadBackend(backendChoice), {
+      const startupInput = {
         cwd: sessionCwd,
-        stderr: line => {
+        stderr: (line: string) => {
           logForDebugging(`[${backendChoice}-stderr] ${line}`)
           stderrReporter.push(line)
         },
         ...(configuredSessionId === undefined ? {} : { configuredSessionId }),
         argv: cmdlineArgs ?? process.argv.slice(2),
-      })
+      }
+      const backendModule = await loadBackend(backendChoice)
+      if (deferBackendOpen) {
+        const prepared = await prepareBackendStartup(ctx, backendModule, startupInput)
+        const startup = prepared.start().then(opened => ({ session: opened.session, history: opened.initialHistory }))
+        backendStartup = startup
+        // Observed here as well: a boot that fails before the channel holds
+        // the open must neither leak an unhandled rejection nor the session.
+        startup.catch(() => undefined)
+        ctx.effect(() => () => {
+          if (backendStartupAdopted) return
+          void startup.then(opened => opened.session.dispose(), () => undefined).catch(() => undefined)
+        }, 'dsh-tui deferred backend startup')
+        backendStart = { ...prepared, session: createStartingSession(prepared.backendId, sessionCwd), initialHistory: [] }
+      } else {
+        backendStart = await openBackendStartup(ctx, backendModule, startupInput)
+      }
     } catch (error) {
-      if (backendPinned || handoffBackend !== undefined || effectiveSessionId !== undefined) throw error
+      if (deferBackendOpen || backendPinned || handoffBackend !== undefined || effectiveSessionId !== undefined) throw error
       const reason = error instanceof Error ? error.message : String(error)
       logForDebugging(`dsh-tui: remembered backend "${backendChoice}" failed to open (${reason}); falling back to dsh`)
       backendFallbackNotice = t('kernel-memory-fallback', { name: backendLabel(backendChoice), reason })
@@ -730,6 +779,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // (the Config owner's Loader id; custom ids are supported). Chat and the
     // channel's own settings reads look the section up by it.
     settingsNs: tuiSettingsNs,
+    settingsService: tuiSettings,
     // The backend reports its model with its first turn (`system/init`);
     // until then the status line names the backend.
     model: backendStart !== undefined ? backendStart.label : displayRoute.model,
@@ -742,6 +792,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       sessionPrefs: backendStart.sessionPrefs,
       initialHistory: backendStart.initialHistory,
       resumeCommand: backendStart.resumeCommand,
+      ...(backendStartup === undefined ? {} : { startup: backendStartup }),
     }),
     // The activity projection only pushes on change; read the current value as
     // soon as this session binds so a resumed or reattached session renders its
@@ -814,6 +865,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // 的改动由 applyBrand 实时接上（branding.ts 负责解析）。
     brand: config.brand,
   })
+  // The channel's binding owns the deferred open from here (a release
+  // mid-open closes the session on arrival).
+  backendStartupAdopted = backendStartup !== undefined
   // Register the live Channel for the adapter Kernel. The Channel driver
   // resolves it lazily from the composition root, so this can be called after
   // the plugin-host Kernel started without requiring a re-mount.
@@ -929,8 +983,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   })
   // Old hosts register a settings.yaml scope. 0.1.7 projects the plugin's
   // volatile Config fields instead; both paths apply edits without remounting.
-  ctx.inject(['settings'], (settingsCtx) => {
-    // Loader targets the Config owner's fiber, not the injected child fiber.
+  // The TUI's settings no longer wait for the host's settings service: the
+  // file-backed scope applies before the first mount on every host.
+  ;((settingsCtx: { settings: typeof tuiSettings; effect: Context['effect'] }) => {
     const scope = createSettingsScope<SettingsValue>(configOwner, settingsCtx.settings,
       tuiSettingsNs,
       Schema.object({
@@ -1294,7 +1349,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       lastTerminalImages = terminalImages
     }))
     resolveSettingsReady?.()
-  })
+  })({ settings: tuiSettings, effect: ctx.effect.bind(ctx) })
   // The /settings screen's own section: the dsh-tui namespace comes from
   // the settings registration above, and the declared selects write `lang`
   // and `diffLayout` back through the settings service's revision-fenced

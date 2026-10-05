@@ -93,6 +93,9 @@ profile 依赖须配套，包含 `@deepseek-ai/schemastery` 3.18.3 或更新版�
 Schema 不兼容时，TUI 在启动阶段报错并提示修复安装，不再显示不可编辑的设置页。
 旧 host 继续使用原有设置 scope。
 
+`/settings` 的 `dsh-tui` 分区保存在 `~/.dsh-tui/settings.json`，两个内核共用；第一次启动时
+从 profile 的 `cordis.patch.yml` 一次性导入（见[配置参考](docs/configuration.md#tui-配置)）。
+
 ```sh
 # 安装（全局，自带 dsh-tui 命令）
 npm install -g @deepseek-ai/dsh @deepseek-harness-tui/dsh-tui

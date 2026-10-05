@@ -442,6 +442,8 @@ export function createBackendOpener(deps: {
     state.agentId = candidate.ref.sessionId
     state.sessionId = candidate.ref.sessionId
     state.backendCapabilities = deps.snapshotOf(candidate)
+    // A placeholder whose startup open failed is retried by `/new`.
+    state.ready = true
     deps.resetControls()
     deps.bind(history)
     deps.touch?.(candidate.ref.sessionId)

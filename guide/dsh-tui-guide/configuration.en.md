@@ -28,10 +28,18 @@ only for a genuinely new service.
 
 ## TUI configuration
 
-On DSH 0.1.7, `/settings` writes plugin Config fields to the active profile's
-`cordis.patch.yml`. Older hosts still use `~/.dsh/settings.yaml`; that file is
-not the new settings entry point. Language and layout preferences update live;
-fullscreen and image previews require `/restart`.
+The `dsh-tui` section of `/settings` lives in the TUI's own
+`~/.dsh-tui/settings.json`, shared by the DSH and Claude kernels. When that file
+does not exist yet, the first launch imports the editable fields of the `dsh-tui`
+row's `config` from the active profile's `cordis.patch.yml` once (read only; the
+profile is not changed and `!!js` expressions are not imported), and never again.
+After the import, those fields left in the profile patch only act as a static
+deployment layer under the DSH kernel (a fallback while the user layer is unset);
+remove them from the patch so both kernels see the same defaults. Other plugins'
+sections still go through DSH's settings service (written to the active profile's
+`cordis.patch.yml`; older hosts use `~/.dsh/settings.yaml`).
+Language and layout preferences update live; fullscreen and image previews
+require `/restart`.
 
 A complete common override looks like this:
 

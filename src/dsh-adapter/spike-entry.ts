@@ -34,7 +34,7 @@ const config = Config({
 })
 markBoot('entry-config')
 try {
-  await apply(ctx, config, ctx)
+  await apply(ctx, config, ctx, { deferBackendOpen: true })
 } catch (error) {
   handleStartupError(ctx, error)
 }

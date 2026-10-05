@@ -1,0 +1,268 @@
+/**
+ * Startup adoption (docs/standalone-host-design.md 5.3): the standalone
+ * entry mounts the screen on a placeholder session while the backend opens,
+ * then the channel adopts the real session.
+ *
+ * Channel level (real `createChannel`, fake sessions, a hand-settled open):
+ *  - before the open settles the channel is not ready, names no session and
+ *    the placeholder serves nothing; a local row printed meanwhile survives
+ *    the adoption;
+ *  - the adoption binds the real session once: ready, its id, its cwd (a
+ *    resumed session runs where it was recorded), its capability snapshot
+ *    and subagent control, its history painted, the placeholder closed;
+ *  - a failed open leaves the placeholder bound with a notice row naming the
+ *    error and `/new`; `/new` then opens through `openSession` and is ready;
+ *  - a channel released mid-open closes the session when it arrives, with no
+ *    notice;
+ *  - `/new` run while the open is still going wins: the startup session is
+ *    closed on arrival and no failure notice appears.
+ *
+ * Screen level (real `Chat` over a not-ready channel): Enter on a typed
+ * prompt keeps the draft and says the backend is still starting; a non-local
+ * command is refused the same way; a local one (`/help`) runs; after the
+ * adoption the same draft is sent to the real session.
+ *
+ * Run: node --import tsx/esm scripts/verify-startup-adoption.tsx
+ */
+import './lib/fake-home.mjs'
+process.env.FORCE_COLOR = '3'
+
+const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { createStartingSession }, { setLang, t }, { default: instances }, { settled, sleep, viewportLines }] =
+  await Promise.all([
+    import('node:stream'),
+    import('react'),
+    import('@xterm/headless'),
+    import('../src/ui.js'),
+    import('../src/screens/Chat.js'),
+    import('../src/dsh-adapter/questions.js'),
+    import('../src/dsh-adapter/approvals.js'),
+    import('../src/dsh-adapter/channel.js'),
+    import('../src/agent/starting-session.js'),
+    import('../src/i18n.js'),
+    import('../src/ink/instances.js'),
+    import('./lib/term-test.mjs'),
+  ])
+import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
+import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
+import type { SessionCapabilities } from '../src/agent/capabilities.js'
+import type { ChannelLaunchOptions } from '../src/dsh-adapter/channel.js'
+
+setLang('en')
+let passed = 0
+const check = (label: string, ok: boolean, detail = ''): void => {
+  if (!ok) throw new Error(`${label}${detail ? `\n${detail}` : ''}`)
+  passed += 1
+  console.log(`PASS ${label}`)
+}
+
+interface FakeSession extends AgentSession {
+  readonly submits: { input: AgentInput; placement: SubmitPlacement }[]
+  disposed: boolean
+  listenerCount(): number
+}
+const fakeSession = (sessionId: string, cwd: string, capabilities: Omit<SessionCapabilities, 'native'> = {}): FakeSession => {
+  const listeners = new Set<(batch: readonly AgentEvent[], meta: AgentEventMeta) => void>()
+  const session: FakeSession = {
+    ref: { backendId: 'claude', sessionId },
+    cwd,
+    status: 'idle',
+    capabilities: { ...capabilities, native: {} },
+    submits: [],
+    disposed: false,
+    history: () => Promise.resolve([]),
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    submit(input, placement) {
+      session.submits.push({ input, placement })
+      return Promise.resolve({ accepted: true })
+    },
+    cancel: () => Promise.resolve({ stillQueued: [], outcome: 'confirmed' }),
+    dispose() {
+      session.disposed = true
+      return Promise.resolve()
+    },
+    listenerCount: () => listeners.size,
+  }
+  return session
+}
+type Startup = NonNullable<ChannelLaunchOptions['startup']>
+const deferred = () => {
+  let resolve!: (value: Awaited<Startup>) => void
+  let reject!: (error: unknown) => void
+  const promise: Startup = new Promise((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+
+const ctx = {
+  on: () => () => undefined,
+  get: () => undefined,
+  logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
+} as never
+const LAUNCH = '/fixture/launch'
+const opened: FakeSession[] = []
+const launch = (startup: Startup): ChannelLaunchOptions => ({
+  model: 'Claude', provider: 'claude', cwd: LAUNCH, activity: false, backendLabel: 'Claude',
+  startup,
+  openSession: target => {
+    const next = fakeSession(`33333333-3333-4333-8333-33333333333${opened.length}`, target.kind === 'create' ? target.cwd : LAUNCH)
+    opened.push(next)
+    return Promise.resolve(next)
+  },
+  sessionCatalog: { list: () => Promise.resolve([]) } as never,
+})
+const notices = (channel: { rows: readonly { kind: string; text: string }[] }): string[] =>
+  channel.rows.filter(row => row.kind === 'notice').map(row => row.text)
+
+// ── adoption ──────────────────────────────────────────────────────────
+{
+  const open = deferred()
+  const placeholder = createStartingSession('claude', LAUNCH)
+  const channel = createChannel(ctx, placeholder, launch(open.promise))
+  check('not ready while the open runs', channel.ready === false)
+  check('the placeholder names no session', channel.agentId === '' && channel.sessionRef.sessionId === '' && channel.sessionRef.backendId === 'claude')
+  check('the placeholder serves no subagent transcript', channel.subagentControl.history === undefined)
+  channel.pushLocal('/help', ['local output while starting'])
+  const real = fakeSession('11111111-1111-4111-8111-111111111111', '/fixture/recorded', {
+    subagents: { interrupt: () => Promise.resolve(true), history: () => Promise.resolve(null) } as never,
+  })
+  const history: AgentEvent[] = [
+    { type: 'user.message', id: 'u1', anchor: 'u1', seq: 1, turn: 1, time: 1, source: 'user', text: 'earlier prompt', blocks: [{ type: 'text', text: 'earlier prompt' }] },
+  ]
+  open.resolve({ session: real, history })
+  check('ready once the open settles', await settled(() => channel.ready))
+  check('the real session is bound', channel.agentId === real.ref.sessionId && channel.sessionId === real.ref.sessionId && channel.sessionRef.sessionId === real.ref.sessionId)
+  check('the real session is subscribed once', real.listenerCount() === 1)
+  check('the cwd is the session\'s own (resume)', channel.cwd === '/fixture/recorded')
+  check('the subagent control follows the real session', channel.subagentControl.history !== undefined)
+  check('the history is painted', channel.rows.some(row => row.kind === 'user' && row.text === 'earlier prompt'))
+  check('a local row printed while starting survives', channel.rows.some(row => row.text.includes('local output while starting')), JSON.stringify(channel.rows))
+  check('the placeholder is closed', await settled(() => placeholder.status === 'disposed'))
+  channel.submit('after ready')
+  check('submit reaches the real session', await settled(() => real.submits.some(item => item.input.text === 'after ready')))
+  channel.releaseContributions()
+  check('releasing closes the real session', await settled(() => real.disposed))
+}
+
+// ── failed open, then /new ────────────────────────────────────────────
+{
+  const open = deferred()
+  const channel = createChannel(ctx, createStartingSession('claude', LAUNCH), launch(open.promise))
+  open.reject(new Error('handshake refused'))
+  check('a failed open leaves a notice naming the error and /new', await settled(() => notices(channel).some(text => text.includes('handshake refused') && text.includes('/new'))), JSON.stringify(notices(channel)))
+  check('still not ready after the failure', channel.ready === false && channel.agentId === '')
+  const before = opened.length
+  const ok = await channel.newSession()
+  check('/new retries through openSession', ok && opened.length === before + 1)
+  check('ready after /new', channel.ready && channel.agentId === opened[before]!.ref.sessionId)
+  channel.releaseContributions()
+}
+
+// ── released mid-open ─────────────────────────────────────────────────
+{
+  const open = deferred()
+  const channel = createChannel(ctx, createStartingSession('claude', LAUNCH), launch(open.promise))
+  channel.releaseContributions()
+  const late = fakeSession('55555555-5555-4555-8555-555555555555', LAUNCH)
+  open.resolve({ session: late, history: [] })
+  check('a session arriving after release is closed', await settled(() => late.disposed))
+  check('it was never subscribed', late.listenerCount() === 0)
+}
+
+// ── /new while the open is still going ────────────────────────────────
+{
+  const open = deferred()
+  const channel = createChannel(ctx, createStartingSession('claude', LAUNCH), launch(open.promise))
+  const before = opened.length
+  check('/new while starting opens its own session', await channel.newSession() && channel.agentId === opened[before]!.ref.sessionId && channel.ready)
+  const late = fakeSession('66666666-6666-4666-8666-666666666666', LAUNCH)
+  open.resolve({ session: late, history: [] })
+  check('the startup session arriving later is closed', await settled(() => late.disposed))
+  check('the /new session stays bound', channel.agentId === opened[before]!.ref.sessionId && late.listenerCount() === 0)
+  check('no failure notice for a superseded open', !notices(channel).some(text => text.includes('failed to open')))
+  channel.releaseContributions()
+}
+
+// ── the real Chat over a not-ready channel ────────────────────────────
+const open = deferred()
+const channel = createChannel(ctx, createStartingSession('claude', process.cwd()), { ...launch(open.promise), cwd: process.cwd() })
+const COLS = 100
+const ROWS = 30
+const term = new XTerm({ cols: COLS, rows: ROWS, scrollback: 200, allowProposedApi: true })
+class FakeStdout extends Writable {
+  columns = COLS
+  rows = ROWS
+  isTTY = true
+  _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { term.write(String(chunk), callback) }
+}
+class FakeStdin extends PassThrough {
+  isTTY = true
+  setRawMode() { return this }
+  ref() { return this }
+  unref() { return this }
+}
+const stdin = new FakeStdin()
+const stdout = new FakeStdout()
+const screen = (): string => viewportLines(term, ROWS).join('\n')
+const instance = await ui.render(
+  React.createElement(Chat, {
+    channel: channel as never,
+    questionStore: new QuestionStore(),
+    approvalStore: new ApprovalStore(),
+    onExit: () => undefined,
+    fullscreen: false,
+    trajectorySeen: true,
+  }),
+  { stdout: stdout as never, stdin: stdin as never, stderr: stdout as never, exitOnCtrlC: false, patchConsole: false },
+)
+for (const value of instances.values()) instances.set(process.stdout, value)
+const toasts = (): string => channel.notifications.map(item => item.text).join(' | ')
+const notReadyCount = (): number => channel.notifications.filter(item => item.text === notReady).length
+const notReady = t('startup-not-ready', { backend: 'Claude' })
+const typeLine = async (text: string): Promise<void> => {
+  for (const char of text) stdin.write(char)
+  // 固定窗:pacing the prompt applies typed characters on its own render tick.
+  await sleep(60)
+}
+const clearLine = async (): Promise<void> => {
+  for (let i = 0; i < 24; i += 1) stdin.write('\x7f')
+  // 固定窗:pacing backspaces land before the next keystroke batch.
+  await sleep(60)
+}
+const real = fakeSession('77777777-7777-4777-8777-777777777777', process.cwd())
+try {
+  // 固定窗:pacing the key handlers attach after the first frame.
+  await sleep(300)
+  await typeLine('hello early')
+  stdin.write('\r')
+  check('Enter while starting says the backend is still starting', await settled(() => toasts().includes(notReady)), toasts())
+  check('the draft stays in the composer', screen().includes('hello early'), screen())
+  check('nothing was submitted', real.submits.length === 0)
+  await clearLine()
+  await typeLine('/status')
+  const beforeStatus = notReadyCount()
+  stdin.write('\r')
+  check('a session command is refused while starting', await settled(() => notReadyCount() > beforeStatus) && screen().includes('/status'), screen())
+  await clearLine()
+  await typeLine('/help')
+  const beforeHelp = notReadyCount()
+  stdin.write('\r')
+  check('a local command runs while starting', await settled(() => !screen().includes('/help')) && notReadyCount() === beforeHelp, screen())
+  // 固定窗:pacing whatever /help opened settles before Esc closes it.
+  await sleep(200)
+  stdin.write('\x1b')
+  // 固定窗:pacing Esc is a standalone key only after the escape timeout.
+  await sleep(200)
+  open.resolve({ session: real, history: [] })
+  check('the channel becomes ready', await settled(() => channel.ready))
+  await clearLine()
+  await typeLine('hello ready')
+  stdin.write('\r')
+  check('after the adoption Enter sends to the real session', await settled(() => real.submits.some(item => item.input.text === 'hello ready')), JSON.stringify(real.submits.map(item => item.input.text)))
+} finally {
+  instance.unmount()
+  channel.releaseContributions()
+}
+console.log(`\nverify-startup-adoption: ${passed} checks passed`)
+process.exit(0)

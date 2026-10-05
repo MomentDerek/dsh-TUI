@@ -764,6 +764,10 @@ const GROUPS = {
 // langOverriddenBySettings）必须用同一个 ns —— 写死 'dsh-tui' 会让非默认挂载
 // 「写得进、读不回」，自动回顾永远关不掉。
     ["verify-settings-namespace", ['node', '--import', 'tsx/esm', 'scripts/verify-settings-namespace.ts']],
+// TUI 自有设置文档（~/.dsh-tui/settings.json，设计 5.6 (a)）：首启从 DSH profile 补丁的 dsh-tui
+// 行一次性导入（只取可编辑键、跳过 !!js、不改 profile、不重复导入），作用域按 schema 默认解析、
+// 写入持久化并通知 watcher、旧 revision 报 SETTINGS_CONFLICT，其他 ns 转给宿主设置服务。
+    ["verify-tui-settings", ['node', '--import', 'tsx/esm', 'scripts/verify-tui-settings.ts']],
 // sidePanel.panels 多选：勾选行与逗号字符串互转且保序、未注册 id 保留为占位行、
 // 插件面板注册即出现、至少保留一个、高级原始编辑（改序/手填 id、非法草稿拒绝）。
     ["verify-panel-settings-picker", ['node', '--import', 'tsx/esm', 'scripts/verify-panel-settings-picker.tsx']],
@@ -806,6 +810,10 @@ const GROUPS = {
 // /plan 参数在屏内的归一化（#1371）：补全目录自己的 `on` 令牌必须以裸命令离开屏幕，
 // `off` 与 `/plan <message>` 原样透传，裸 `/plan` 仍开 on/off 选择器。
     ["verify-plan-argument-normalization", ['node', '--import', 'tsx/esm', 'scripts/verify-plan-argument-normalization.tsx']],
+// 启动接管（独立入口，docs/standalone-host-design.md 5.3）：占位会话上先挂界面，后端打开后
+// 接管真会话（身份、cwd、能力、历史、本地行保留）；打开失败留提示行、/new 重试；打开途中
+// 释放或 /new 抢先时，迟到的会话被关闭；真实 Chat 在未就绪时 Enter 保留草稿、只放行本地命令。
+    ["verify-startup-adoption", ['node', '--import', 'tsx/esm', 'scripts/verify-startup-adoption.tsx']],
 // 只有 token 数没有正文的思考行：流式「思考中 · ~N tokens」、落定「已思考 · ~N tokens」，
 // 正文到达后显示正文；中英双语。
     ["verify-thinking-tokens", ['node', '--import', 'tsx/esm', 'scripts/verify-thinking-tokens.tsx']],

@@ -251,7 +251,7 @@ export function attachDshExtensions(
     configurable: true,
     enumerable: true,
     get(): boolean {
-      const settings = ctx.get('settings') as
+      const settings = (options.settingsService ?? ctx.get('settings')) as
         | { describe(options?: { redactSecrets?: boolean }): readonly { ns: string; value: unknown }[] }
         | undefined
       if (settings === undefined) return false

@@ -38,7 +38,7 @@ export function createChannel(
   const owner = createChannelOwner()
   try {
     const session = isAgentSession(initial) ? initial : createDshSession(ctx, { agent: initial, handle: options.handle })
-    const core = createCoreChannel(cordisChannelHost(ctx), session, options, owner)
+    const core = createCoreChannel(cordisChannelHost(ctx, options.settingsService === undefined ? {} : { settings: options.settingsService }), session, options, owner)
     // DSH extensions attach only to a DSH session; other backends get the
     // core and whatever their session capabilities offer.
     const native = session.capabilities.native.dsh
@@ -46,7 +46,9 @@ export function createChannel(
     // A backend that builds its own working line (the Claude backend) exposes
     // it as a capability. DSH keeps using its projection above. Without the
     // capability or the publish option nothing is attached.
-    if (session.capabilities.workingActivity !== undefined) attachSessionWorkingActivity(core, options)
+    // A placeholder (`options.startup`) serves nothing yet, so its real
+    // session's capability decides per bind.
+    if (session.capabilities.workingActivity !== undefined || options.startup !== undefined) attachSessionWorkingActivity(core, options)
     return core.start()
   } catch (error) {
     // Setup is one transaction from the first acquired resource. Preserve the

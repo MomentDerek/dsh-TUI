@@ -159,7 +159,7 @@ async function run(index) {
   try {
     // The trace is the measurement; the screen columns are best effort (see
     // the header: in some PTY setups the TUI paints nothing).
-    const ok = await settled(() => exit !== undefined || traced('render-done'), { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS ?? 90000) })
+    const ok = await settled(() => exit !== undefined || (traced('render-done') && (entryMode !== 'spike' || traced('startup-adopted'))), { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS ?? 90000) })
     if (!ok || exit !== undefined) throw new Error(`run ${index}: no render (exit ${exit?.exitCode})\ntrace: ${existsSync(trace) ? readFileSync(trace, 'utf8') : 'none'}\nraw(${output.length}): ${JSON.stringify(output.slice(-1500))}`)
     await settled(() => at.inject !== undefined && at.prompt !== undefined, { timeoutMs: 1500 })
     if (process.env.PROBE_SCREEN === '1') console.error(`[probe] screen of run ${index}:\n${screen()}`)
@@ -179,7 +179,7 @@ async function run(index) {
   return result
 }
 
-const COLUMNS = ['dsh-process', 'entry-start', 'entry-modules', 'entry-config', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'settings-wait-start', 'settings-wait-end', 'render-start', 'render-done', 'inject', 'prompt']
+const COLUMNS = ['dsh-process', 'entry-start', 'entry-modules', 'entry-config', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'settings-wait-start', 'settings-wait-end', 'render-start', 'render-done', 'inject', 'prompt', 'startup-adopted']
 const results = []
 try {
   for (let index = 0; index < runs; index += 1) {

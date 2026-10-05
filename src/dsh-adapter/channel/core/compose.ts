@@ -23,12 +23,14 @@ import { markChannelReadDirty } from '../../../adapter/channel/read-view.js'
 import type { AgentCapabilities } from '../../../adapter/ports/channel-capabilities.js'
 import type { AgentIdentity, AgentMessageSubmitInput, AgentMessageSubmitResult } from '../../../adapter/ports/channel-view.js'
 import type { OAuthSetupHost } from '../../../adapter/ports/channel-settings.js'
+import type { AgentEvent } from '../../../agent/events.js'
 import type { AgentSession } from '../../../agent/session.js'
 import { createActivityProjection } from '../../../channel/activity.js'
 import { channelCapabilities } from '../../../channel/capabilities.js'
 import { anchoredRow, prependHistoryRows, projectHistorySlice, restoreFoldedRows } from '../../../channel/history-restore.js'
 import { t } from '../../../i18n.js'
 import { WORKING_GATE_NOTICES } from '../../../commands.js'
+import { markBoot } from '../../../utils/bootTrace.js'
 import { logForDebugging } from '../../../utils/debug.js'
 import { DEFAULT_SESSION_MODES } from '../../../sessionModes.js'
 import { resolveContextOccupancy } from '../../context-occupancy.js'
@@ -320,7 +322,6 @@ export function createCoreChannel(
    * matched by its call id, not by this.
    */
   let agentMessageIntents = 0
-  const messaging = binding.session.capabilities.subagents?.messaging
 
   const actionReadiness = createChannelActionReadiness()
   const getReadyActions = (): ChannelActionDelegates => {
@@ -362,6 +363,68 @@ export function createCoreChannel(
   // and never holding a non-DSH session's id): `read` is a cached lookup, so
   // the accessor on the state below stays cheap.
   const contextPressure = options.contextPressure
+
+  /**
+   * The subagent control for `session`: interrupt always; the transcript read
+   * and parent-mediated messaging only while the session serves them. Built
+   * per session, so the startup adoption (a placeholder replaced by the real
+   * session) rebuilds it.
+   */
+  const subagentControlFor = (session: AgentSession): ChannelState['subagentControl'] => {
+    const messaging = session.capabilities.subagents?.messaging
+    return {
+      interrupt: agentId => {
+        const control = binding.session.capabilities.subagents
+        if (control === undefined) { unavailable('agents'); return false }
+        const subagent = activity.subagent(agentId)
+        if (subagent === undefined || (subagent.status !== 'running' && subagent.status !== 'starting')) return false
+        void control.interrupt(subagent.agentId).then(stopped => {
+          if (!stopped && owner.current()) notify(t('subagent-interrupt-failed', { id: subagent.agentId.slice(0, 8) }), { color: 'warning', timeoutMs: 6000 })
+        }, (error: unknown) => {
+          if (owner.current()) notify(t('capability-failed', { name: 'agents', err: error instanceof Error ? error.message : String(error) }), { color: 'error', timeoutMs: 8000 })
+        })
+        return true
+      },
+      // The child transcript source exists only while the bound session's
+      // `subagents.history` capability does (Claude's store read; the DSH
+      // extension replaces this whole control with one backed by its own
+      // child transcript reader). The detail scene renders a Transcript page
+      // only when this method exists. A failed read resolves null, so the
+      // scene shows "unavailable" rather than an empty transcript.
+      ...(session.capabilities.subagents?.history === undefined ? {} : {
+        history: (agentId: string, window?: import('../../../agent/capabilities.js').SubagentTranscriptWindow): Promise<SubagentTranscriptView | null> => {
+          const history = binding.session.capabilities.subagents?.history
+          if (history === undefined) return Promise.resolve(null)
+          return history(agentId, window).catch(() => null)
+        },
+      }),
+      /** Parent-mediated messaging uses the session's submit pipeline. */
+      ...(messaging === undefined ? {} : {
+        message: {
+          via: messaging,
+          steer: false as const,
+          listTargets: (): Promise<readonly AgentIdentity[]> => Promise.resolve(state.subagents.map(sub => ({
+            agentId: sub.agentId,
+            ...(sub.sessionId === undefined ? {} : { sessionId: sub.sessionId }),
+            label: sub.description,
+            ...(sub.mode === undefined ? {} : { mode: sub.mode }),
+            status: sub.status,
+          }))),
+          submit: (input: AgentMessageSubmitInput): Promise<AgentMessageSubmitResult> => {
+            const text = input.text.trim()
+            if (text === '') return Promise.resolve({ ok: false, reason: 'failed', message: 'empty text' })
+            const name = input.targetName !== undefined && input.targetName.trim() !== '' ? input.targetName.trim() : input.targetId
+            const tool = binding.session.capabilities.subagents?.messagingTool
+            const envelope = tool === undefined ? t('agent-message-envelope', { name, id: input.targetId, text }) : t('agent-message-native-envelope', { tool, name, id: input.targetId, text })
+            const intentId = `agent-message-${(agentMessageIntents += 1)}`
+            dispatchUserText(envelope, 'followup', [], undefined)
+            return Promise.resolve({ ok: true, intentId, state: 'issued' })
+          },
+          messages: () => activity.agentMessages(),
+        },
+      }),
+    }
+  }
 
   const state: ChannelState = {
     ...createInputActions(() => state, () => binding.session, owner, inputConvergence,
@@ -584,58 +647,7 @@ export function createCoreChannel(
       }
     },
     ...actionMethods,
-    subagentControl: {
-      interrupt: agentId => {
-        const control = binding.session.capabilities.subagents
-        if (control === undefined) { unavailable('agents'); return false }
-        const subagent = activity.subagent(agentId)
-        if (subagent === undefined || (subagent.status !== 'running' && subagent.status !== 'starting')) return false
-        void control.interrupt(subagent.agentId).then(stopped => {
-          if (!stopped && owner.current()) notify(t('subagent-interrupt-failed', { id: subagent.agentId.slice(0, 8) }), { color: 'warning', timeoutMs: 6000 })
-        }, (error: unknown) => {
-          if (owner.current()) notify(t('capability-failed', { name: 'agents', err: error instanceof Error ? error.message : String(error) }), { color: 'error', timeoutMs: 8000 })
-        })
-        return true
-      },
-      // The child transcript source exists only while the bound session's
-      // `subagents.history` capability does (Claude's store read; the DSH
-      // extension replaces this whole control with one backed by its own
-      // child transcript reader). The detail scene renders a Transcript page
-      // only when this method exists. A failed read resolves null, so the
-      // scene shows "unavailable" rather than an empty transcript.
-      ...(binding.session.capabilities.subagents?.history === undefined ? {} : {
-        history: (agentId: string, window?: import('../../../agent/capabilities.js').SubagentTranscriptWindow): Promise<SubagentTranscriptView | null> => {
-          const history = binding.session.capabilities.subagents?.history
-          if (history === undefined) return Promise.resolve(null)
-          return history(agentId, window).catch(() => null)
-        },
-      }),
-      /** Parent-mediated messaging uses the session's submit pipeline. */
-      ...(messaging === undefined ? {} : {
-        message: {
-          via: messaging,
-          steer: false as const,
-          listTargets: (): Promise<readonly AgentIdentity[]> => Promise.resolve(state.subagents.map(sub => ({
-            agentId: sub.agentId,
-            ...(sub.sessionId === undefined ? {} : { sessionId: sub.sessionId }),
-            label: sub.description,
-            ...(sub.mode === undefined ? {} : { mode: sub.mode }),
-            status: sub.status,
-          }))),
-          submit: (input: AgentMessageSubmitInput): Promise<AgentMessageSubmitResult> => {
-            const text = input.text.trim()
-            if (text === '') return Promise.resolve({ ok: false, reason: 'failed', message: 'empty text' })
-            const name = input.targetName !== undefined && input.targetName.trim() !== '' ? input.targetName.trim() : input.targetId
-            const tool = binding.session.capabilities.subagents?.messagingTool
-            const envelope = tool === undefined ? t('agent-message-envelope', { name, id: input.targetId, text }) : t('agent-message-native-envelope', { tool, name, id: input.targetId, text })
-            const intentId = `agent-message-${(agentMessageIntents += 1)}`
-            dispatchUserText(envelope, 'followup', [], undefined)
-            return Promise.resolve({ ok: true, intentId, state: 'issued' })
-          },
-          messages: () => activity.agentMessages(),
-        },
-      }),
-    },
+    subagentControl: subagentControlFor(initialSession),
     jobControl: {
       kill: id => {
         const tasks = binding.session.capabilities.tasks
@@ -876,6 +888,55 @@ export function createCoreChannel(
     },
   })
   const reports = createCoreReports({ owner, binding, state: () => state })
+  /**
+   * Adopt the startup session once its open settles (`options.startup`;
+   * docs/standalone-host-design.md 5.3). Unlike `/new` and `/resume` this is
+   * no switch: the placeholder never served a turn, so there is no veto, no
+   * race probe and no switched notice, and the rows stay (local commands may
+   * have printed while the backend opened). The binding's prepare/adopt pair
+   * owns the candidate: a channel released mid-open closes it on arrival.
+   * A failed open leaves the placeholder bound and `ready` false; the notice
+   * row points at `/new`, which opens through `options.openSession`.
+   */
+  const adoptStartup = (startup: NonNullable<ChannelLaunchOptions['startup']>): void => {
+    const adoption = binding.capture()
+    let history: readonly AgentEvent[] = []
+    const backend = state.backendCapabilities.backendLabel
+    void binding.prepare(adoption, async () => {
+      const opened = await startup
+      history = opened.history
+      return opened.session
+    }).then(candidate => {
+      const previousCwd = state.cwd
+      binding.adopt(candidate, adoption, (_previous, disposePrevious) => {
+        feed.resetProjection()
+        if (activityOwned()) {
+          activity.reset()
+          state.subagentControl = subagentControlFor(candidate)
+        }
+        state.agentId = candidate.ref.sessionId
+        state.sessionId = candidate.ref.sessionId
+        // A resumed session runs where it was recorded, known only now.
+        state.cwd = candidate.cwd
+        state.displayCwd = host.workspaceService.describe(candidate.cwd).description ?? candidate.cwd
+        state.backendCapabilities = snapshotOf(candidate)
+        controls.reset()
+        state.ready = true
+        feed.bind(history)
+        disposePrevious('dispose')
+        state.emit()
+      })
+      if (state.cwd !== previousCwd) resetIdeSelection()
+      refreshGitBranch()
+      markBoot('startup-adopted')
+    }, (error: unknown) => {
+      // Released, or a `/new` / `/resume` replaced the placeholder first.
+      if (!owner.current() || binding.session !== adoption.session) return
+      logForDebugging(`channel: startup session failed to open (${error instanceof Error ? error.message : String(error)})`)
+      state.rows.push({ id: rowIds.value++, kind: 'notice', text: t('startup-open-failed', { backend, err: error instanceof Error ? error.message : String(error) }) })
+      state.emit()
+    })
+  }
   /** A fresh session in another directory (the session browser's new-session
    *  card, `/workspace`'s handoff): the core `/new` with a target. */
   const workspaces = createWorkspaceActions(state, {
@@ -983,6 +1044,7 @@ export function createCoreChannel(
       }, 'dsh-tui channel lifecycle')
       refreshGitBranch()
       if (extension.bind?.ownsSessionFacts !== true) state.emit()
+      if (options.startup !== undefined) adoptStartup(options.startup)
       return state
     },
   }

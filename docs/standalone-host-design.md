@@ -196,12 +196,19 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
 - **占位会话。**一个合法的最小 `AgentSession`：`status: 'starting'`、
   `capabilities: { native: {} }`、空 history；`submit` 不发出，交给 channel 缓冲。
   `AgentSessionStatus` 已有 `'starting'`。
-- **新增 `adoptStartup(session, history)`**，用 `binding.switchTo` 加 `adoptWith` 式的
-  尾段，但**不复用** `newSession` / `resumeSession`：它们在 `working` 时拒绝、遇到排队
-  输入会放弃候选（`raceProbe`），还会触发 `tui/session-switch` 否决与切换提示——这些都
-  不适合启动接管。
+- **启动接管（已实现，Phase 1）。**`ChannelLaunchOptions.startup` 传入仍在打开的会话
+  （`Promise<{ session, history }>`），channel 在 `start()` 里自己接管：用 binding 的
+  `prepare` + `adopt`（不是原计划的 `switchTo`——`prepare` 在打开返回时检查 capture，
+  channel 已释放或已被 `/new` 换掉就直接关掉迟到的会话，正好覆盖「启动期退出」）。尾段
+  不走 `adoptWith`：不清 `rows`/`pending`（启动期本地命令打印的行要留下），只重置投影、
+  换身份、`cwd`（resume 的真实 cwd 打开后才知道）、能力快照、`subagentControl`、命令表，
+  然后 `bind(history)`。**不复用** `newSession` / `resumeSession`：它们在 `working` 时
+  拒绝、遇到排队输入会放弃候选（`raceProbe`），还会触发 `tui/session-switch` 否决与切换
+  提示——这些都不适合启动接管。
 - **启动期输入。**草稿留在输入框不发送：Enter 提示「还没就绪」，只放行纯本地命令
-  （exit/help/theme 等），沿用预载分支已验证的行为与 `isBootSafeCommand` 白名单。不采用
+  （exit/help/theme/lang/vim/kernel 与重试用的 new/resume），沿用预载分支已验证的行为与
+  `isBootSafeCommand` 白名单（`ChannelUi.ready`）。启动期 `/new` 由 binding 裁决：先到者
+  绑定，迟到的启动会话被关闭。不采用
   「缓冲进 FIFO、接管后重放」：`resetSessionProjection` 要为启动接管单独开特例保留
   pending，且重放会让用户在看不到会话状态时把消息发出去。
 - **构造时就定死的字段要改成可延后**：`backendLabel`、`messaging`、
@@ -213,8 +220,11 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
   `binding.agent` 的读取延后到挂载时。这是方案里改动最深的一处 channel 重构。
 - **D2（退路）。**若 D1 受阻：Claude 内核走方案 B，DSH 内核继续走预载镜像路径。维护税
   只剩一半，但两套启动方式并存。
-- **启动失败。**今天后端打不开就是启动失败、非零退出。方案 B 下界面已在：失败要在界面里
-  显示原因并给出退出或重试，退出时取消仍在进行的打开。记住的内核打开失败、回落到 DSH
+- **启动失败。**今天后端打不开就是启动失败、非零退出。方案 B 下界面已在：失败在界面里
+  落一条提示行（原因 + `/new` 重试 · `/kernel` 切换 · `/quit` 退出），占位会话保持绑定、
+  `ready` 保持 false；`/new` 经 `openSession` 打开新会话并接管。退出时仍在进行的打开由
+  `prepare` 在返回时关闭（见上）；Claude 的 `open` 没有中止入口，进程若在打开返回前退出，
+  CLI 子进程靠 stdin 关闭自行退出——这点待真实终端验证。记住的内核打开失败、回落到 DSH
   的逻辑（`plugin.ts` 现有）变成「占位会话改由 DSH 接管」，不需要重启。
 
 ### 5.4 DSH 后端：进程内 `runProfile`
@@ -248,7 +258,16 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
   `ctx.root.fiber.dispose()`。
 - raw 模式下 Ctrl+C 不产生 SIGINT，与今天一致。
 
-### 5.6 设置存储（已定：(a)）
+### 5.6 设置存储（已定：(a)，Phase 1 已实现）
+
+> 实现（2026-10-06）：`~/.dsh-tui/settings.json`（`src/tuiSettingsFile.ts`）+ 设置服务
+> `src/dsh-adapter/tui-settings.ts`。**两条路径都用它**：plugin.ts 不再等宿主的 `settings`
+> 服务，`dsh-tui` 分区经文件作用域（旧 host 的 `register` 形状）同步应用，`/settings`
+> 屏的读写经同一服务；其他命名空间转给宿主的设置服务（独立入口里没有）。导入：文件不存在
+> 时从 `~/.dsh/profiles/<profile>/cordis.patch.yml` 的 `dsh-tui` 行 `config` 取可编辑键
+> （跳过 `!!js`），写入并记下来源，之后不再导入；profile 只读不改。已知差异：导入后补丁里
+> 残留的这些字段在 DSH 内核下仍是 Config 的一部分，用户层 unset 时会作为兜底出现，独立入口
+> 没有这层——配置文档建议删掉残留。DSH 的 Web 设置页改的是 Config，不再影响 TUI。
 
 `dsh-tui.*` 的值（fullscreen、diffLayout、sidePanel、shortcuts…）在 0.1.7+ 宿主下住在
 profile 的 Config 行里，`/settings` 通过 DSH 的 `settings.mutate`（带版本号的围栏写入）
@@ -527,6 +546,46 @@ TuiHost 抽象与 `plugin.ts` 的重写可以推迟到 Phase 2（`runProfile` �
 并存时才必要）。Phase 1 真正要补的只有：设置存储（5.6，消掉 300ms 兜底且让 /settings 能写）、
 本包入口与启动器分流、1b 的占位会话。
 
+### 2026-10-06 · Phase 1 第 1、2 块：启动接管（1b）与设置存储 (a)
+
+（写于交接一节之后。）
+
+**1b 启动接管**（正文 5.3 已同步）：
+
+- `src/agent/starting-session.ts`：占位会话（`status: 'starting'`、无能力、空历史、
+  `submit` 不发出）。
+- `backends.ts`：`openBackendStartup` 拆成 `prepareBackendStartup`（加载后端模块、
+  host、prefs、catalog、`open`、`resumeCommand`，不等握手）+ `start()`（reserve + open +
+  history）；原函数 = 两者连做，profile 路径语义不变。
+- `ChannelLaunchOptions.startup` + `compose.ts` 的 `adoptStartup`（prepare/adopt）；
+  `subagentControl` 改成按会话构造（`subagentControlFor`），接管时重建；`createChannel`
+  在有 `startup` 时也挂 working-activity（`onBind` 按会话判断能力）；`adoptWith` 置
+  `ready = true`（失败后 `/new` 重试）。
+- `ChannelUi.ready` + `CHANNEL_UI_PROPERTIES`；`PromptInput` 三处拦截（命令、Enter、
+  粘贴行）+ `isBootSafeCommand`；i18n `startup-not-ready` / `startup-open-failed`。
+- `plugin.ts`：`apply` 第四参 `RuntimeApplyOptions.deferBackendOpen`，**只有独立入口传**；
+  profile 路径照旧先打开再挂载（记住的内核打不开时回落 DSH 依赖这个顺序）。延后路径下
+  后端模块加载失败直接报错退出（入口里没有 DSH 可回落）。启动打点加 `startup-adopted`。
+- 回归 `scripts/verify-startup-adoption.tsx`（30 项，登记 channel-ui 组）：接管、失败后
+  `/new`、打开途中释放、启动期 `/new` 抢先、真实 Chat 的 Enter 拦截与本地命令放行。
+
+**设置存储 (a)**（正文 5.6 已同步）：`src/tuiSettingsFile.ts`、
+`src/dsh-adapter/tui-settings.ts`；`plugin.ts` 的设置块不再 `ctx.inject(['settings'])`，
+改为同步执行（`settingsReady` 在两条路径上都不再等待，独立入口的 300ms 兜底随之消失）；
+channel 的 `settingsHost` 与 DSH 扩展的 `recapOnOpen` 读同一服务（`settingsService` 选项、
+`cordisChannelHost(ctx, services)`）。回归 `scripts/verify-tui-settings.ts`（20 项）。
+README、`docs/configuration*.md`（及 guide 副本）同步。
+
+**验证**：`tsc`、`pnpm build`（89 项门禁）通过；channel-ui 组 177 项通过，失败 5 项
+（`verify-activity-store`、`verify-guide`、`verify-settings-compat`、
+`verify-compaction-progress`、`verify-splash-font-setting`）在 main（ec48de22）上同样失败，
+与本改动无关；input-terminal 组全过。设置相关聚焦脚本（namespace、display、definitions、
+repro-settings、scroll、root-inline、panel-picker）通过。
+
+**数字**：本轮机器明显变慢（一个 3 亿次空循环 3s，平时约 0.3s），绝对值不可比，只看结构：
+spike 入口下「会话打开」段从约 630ms 缩到约 75ms（只剩 prepare），settings 等待从 300ms
+变 0，首帧之后约 500ms 接管完成（`startup-adopted`）。干净环境的数字留到第 3 块之后重测。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
 **仓库与分支状态**
@@ -591,6 +650,9 @@ Phase 1 真正需要的是「DSH 无关」而不是「Cordis 无关」——TUI 
 服务原样住在里面，不需要桥。「Cordis 无关」要到 Phase 2 才必要：`runProfile` 的 `boot()`
 会新建自己的根，两个根并存时第三方插件在 DSH 根里看不到 TUI 根的服务。这会实质修改 5.1 与
 分期表（TuiHost 抽象推迟到 Phase 2），由用户和 chimney 决定。
+
+**进展（2026-10-06，Phase 1 第 1、2 块）**：1b 与设置存储 (a) 已实现，记录见上一节
+「Phase 1 第 1、2 块」。剩第 3 块：入口转正与启动器分流。
 
 **决定（2026-10-06，spike 之后）**：5.6 选 (a)；接受分期修订（Phase 1 只做 DSH 无关，TuiHost
 推迟到 Phase 2）。正文 5.1、5.6、第 3、7、10 节已同步。Phase 1 剩下三块：1b（占位会话，

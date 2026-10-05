@@ -27,8 +27,13 @@ Profile 启动按顺序叠加：
 
 ## TUI 配置
 
-DSH 0.1.7 的 `/settings` 写入当前 profile 的 `cordis.patch.yml`，字段属于插件
-Config；旧版仍使用 `~/.dsh/settings.yaml`。不要把旧文件路径当成新版设置入口。
+`/settings` 的 `dsh-tui` 分区存放在 TUI 自己的 `~/.dsh-tui/settings.json`，DSH 与
+Claude 两个内核共用这一份。第一次启动时，若该文件不存在，会从当前 profile 的
+`cordis.patch.yml` 里 `dsh-tui` 行的 `config` 一次性导入可编辑字段（只读，不改 profile；
+`!!js` 表达式不导入），之后不再重复导入。导入后 profile 补丁里残留的这些字段只在 DSH
+内核下作为静态部署层生效（用户层未设置时兜底），建议从补丁里删掉，避免两个内核看到
+不同的默认值。其他插件的分区仍由 DSH 的设置服务读写（写入当前 profile 的
+`cordis.patch.yml`；旧版是 `~/.dsh/settings.yaml`）。
 语言、布局等偏好实时更新；全屏和图片预览需 `/restart`。
 
 下面是完整的常用覆盖示例：

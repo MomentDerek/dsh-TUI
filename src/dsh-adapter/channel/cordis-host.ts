@@ -11,12 +11,16 @@ import { dispatchTuiDecision, dispatchTuiNotification } from '../extension-event
 import { getLocalSettingsSectionsHost } from '../settings-sections.js'
 import type { ChannelHost } from './channel-host.js'
 
-export function cordisChannelHost(ctx: Context): ChannelHost {
+/**
+ * @param services - Services served in place of the context's own (the
+ *   TUI's file-backed `settings`, ../tui-settings.ts).
+ */
+export function cordisChannelHost(ctx: Context, services: Readonly<Record<string, unknown>> = {}): ChannelHost {
   const withEffect = ctx as Context & {
     effect?: (setup: () => () => void, label?: string) => void
   }
   return {
-    get: name => ctx.get(name as never),
+    get: name => Object.hasOwn(services, name) ? services[name] : ctx.get(name as never),
     // Read per use, as the call sites did before.
     get logger() { return ctx.logger },
     runtime: adapterRuntimeFor(ctx),

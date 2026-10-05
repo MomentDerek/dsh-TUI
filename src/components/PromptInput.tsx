@@ -35,7 +35,7 @@ import type {
   StagedImageHandle,
 } from '../dsh-adapter/channel.js'
 import type { TranscriptImage } from '../dsh-adapter/transcript-images.js'
-import { isHiddenCommandName, isUnavailableLocalCommand, parseCommandName, workingHoldOf } from '../commands.js'
+import { isBootSafeCommand, isHiddenCommandName, isUnavailableLocalCommand, parseCommandName, workingHoldOf } from '../commands.js'
 import { appendHistory, HISTORY_LIMIT, historyProjectKey, loadHistoryOldestFirst } from '../history.js'
 import { mentionAtCaret } from '../utils/mentions.js'
 import { preserveSelection, type FileCandidate } from '../utils/fileSuggestions.js'
@@ -1986,10 +1986,24 @@ export function PromptInput({
    * at all. Hidden commands are recognized even though they are intentionally
    * absent from the suggestion/help catalogs.
    */
+  /** The startup phase's refusal (see `ChannelUi.ready`). */
+  const notifyNotReady = (): void => {
+    channel.notify(t('startup-not-ready', { backend: kernelDisplayName(channel.backendCapabilities.backendId) }), { color: 'warning', timeoutMs: 2500 })
+  }
   const tryRunCommand = (text: string): boolean => {
     if (!text.startsWith('/')) return false
     const parsed = parseCommandName(text)
     if (parsed === undefined) return false
+    // Startup phase (the standalone entry mounts before its session opens):
+    // only the purely local commands run. Every other one is refused like a
+    // plain prompt — BEFORE dispatch, so nothing clears the draft or lands in
+    // history for a command that never took effect. This is the one
+    // chokepoint for every path that runs a command (Enter, the menu's
+    // selected row, a click on a row, a pasted line).
+    if (channel.ready === false && !isBootSafeCommand(parsed.name)) {
+      notifyNotReady()
+      return true
+    }
     const command = channel.commandList.find(entry => entry.name === parsed.name)
     // A built-in the bound backend does not serve is hidden from the menu and
     // Tab, and a typed one must neither run nor reach the model as text. A
@@ -2112,6 +2126,15 @@ export function PromptInput({
         acceptFile(file)
         return
       }
+    }
+    // Startup phase: nothing can be sent yet. Refuse here — BEFORE any path
+    // that clears the draft — so the text stays exactly where it is; the
+    // notice says why. A boot-safe local command still runs (tryRunCommand
+    // refuses the rest itself).
+    if (channel.ready === false && value.trim() !== '') {
+      if (tryRunCommand(value)) return
+      notifyNotReady()
+      return
     }
     // A docked queue (Esc parked it) owns a bare Enter on an EMPTY draft
     // (Claude Code parity: "…or Enter to send them now"). A draft in
@@ -2713,7 +2736,15 @@ export function PromptInput({
           return
         }
       }
-      if (!tryRunCommand(line)) submitText(line)
+      if (tryRunCommand(line)) return
+      // Startup phase: same refusal as handleEnter — keep the line as the
+      // draft instead of submitting it into a channel that cannot send yet.
+      if (channel.ready === false) {
+        setInput(line)
+        notifyNotReady()
+        return
+      }
+      submitText(line)
       return
     }
     if (key.return && isMod(key)) {
