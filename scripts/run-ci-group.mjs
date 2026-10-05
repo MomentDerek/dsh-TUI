@@ -385,6 +385,9 @@ const GROUPS = {
 // 直达启动器回归（issue #108）：参数透传、残骸 profile 重装、
 // 版本不一致提示、双语消息、shellQuote 转义规则。
     ["verify-launcher", ['node', 'scripts/verify-launcher.mjs']],
+// 本包入口的路由（设计 5.8）：入口内核判定的排序（交接 > Config 行 > DSH_TUI_BACKEND >
+// kernel.json）、读 profile 补丁的 backend 钉、restartTui 切到 Claude 时经入口重起。
+    ["verify-host-entry", ['node', '--import', 'tsx/esm', 'scripts/verify-host-entry.ts']],
 // CLI 子命令回归（issue #509）：help/version 零环境应答（不触发自举
 // 与委托）、双语输出、profile 版本读取、只认第一个参数。
     ["verify-cli-subcommands", ['node', 'scripts/verify-cli-subcommands.mjs']],

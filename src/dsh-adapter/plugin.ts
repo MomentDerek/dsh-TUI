@@ -187,6 +187,12 @@ export interface RuntimeApplyOptions {
    * open to settle before the mount.
    */
   readonly deferBackendOpen?: boolean
+  /**
+   * The DSH profile this launch belongs to, for a host whose argv carries no
+   * `--profile` (the standalone entry): `/update` updates it, and the TUI
+   * settings import reads its patch.
+   */
+  readonly profile?: string
 }
 
 export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx, runtimeOptions: RuntimeApplyOptions = {}): Promise<void> {
@@ -273,7 +279,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // to the host's settings service (absent in the standalone entry).
   const tuiSettings = createTuiSettingsService({
     ns: tuiSettingsNs,
-    profile: resolveDshProfileName() ?? process.env.DSH_TUI_PROFILE ?? 'dsh-tui',
+    profile: resolveDshProfileName() ?? runtimeOptions.profile ?? 'dsh-tui',
     keys: EDITABLE_CONFIG_KEYS as readonly string[],
     delegate: () => ctx.get('settings') as DelegateSettings | undefined,
   })
@@ -1791,7 +1797,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // The profile this process was booted with (`dsh --profile <name>`); dsh
   // exposes it nowhere else, and /update must update the installation the
   // user is actually running, not a hard-coded one.
-  const profile = resolveDshProfileName()
+  const profile = resolveDshProfileName() ?? runtimeOptions.profile
   // Single exit funnel: `/exit` and double Ctrl+C land here, and so does
   // the unmount triggered by a cordis context teardown — but the two must
   // not share a fate (issue #12). Teardown only unmounts the UI; user exit

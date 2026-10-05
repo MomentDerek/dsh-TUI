@@ -8,7 +8,7 @@ import { gte, gt, lt, valid } from 'semver'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
 import { stripResumeArgs } from './sessionHistory.js'
-import { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
+import { HOST_ENTRY_PATH_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, hostEntryDisabled, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
 import { classifyReplacementOutcome, formatHandoffNotice, handoffEventTag, writeHandoffStage } from './handoffEvents.js'
 import { HANDOFF_ACK_FD_ENV, HANDOFF_ATTEMPT_ENV, HANDOFF_SCREEN_ENV, parseHandoffAckLine } from './handoffAck.js'
 import { DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from './ink/termio/csi.js'
@@ -2172,14 +2172,50 @@ export function restartChildEnv(
   return childEnv
 }
 
+/**
+ * The replacement's argv after `process.execPath`, pure. By default the same
+ * script and arguments again. A replacement on the Claude kernel goes to the
+ * package's host entry when the launcher named it (`hostEntry`) and this
+ * process is not already it: a DSH-hosted process would otherwise relaunch
+ * `dsh --profile` and boot Claude through the whole DSH composition. The
+ * entry hands a DSH launch back to dsh itself, so the other direction needs
+ * no change. Exported for scripts/verify-host-entry.
+ */
+export function restartArgv(input: {
+  readonly execArgv: readonly string[]
+  readonly argv: readonly string[]
+  /** The kernel the replacement boots on (switch target, else this one). */
+  readonly kernel: KernelBackendId | undefined
+  /** Whether this is a kernel switch (resume flags are dropped). */
+  readonly switching: boolean
+  readonly hostEntry: string | undefined
+}): string[] {
+  // A kernel switch must not hand the replacement THIS kernel's resume
+  // flags: an inherited `--resume <id>` in argv would send the new kernel
+  // looking for a session that belongs to the kernel it just left — the
+  // same reason DSH_TUI_RESUME_SESSION is deleted below.
+  const strip = (args: readonly string[]): string[] => input.switching ? stripResumeArgs(args) : [...args]
+  const script = input.argv[1]
+  if (input.kernel === 'claude' && input.hostEntry !== undefined && script !== input.hostEntry) {
+    // The app arguments: everything after dsh's own `--`.
+    const separator = input.argv.indexOf('--', 2)
+    const appArgs = separator === -1 ? [] : input.argv.slice(separator + 1)
+    return [...input.execArgv, input.hostEntry, ...strip(appArgs)]
+  }
+  return [...input.execArgv, ...strip(input.argv.slice(1))]
+}
+
 export async function restartTui(sessionId: string, options: TuiRestartOptions = {}): Promise<number> {
   const kind = options.kind ?? 'restart'
   const tag = options.backend !== undefined ? 'backend-switch' : kind === 'update' ? 'update-restart' : 'restart'
-  // A fresh replacement must not inherit resume flags from the original
-  // launch: after /new they name the previous session, and after a kernel
-  // switch they name a session of the previous backend.
-  const appArgs = process.argv.slice(1)
-  const argv = [...process.execArgv, ...(options.backend === undefined && sessionId !== '' ? appArgs : stripResumeArgs(appArgs))]
+  const hostEntry = process.env[HOST_ENTRY_PATH_ENV]
+  const argv = restartArgv({
+    execArgv: process.execArgv,
+    argv: process.argv,
+    kernel: options.backend ?? options.kernel,
+    switching: options.backend !== undefined,
+    hostEntry: hostEntry === undefined || hostEntry === '' || hostEntryDisabled() ? undefined : hostEntry,
+  })
   logRestartEvent(`${tag}: spawning replacement`, {
     node: process.execPath,
     argv,

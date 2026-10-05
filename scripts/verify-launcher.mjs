@@ -18,6 +18,9 @@
  *   - 面向用户的消息双语：DSH_TUI_LANG=zh 输出中文，否则默认英文
  *   - shellQuote 单元（win32 的 shell:true 路径 CI 跑不到 Windows，只能靠
  *     单测覆盖转义规则本身）
+ *   - 内核分流：判定为 Claude 的启动走本包入口（host-entry.js），开关关闭、
+ *     dsh 一次性开关、交接到 dsh 时仍走 `dsh --profile`；入口读到 Config 行
+ *     钉在 DSH 上时原样交给 dsh
  *
  * 运行：pnpm build && node scripts/verify-launcher.mjs
  */
@@ -348,6 +351,40 @@ r = runBin([], { ...envNoDsh, DSH_TUI_LANG: 'zh' })
 check('i18n: DSH_TUI_LANG=zh prints Chinese', r.stderr.includes('未检测到 dsh CLI'))
 r = runBin([], envNoDsh)
 check('i18n: default (unset) prints Chinese', r.stderr.includes('未检测到 dsh CLI'))
+
+// --- 7. 内核分流（docs/standalone-host-design.md 5.8）---------------------------
+// 判定为 Claude 的启动走本包入口 lib/types/dsh-adapter/host-entry.js，不再
+// `dsh --profile`。这里没有 TTY，入口里的运行时按契约以「需要交互终端」失败——
+// 正好证明走的是入口（stub 日志里没有 profile 启动）。入口自己再读 profile 补丁
+// 的 Config 行：钉在 DSH 上时原样交给 dsh。
+setProfileVersion(ownVersion)
+const entryRan = result => /interactive terminal/u.test(`${result.stderr}${result.stdout}`)
+const kernelPrefs = join(tmp, '.dsh-tui', 'kernel.json')
+const profilePatch = join(home, 'profiles', 'dsh-tui', 'cordis.patch.yml')
+resetStubLog()
+r = runBin(['--backend', 'claude'])
+check('host entry: --backend claude starts the entry, not dsh --profile', launchCalls().length === 0 && entryRan(r))
+resetStubLog()
+r = runBin(['--backend', 'claude'], { DSH_TUI_HOST_ENTRY: '0' })
+check('host entry: DSH_TUI_HOST_ENTRY=0 keeps dsh --profile', launchCalls().length === 1 && !entryRan(r))
+resetStubLog()
+r = runBin(['--backend', 'claude', '--dump-config'])
+check('host entry: a dsh switch always goes to dsh', launchCalls().at(-1)?.includes('<--dump-config>') === true && !entryRan(r))
+mkdirSync(dirname(kernelPrefs), { recursive: true })
+writeFileSync(kernelPrefs, JSON.stringify({ backend: 'claude' }))
+resetStubLog()
+r = runBin([])
+check('host entry: the remembered kernel (kernel.json) routes too', launchCalls().length === 0 && entryRan(r))
+resetStubLog()
+r = runBin([], { DSH_TUI_BACKEND_HANDOFF: 'dsh' })
+check('host entry: a kernel-switch handoff to dsh beats the memory', launchCalls().length === 1 && !entryRan(r))
+rmSync(kernelPrefs, { force: true })
+mkdirSync(dirname(profilePatch), { recursive: true })
+writeFileSync(profilePatch, '- id: dsh-tui\n  config:\n    backend: dsh\n')
+resetStubLog()
+r = runBin(['--backend', 'claude', 'foo'])
+check('host entry: a Config row pinning dsh is handed on to dsh with the app args', launchCalls().at(-1) === '<--profile><dsh-tui><--><foo>' && !entryRan(r))
+rmSync(profilePatch, { force: true })
 
 // --- 6. shellQuote 单元（win32 shell:true 路径的转义规则）---------------------
 check('shellQuote: plain tokens pass through', shellQuote(['plugin', '--profile', 'dsh-tui']).join(' ') === 'plugin --profile dsh-tui')

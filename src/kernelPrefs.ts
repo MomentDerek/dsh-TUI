@@ -128,6 +128,22 @@ export function writeKernelPrefs(
 export const KERNEL_SWITCH_HANDOFF_ENV = 'DSH_TUI_BACKEND_HANDOFF'
 
 /**
+ * The package's own entry for the Claude kernel (docs/standalone-host-design.md
+ * 5.8; routing in hostEntryRoute.ts). Kept here, beside the other launch
+ * variables, so src/update.ts does not pull the routing module in.
+ * `DSH_TUI_HOST_ENTRY=0` keeps every kernel on `dsh --profile`.
+ */
+export const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
+/** The entry's path, set by the launcher: a relaunch onto the Claude kernel
+ *  goes through it (src/update.ts restartArgv). */
+export const HOST_ENTRY_PATH_ENV = 'DSH_TUI_HOST_ENTRY_PATH'
+
+/** Whether the host entry is switched off. */
+export function hostEntryDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[HOST_ENTRY_ENV] === '0'
+}
+
+/**
  * The kernel boot runs on (plugin.ts backendChoice): a valid switch handoff
  * first, then the Config row, then DSH_TUI_BACKEND, then the remembered
  * choice, else dsh. An invalid DSH_TUI_BACKEND still means dsh, which is what

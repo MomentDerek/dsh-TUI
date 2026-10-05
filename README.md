@@ -211,6 +211,11 @@ including clicking outside it on the launchpad, cancels a pending installation.
 - **Not available**: DSH-only commands such as `/tree`, `/preset`,
   `/provider`, `/workspace`, `/agentview` and `/bg`. One process runs one
   backend; `/kernel` switches by restarting into a new session.
+- **Startup**: on Claude, `dsh-tui` starts the TUI directly instead of composing
+  the DSH profile, so the screen appears before the Claude session has opened.
+  You can type right away; Enter sends once it is ready (local commands such as
+  `/help` and `/kernel` run meanwhile). Third-party DSH/Cordis plugins are not
+  loaded on this kernel. `DSH_TUI_HOST_ENTRY=0` restores the old launch path.
 
 Details and known limitations: [Claude backend](docs/claude-backend.en.md).
 

@@ -199,6 +199,12 @@ their prompts carried.
 ## Known limitations
 
 - One dsh-TUI process runs one backend; switching restarts through `/kernel`.
+- On Claude, `dsh-tui` starts the TUI from the package's own entry without
+  composing the DSH profile: the screen appears first and sending waits until
+  the session has opened (a failed open says why; `/new` retries). Third-party
+  DSH/Cordis plugins (themes, panels, decision hooks) are not loaded on this
+  kernel. `DSH_TUI_HOST_ENTRY=0` goes back to starting through
+  `dsh --profile dsh-tui`, where they load.
 - In a Claude session the side panel's workspace panel reports it is unsupported
   and the trajectory panel stays empty.
 - No `/add-dir`; the refusal dialog offers only *Retry* and *Cancel*; an MCP

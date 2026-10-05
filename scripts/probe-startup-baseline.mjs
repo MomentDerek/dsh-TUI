@@ -2,7 +2,7 @@
  * Opt-in startup timing probe (docs/standalone-host-design.md, Phase 0
  * baseline), not a CI check.
  *
- * Run: pnpm compile && node scripts/probe-startup-baseline.mjs [--backend dsh|claude] [--runs 5]
+ * Run: pnpm compile && node scripts/probe-startup-baseline.mjs [--backend dsh|claude] [--entry host|profile] [--runs 5]
  *
  * Requires the installed dsh and dsh-tui profile (like
  * verify-installed-startup.mjs) and the host's node-pty. Copies the profile
@@ -42,10 +42,12 @@ const option = (name, fallback) => {
   return index === -1 ? fallback : args[index + 1]
 }
 const backend = option('--backend', 'dsh')
-// `--entry spike` (Phase 1 spike, uncommitted): start the TUI runtime on a bare
-// Cordis root via lib/types/dsh-adapter/spike-entry.js, no DSH profile at all.
-// Timings then count from spawning that node process, not the launcher chain.
-const entryMode = option('--entry', 'profile')
+// `--entry host` (default): the launcher routes as shipped, so the Claude
+// kernel runs in the package's own entry (lib/types/dsh-adapter/host-entry.js).
+// `--entry profile`: DSH_TUI_HOST_ENTRY=0, every kernel inside `dsh --profile`
+// (the Phase 0 baseline path). Both count from spawning the launcher.
+const entryMode = option('--entry', 'host')
+if (entryMode !== 'host' && entryMode !== 'profile') throw new Error(`--entry host|profile, got ${entryMode}`)
 const runs = Number(option('--runs', '5'))
 const repo = fileURLToPath(new URL('..', import.meta.url))
 if (!existsSync(join(repo, 'lib', 'types', 'index.js'))) throw new Error('run pnpm compile first')
@@ -107,9 +109,7 @@ mkdirSync(join(modules, '@anthropic-ai'))
 symlinkSync(realpathSync(join(repo, 'node_modules', '@anthropic-ai', 'claude-agent-sdk')), join(modules, '@anthropic-ai', 'claude-agent-sdk'), 'dir')
 const fallback = join(sourceHome, 'profiles', 'node_modules')
 if (existsSync(fallback)) symlinkSync(fallback, join(targetHome, 'profiles', 'node_modules'), 'dir')
-const launcher = entryMode === 'spike'
-  ? join(tuiPackage, 'lib', 'types', 'dsh-adapter', 'spike-entry.js')
-  : join(tuiPackage, 'bin', 'dsh-tui.js')
+const launcher = join(tuiPackage, 'bin', 'dsh-tui.js')
 
 // ── one run ────────────────────────────────────────────────────────────────
 const COLS = 100
@@ -126,13 +126,14 @@ async function run(index) {
     DSH_TUI_SESSION_ROOT: join(root, 'sessions'),
     DSH_TUI_WORKSPACE_TARGET: process.cwd(),
     DSH_TUI_BACKEND: backend,
+    ...(entryMode === 'profile' ? { DSH_TUI_HOST_ENTRY: '0' } : {}),
     DSH_TUI_BOOT_TRACE: trace,
     DSH_TUI_LANG: 'en',
     DSH_TELEMETRY_MODE: 'DISABLED',
     NODE_ENV: 'production',
     TERM: 'xterm-256color',
   }
-  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG']) delete env[key]
+  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HOST_ENTRY_PATH', 'DSH_TUI_PROFILE', ...(entryMode === 'host' ? ['DSH_TUI_HOST_ENTRY'] : [])]) delete env[key]
   const terminal = new xterm.Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
   const startedAt = Date.now()
   const child = pty.spawn(process.execPath, [launcher], { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd: process.cwd(), env })
@@ -159,7 +160,7 @@ async function run(index) {
   try {
     // The trace is the measurement; the screen columns are best effort (see
     // the header: in some PTY setups the TUI paints nothing).
-    const ok = await settled(() => exit !== undefined || (traced('render-done') && (entryMode !== 'spike' || traced('startup-adopted'))), { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS ?? 90000) })
+    const ok = await settled(() => exit !== undefined || (traced('render-done') && (!traced('entry-modules') || traced('startup-adopted'))), { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS ?? 90000) })
     if (!ok || exit !== undefined) throw new Error(`run ${index}: no render (exit ${exit?.exitCode})\ntrace: ${existsSync(trace) ? readFileSync(trace, 'utf8') : 'none'}\nraw(${output.length}): ${JSON.stringify(output.slice(-1500))}`)
     await settled(() => at.inject !== undefined && at.prompt !== undefined, { timeoutMs: 1500 })
     if (process.env.PROBE_SCREEN === '1') console.error(`[probe] screen of run ${index}:\n${screen()}`)
@@ -195,6 +196,6 @@ const median = values => {
   const sorted = values.filter(value => typeof value === 'number').sort((a, b) => a - b)
   return sorted.length === 0 ? '-' : sorted[Math.floor(sorted.length / 2)]
 }
-console.log(`\nbackend=${backend} entry=${entryMode} runs=${runs} (ms from spawn of ${entryMode === 'spike' ? 'the spike node process' : 'the profile launcher'}, median)`)
+console.log(`\nbackend=${backend} entry=${entryMode} runs=${runs} (ms from spawn of the profile launcher, median)`)
 for (const name of COLUMNS) console.log(`  ${name.padEnd(20)} ${median(results.map(result => result[name]))}`)
 process.exit(0)

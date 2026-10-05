@@ -246,6 +246,10 @@ try {
     ...(isWin ? { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT } : {}),
     HOME: temp, USERPROFILE: temp, DSH_HOME: dshHome,
     DSH_TUI_ARGV_PROBE: '1', DSH_TUI_ARGV_STARTUP: startupFile, NODE_OPTIONS: '--no-deprecation',
+    // These cases pin the argv handed to `dsh --profile`. A Claude launch now
+    // goes to the package's own entry instead (verify-launcher.mjs §7), so
+    // the routing is off here to keep the Claude resume cases on that path.
+    DSH_TUI_HOST_ENTRY: '0',
   }
   const cases = [
     ...[

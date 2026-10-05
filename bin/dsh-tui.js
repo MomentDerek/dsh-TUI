@@ -780,6 +780,19 @@ const startDshSession = (dshArgs, profile = PROFILE, env = process.env) =>
     })
   })
 
+// 本包自己的入口（docs/standalone-host-design.md 5.8）：Claude 内核不组合 DSH
+// profile，直接 `node <入口> <应用参数>`。结果模型与 startDshSession 相同，
+// 首启结算与安全模式照旧。
+const startEntrySession = (entry, appArgs, env = process.env) =>
+  new Promise(resolve => {
+    const child = spawn(process.execPath, [entry, ...appArgs], { stdio: 'inherit', env })
+    child.on('error', err => resolve({ kind: 'error', error: err }))
+    child.on('exit', (code, signal) => {
+      if (signal) resolve({ kind: 'signal', signal })
+      else resolve({ kind: 'exit', code: code ?? 0 })
+    })
+  })
+
 // 救援子进程的环境：显式构造，而不是把宿主 process.env 原样交给它。救援的
 // 语义是「干净冷启动」，而启动器自己写进 process.env 的会话控制变量会把刚
 // 崩掉的主 profile 的会话 id / 工作区目标带进救援——救援 profile 里并不存在
@@ -1579,7 +1592,36 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // DSH consumes its own --; only the app tail belongs behind it. Preserve
   // the app-level separator too, and replay this same argv on a safe retry.
   const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
+
+  // 内核分流（docs/standalone-host-design.md 5.8）：判定为 Claude 时走本包入口，
+  // 不组合 DSH profile。启动器读不到 profile 补丁里 Config 行的 backend（零 lib
+  // 依赖），所以这里只按 一次性交接 → DSH_TUI_BACKEND（--backend）→ kernel.json
+  // 判定；入口自己会再读 Config 行，钉在 DSH 上时原样交给 dsh。dsh 自己的
+  // 一次性开关（--version、--dump-config* 等 hostArgs）始终交给 dsh。
+  // DSH_TUI_HOST_ENTRY=0 关闭分流，所有内核都回到 `dsh --profile`。
+  const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
+  const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
+  const pickKernel = value => {
+    const id = typeof value === 'string' ? value.trim().toLowerCase() : ''
+    return KERNEL_IDS.includes(id) ? id : undefined
+  }
+  const launchKernel = () => {
+    const handoff = pickKernel(process.env.DSH_TUI_BACKEND_HANDOFF)
+    if (handoff !== undefined) return handoff
+    const raw = process.env.DSH_TUI_BACKEND
+    if (raw !== undefined && raw.trim() !== '') return pickKernel(raw) ?? 'dsh'
+    return pickKernel(readJson(join(homedir(), '.dsh-tui', 'kernel.json'))?.backend) ?? 'dsh'
+  }
+  if (hostEntryEnabled) {
+    // 运行中的 /kernel 切到 Claude 时经它重起（src/update.ts restartArgv）。
+    process.env.DSH_TUI_HOST_ENTRY_PATH = hostEntry
+    process.env.DSH_TUI_PROFILE ??= PROFILE
+  }
   // 必须在首次 spawn 之前：本次启动的 TUI 写的记录都晚于这个时刻。
   noteLaunchChain()
-  settleFirstResult(await startDshSession(firstArgs), firstArgs)
+  if (hostEntryEnabled && hostArgs.length === 0 && launchKernel() === 'claude') {
+    settleFirstResult(await startEntrySession(hostEntry, args), firstArgs)
+  } else {
+    settleFirstResult(await startDshSession(firstArgs), firstArgs)
+  }
 }

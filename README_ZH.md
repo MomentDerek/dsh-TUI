@@ -181,6 +181,10 @@ Enter，按引导一键安装——dsh-TUI 自己定位 profile 目录并装锁�
   双击 `Esc` 回退、子代理、后台任务、图片、`/btw`，以及 Claude 上报的美元费用。
 - **不可用**：DSH 专属命令，如 `/tree`、`/preset`、`/provider`、`/workspace`、
   `/agentview`、`/bg`。一个进程只跑一个后端，`/kernel` 切换时会重启并开新会话。
+- **启动**：Claude 内核下 `dsh-tui` 直接启动界面，不再组合 DSH profile，界面会先于
+  Claude 会话出现。可以马上输入，就绪后按 Enter 发送（期间 `/help`、`/kernel` 等本地
+  命令照常可用）。这个内核不加载第三方 DSH/Cordis 插件。`DSH_TUI_HOST_ENTRY=0`
+  恢复原来的启动方式。
 
 详细说明与已知限制：[Claude 后端](docs/claude-backend.md)。
 

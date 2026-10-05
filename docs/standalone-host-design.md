@@ -224,7 +224,12 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
   落一条提示行（原因 + `/new` 重试 · `/kernel` 切换 · `/quit` 退出），占位会话保持绑定、
   `ready` 保持 false；`/new` 经 `openSession` 打开新会话并接管。退出时仍在进行的打开由
   `prepare` 在返回时关闭（见上）；Claude 的 `open` 没有中止入口，进程若在打开返回前退出，
-  CLI 子进程靠 stdin 关闭自行退出——这点待真实终端验证。记住的内核打开失败、回落到 DSH
+  CLI 子进程靠 stdin 关闭自行退出——这点待真实终端验证。
+- **Phase 1 的实际行为（独立入口）。**记住的内核是 Claude、SDK 却已被卸载：profile 路径
+  在挂载前打开失败、静默回落 DSH 并提示；入口路径下 `prepareBackendStartup` 不加载 SDK，
+  失败发生在挂载后的 `open`，界面落「打不开」提示行，`/kernel` 一步切回 DSH（重起）。
+  「占位会话改由 DSH 接管、不重启」要等 Phase 2 有进程内 DSH。后端模块本身加载失败
+  （包损坏）时入口直接报错退出，由启动器的安全模式接住。记住的内核打开失败、回落到 DSH
   的逻辑（`plugin.ts` 现有）变成「占位会话改由 DSH 接管」，不需要重启。
 
 ### 5.4 DSH 后端：进程内 `runProfile`
@@ -305,12 +310,24 @@ DSH 内核下 `/settings` 改写的目标从 `settings.mutate` 切到本文件�
 
 ### 5.8 启动器
 
-- 三进程链（全局启动器 → profile 启动器 → dsh）变成：全局启动器 → profile 启动器 →
-  `node <本包 entry>`。对齐检查、安全模式重试、Windows 下 `dsh.cmd` 的解析留在
-  profile 启动器。
-- `restartTui` 用 `process.execPath` + 原 argv 重起，天然指向新 entry；kernel 切换交接
-  （`handoffAck`）的「新进程接管 alt-screen」协议不变，只是接管点从 plugin 移到 entry。
-- 一次性开关（`--version`、`--dump-config*`）继续直接交给 dsh。
+> Phase 1 实现（2026-10-06）：入口是 `lib/types/dsh-adapter/host-entry.js`
+> （`src/dsh-adapter/host-entry.ts`），路由判定在 `src/hostEntryRoute.ts`。
+
+- 三进程链（全局启动器 → profile 启动器 → dsh）在 Claude 内核下变成：全局启动器 →
+  profile 启动器 → `node <本包 entry>`。对齐检查、安全模式重试、Windows 下 `dsh.cmd`
+  的解析留在 profile 启动器。
+- **判定分两半。**启动器零 lib 依赖、读不到 profile 补丁的 Config 行，只按「一次性交接 →
+  `DSH_TUI_BACKEND`（`--backend`）→ `kernel.json`」判定；入口再按插件同样的排序判一次，
+  加上补丁里 `dsh-tui` 行的 `backend`。入口判定为 DSH（被钉住、或 `/kernel` 经入口重起
+  到 DSH）时原样交给 `dsh --profile <profile> -- <应用参数>`：环境、stdio 与交接 ACK
+  管道（fd 3）透传，由真正接管屏幕的 dsh 进程发 ACK，入口只转发退出。
+- `restartTui` 默认用 `process.execPath` + 原 argv 重起；目标内核是 Claude 且启动器给了
+  `DSH_TUI_HOST_ENTRY_PATH` 时改为重起到入口（`restartArgv`，只带 dsh `--` 之后的应用
+  参数），否则 DSH 进程里的 `/kernel` 切到 Claude 会走整套 DSH 组合。入口里切回 DSH 则
+  原样重起入口，由入口交给 dsh。
+- 一次性开关（`--version`、`--dump-config*` 等 dsh 前缀参数）继续直接交给 dsh。
+- 关闭开关 `DSH_TUI_HOST_ENTRY=0`：所有内核回到 `dsh --profile`（Phase 1 的回滚行）。
+  设置文件（5.6）不随开关回退。
 
 ## 6. 已知并接受的限制
 
@@ -586,6 +603,68 @@ repro-settings、scroll、root-inline、panel-picker）通过。
 spike 入口下「会话打开」段从约 630ms 缩到约 75ms（只剩 prepare），settings 等待从 300ms
 变 0，首帧之后约 500ms 接管完成（`startup-adopted`）。干净环境的数字留到第 3 块之后重测。
 
+### 2026-10-06 · Phase 1 第 3 块：本包入口与启动器分流
+
+（写于交接一节之后。）正文 5.8 已同步。
+
+- `src/dsh-adapter/host-entry.ts`（取代 spike 入口，spike 文件已删）：先按
+  `src/hostEntryRoute.ts` 判内核；Claude 时在裸 Cordis 根上挂 `plugin.ts` 的 `apply`
+  （`deferBackendOpen` + `profile`），SIGTERM/SIGHUP 释放根（有界 3s）后按信号码退出；
+  DSH 时交给 `dsh --profile`（见 5.8）。
+- `RuntimeApplyOptions.profile`：入口的 argv 没有 `--profile`，`/update` 与设置导入
+  用它找 profile。
+- `bin/dsh-tui.js`：`startEntrySession` + 内联判定；分流开启时给子进程设
+  `DSH_TUI_HOST_ENTRY_PATH` 与 `DSH_TUI_PROFILE`。
+- `src/update.ts`：`restartArgv`（纯函数）。
+- 探针：`--entry host|profile` 取代 `--entry spike`，两者都从 spawn 启动器算起。
+- 回归：`verify-launcher.mjs` §7（6 项：`--backend claude` 走入口、开关关闭、dsh 前缀
+  参数、`kernel.json`、交接到 dsh、Config 行钉 DSH 时入口原样交给 dsh 并带应用参数）；
+  `scripts/verify-host-entry.ts`（17 项：入口内核排序、补丁 `backend` 读取、
+  `restartArgv`）。`verify-startup-argv.mjs` 测的是交给 dsh 的 argv 语法，关掉分流跑。
+- 文档：README / README_ZH 的 Claude 一节、`docs/claude-backend*.md` 已知限制（第三方
+  插件不加载、`DSH_TUI_HOST_ENTRY=0`）、`docs/configuration*.md` 环境变量表；guide 副本
+  同步（顺带补齐了 main 上 claude-backend 副本的既有漂移，`verify-guide` 恢复全绿）。
+- `src/update.ts` 只从 `kernelPrefs.ts` 取入口常量（`HOST_ENTRY_PATH_ENV`、
+  `hostEntryDisabled`），不引入路由模块：`verify-update.mjs` 把 `update.js` 的依赖镜像到
+  临时目录，路由模块会把 yaml 与 credentials 也拖进镜像。
+- 验证：`pnpm build`（89 项门禁）、`verify:package` 通过；input-terminal、
+  session-workspace、render-scroll 三组中失败的 `verify-splash-eggs`、
+  `repro-picker-windowing` 在 main 上同样失败，`verify-update-checksum` 是下载流计时断言
+  （本分支 3 次过 2 次，main 上本轮 5 次全失败），均与本改动无关。
+- 手动核实（PTY，spike 入口时期）：裸根上 `/quit` 退出码 0、终端恢复序列完整；启动期
+  SIGTERM 时 Ink 同样发出恢复序列；两种情况都没有遗留 Claude CLI 子进程。
+
+数字（5 轮中位数，ms，从 spawn profile 启动器算起；机器仍偏慢，一个 3 亿次空循环约
+2.3s，与 Phase 0 基线不可直接比，同一轮内三组可比）：
+
+| 时间点 | Claude · 本包入口 | Claude · `DSH_TUI_HOST_ENTRY=0` | DSH 内核 |
+| --- | --- | --- | --- |
+| 入口 / dsh 进程启动 | 153 | 149 | 141 |
+| 模块加载完（入口） | 1092 | — | — |
+| dsh-tui 行 apply | — | 1768 | 1649 |
+| 会话打开开始 | 1111 | 3091 | 2826 |
+| 会话打开结束 | 1188（只是 prepare） | 3997 | 2855 |
+| render 完成（首帧） | **1228** | 4062 | 2934 |
+| prompt 画出 | 1457 | 未测到（PTY 空帧） | 未测到 |
+| 可发送（接管完成） | **2134** | 4062 | 2934 |
+
+读法：同一台机器同一轮里，Claude 内核首帧提前约 70%（4062 → 1228），可发送提前约 47%
+（4062 → 2134）；DSH 内核路径不变。入口路径下 PTY 能正常画出界面，再次说明空帧只出现在
+dsh 启动链上。干净环境的绝对值待重测。
+
+**还需要真实终端手动演练（无头环境做不了）**：
+
+0. 真实安装里先跑通：探针的隔离 profile 把 dsh-tui 拷成真实目录，真实安装里它是 pnpm
+   虚拟 store 下的链接。入口的模块解析（cordis、Claude SDK）与 profile 模式下同一文件的
+   解析路径相同，理应一致，但没在真实 `~/.dsh/profiles/dsh-tui` 里跑过：先把本分支装进
+   一个 profile，`dsh-tui --backend claude` 跑通。
+1. inline 与 fullscreen 两种模式、窄终端下 Claude 内核启动：首帧、「还在启动」提示、
+   就绪后发送。
+2. `/kernel` 双向切换：DSH → Claude（应重起到入口，fd 3 ACK 由入口里的 TUI 发出，无
+   闪屏）；Claude → DSH（重起入口 → 交给 dsh，ACK 由 dsh 进程发出）。
+3. Claude 内核下 `/restart`、`/update`（入口带 `profile`）。
+4. 启动期 `/quit` 与 Ctrl+C，确认没有遗留 `claude` 子进程。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
 **仓库与分支状态**
@@ -604,9 +683,8 @@ spike 入口下「会话打开」段从约 630ms 缩到约 75ms（只剩 prepare
 
 **Phase 1 进行到哪**
 
-**更新：spike 已跑完，结论与数字见上一节「Phase 1 spike」。**下面保留 spike 前的计划原文
-作记录。spike 代码（`src/dsh-adapter/spike-entry.ts`、探针的 `--entry spike`）未提交，等用户
-看过数字再定去留。下一步是向用户/chimney 提「Phase 1 只做 DSH 无关」的分期修订，然后做 1b。
+**更新：Phase 1 已实现（三块），见「Phase 1 第 1、2 块」「Phase 1 第 3 块」两节；spike 入口
+已由 `host-entry.ts` 取代。**下面保留 spike 前的计划原文作记录。
 
 spike 的定位：**上限测量**，不是 Phase 1 交付——量出「Claude 内核完全不组合 DSH profile」能
 快到多少，再决定是否值得重写组装根。
@@ -651,8 +729,8 @@ Phase 1 真正需要的是「DSH 无关」而不是「Cordis 无关」——TUI 
 会新建自己的根，两个根并存时第三方插件在 DSH 根里看不到 TUI 根的服务。这会实质修改 5.1 与
 分期表（TuiHost 抽象推迟到 Phase 2），由用户和 chimney 决定。
 
-**进展（2026-10-06，Phase 1 第 1、2 块）**：1b 与设置存储 (a) 已实现，记录见上一节
-「Phase 1 第 1、2 块」。剩第 3 块：入口转正与启动器分流。
+**进展（2026-10-06）**：Phase 1 三块都已实现，记录见上面「Phase 1 第 1、2 块」与
+「Phase 1 第 3 块」两节。剩下的是需要真实终端的手动演练（见第 3 块一节末尾）。
 
 **决定（2026-10-06，spike 之后）**：5.6 选 (a)；接受分期修订（Phase 1 只做 DSH 无关，TuiHost
 推迟到 Phase 2）。正文 5.1、5.6、第 3、7、10 节已同步。Phase 1 剩下三块：1b（占位会话，
@@ -672,8 +750,8 @@ Phase 1 真正需要的是「DSH 无关」而不是「Cordis 无关」——TUI 
   `session-open-start/end`、`render-start/done`（plugin.ts）。
 - `scripts/probe-startup-baseline.mjs --backend dsh|claude --runs N`（需先 `pnpm compile`）。
   调试开关见文件头：`PROBE_TIMEOUT_MS`、`PROBE_DEBUG=1`、`PROBE_KEEP=1`、`PROBE_SCREEN=1`
-  （打印每轮末屏）。`--entry spike` 改起 `lib/types/dsh-adapter/spike-entry.js`（依赖未提交的
-  spike 入口，两者同去留）。
+  （打印每轮末屏）。`--entry host`（默认，按发布行为分流）/ `--entry profile`
+  （`DSH_TUI_HOST_ENTRY=0`，旧路径）；两者都从 spawn 启动器算起。
 - `plugin.ts` 另有 `settings-wait-start/end` 打点，量 `settingsReady` 等待（裸根下恒为 300ms 兜底）。
 - 探针必须排除 dsh-purge（已实现），否则会改坏全局 dsh 的 `bin.js`（见上一节环境发现 1）。
   若全局 dsh 又报 `profile-boot-BP_C0vpU.js` 找不到，就是被改坏了，需要用户修复。
