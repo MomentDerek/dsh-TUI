@@ -667,12 +667,81 @@ dsh 启动链上。干净环境的绝对值待重测。
 
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
-**仓库与分支状态**
+> **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
+> 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
+
+**提交（`feat/standalone-host`，均未 push）**
+
+| 提交 | 内容 |
+| --- | --- |
+| `c966caff` | Phase 0：channel 核心改收 `ChannelHost`、boundary 门禁、启动打点、基线探针 |
+| `c6adcf7e` | Phase 1 spike（裸 Cordis 根零守卫跑通 Claude 内核）、分期修订与 5.6 决定 |
+| `fdde6be2` | 第 1、2 块：启动接管（占位会话、`ChannelUi.ready`）+ `~/.dsh-tui/settings.json` |
+| `e287998b` | 第 3 块：`host-entry.ts`、启动器分流、`restartArgv`、文档与回归 |
+| （本节） | 交接更新 |
+
+各块做了什么、数字、验证结果见上面「Phase 1 第 1、2 块」「Phase 1 第 3 块」两节；设计正文
+5.3 / 5.6 / 5.8 已同步实现。已定事项：5.6 选 (a)；分期修订（Phase 1 只做 DSH 无关，TuiHost
+推迟到 Phase 2）。仍待决定：AGENTS.md 开头「零核心改动、纯插件挂载」定位句的改写（只补了
+布局表）、Phase 2 排期、PR #1216 去留（第 8 节）。
+
+**下一步：测试（由新会话主导）**
+
+无头部分已经全绿（见第 3 块一节）。剩下的都要真实终端，按第 3 块一节末尾的清单 0–4：
+
+0. 真实安装形态下跑通 `dsh-tui --backend claude`（pnpm 链接形态下入口的模块解析）。
+1. inline / fullscreen / 窄终端下 Claude 内核启动：首帧、「还在启动」提示与草稿保留、
+   本地命令放行、就绪后发送、打开失败时的提示行与 `/new` 重试。
+2. `/kernel` 双向切换：DSH → Claude 应重起到入口；Claude → DSH 是入口重起后交给 dsh；
+   两个方向都看 fullscreen 下有无闪屏（fd 3 ACK 由真正接管屏幕的进程发）。
+3. Claude 内核下 `/restart`、`/update`（入口经 `RuntimeApplyOptions.profile` 找 profile）。
+4. 启动期 `/quit`、Ctrl+C、`kill -TERM`：终端恢复完整，没有遗留 `claude` 子进程。
+
+另外值得顺手看的：
+- 设置迁移：删掉 `~/.dsh-tui/settings.json` 后首启应从 profile 补丁的 `dsh-tui` 行导入一次；
+  两个内核改同一项设置互相可见；`DSH_TUI_HOST_ENTRY=0` 下设置仍读文件（不随开关回退）。
+- 记住的内核是 Claude 但 SDK 被卸载：入口下应是界面里的提示行 + `/kernel`（5.3 写明的
+  Phase 1 行为），不是静默回落 DSH。
+- 干净机器上重测数字：`node scripts/probe-startup-baseline.mjs --backend claude --entry host|profile --runs 5`
+  与 `--backend dsh`，补进第 3 块一节的表（本轮机器慢，只有比例可信）。
+
+**怎么搭测试环境（建议，测试会话自己决定）**
+
+- 不要直接改真实 `~/.dsh/profiles/dsh-tui`。最省事：`pnpm compile` 后
+  `PROBE_KEEP=1 node scripts/probe-startup-baseline.mjs --runs 1`，它会在临时目录建一份
+  隔离 profile（本 checkout 的 `bin/`、`lib/` 拷进去，排除 dsh-purge）并打印路径；然后在
+  真实终端里 `DSH_HOME=<路径>/.dsh node <路径>/.dsh/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js --backend claude`。
+  只改 `DSH_HOME` 不改 `HOME`：Claude 登录在 `~/.claude` 里，换 HOME 就没有凭据；代价是
+  `~/.dsh-tui/settings.json` 等偏好写进真实 home（首次会生成 settings.json 并记导入来源）。
+- 第 0 项要的是真实 pnpm 安装形态：可以在一个独立 `DSH_HOME` 里 `dsh plugin --profile dsh-tui add <npm pack 出的 tarball>`，
+  再把 Claude SDK 装进该 profile（或用 `/kernel` 里的安装向导）。
+- 调试：`DSH_TUI_BOOT_TRACE=<文件>` 记启动打点（含 `entry-start`、`entry-modules`、
+  `startup-adopted`）；`DSH_TUI_DEBUG` 走 stderr 调试路径；重启/切换的交接事件在
+  `~/.dsh-tui/restart.log`。
+
+**已知坑**
+
+- 本机 profile 的 dsh-purge（链接到本地开发副本、`autoApplyOnStart: true`）启动时会改写
+  **全局** dsh 的 `lib/bin.js`，写坏后 `dsh`/`dsh-tui` 全部起不来（报找不到
+  `profile-boot-BP_C0vpU.js`）。测试环境里排除它；若全局 dsh 被改坏，需要用户修复。
+- 本机 node-pty 下，经「dsh-tui 启动器 → dsh」链起的 TUI 只画空帧（原因未查明）；走本包入口
+  时画面正常。所以 PTY 自动化只能测入口路径，DSH 路径要在真实终端看。
+- 以下失败在 main（ec48de22）上同样存在，与本分支无关：`verify-activity-store`、
+  `verify-compaction-progress`、`verify-splash-font-setting`、`verify-settings-compat`、
+  `verify-splash-eggs`、`repro-picker-windowing`；`verify-update-checksum` 是下载流计时断言，
+  负载高时两边都会红。（`verify-guide` 的 claude-backend 副本漂移已在 `e287998b` 顺带修好。）
+- 本轮机器明显变慢（3 亿次空循环约 2.3s，平时约 0.3s），测时延前先跑一下这个空循环看环境。
+
+**协作约定（不变）**：本文档是方案 B 的主要参考与记录，测试发现与修正都写进实施记录；只
+暂存明确路径；提交不加 Claude 署名；未经要求不 push。
+
+（以下为 Phase 1 开工前的交接原文）
+
+**仓库与分支状态（Phase 1 开工前）**
 
 - 本 worktree：`/home/moment/Code/working/dsh-TUI-standalone`，分支 `feat/standalone-host`。
   - `c966caff` Phase 0（channel 核心改收 `ChannelHost`、boundary 门禁收紧、启动打点、
     基线探针、本文档）——已提交，未 push。
-  - 本节（交接说明）写于提交之后，尚未提交。
 - 预载方案的 rebase 分支：`/home/moment/Code/working/dsh-TUI-preboot-rebased`，分支
   `feat/preboot-fast-start-rebased`，`07a240c2`（PR #1216 的净改动压成一个提交，重建在
   ec48de22 上，含与 main 的整合修补）——已提交，未 push，PR 未更新。PR #1216 是先合入还是
