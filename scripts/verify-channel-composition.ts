@@ -21,7 +21,7 @@ const extensions = read('channel/extensions.ts')
 const root = compositionSource()
 
 // The entry: core + DSH extensions, attached by capability only.
-assert.match(entry, /createCoreChannel\(ctx, session, options, owner\)/u, 'the entry builds the core')
+assert.match(entry, /createCoreChannel\(cordisChannelHost\(ctx\), session, options, owner\)/u, 'the entry builds the core against the Cordis host')
 assert.match(entry, /attachDshExtensions\(core, ctx, native, options\)/u, 'DSH specialists attach to the core')
 assert.match(entry, /session\.capabilities\.native\.dsh/u, 'the DSH extension is chosen by capability')
 assert.match(entry, /return core\.start\(\)/u, 'the core starts the composed channel')
@@ -29,7 +29,7 @@ assert.match(entry, /return core\.start\(\)/u, 'the core starts the composed cha
 // The core: state construction and the feed are delegated owners.
 assert.match(core, /from '\.\.\/state\.js'/u, 'the core composes ../state.js')
 assert.match(core, /createInitialChannelView\(options/u, 'state construction is delegated')
-assert.match(core, /createBindingFeed\(ctx, \{/u, 'the feed owns subscription routing')
+assert.match(core, /createBindingFeed\(channelHost, \{/u, 'the feed owns subscription routing')
 assert.match(core, /releaseContributions\(\)[\s\S]*?owner\.dispose\(\)/u, 'explicit release revokes the channel owner')
 
 // The DSH extension composes the binding-events owner and installs its hooks.

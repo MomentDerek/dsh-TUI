@@ -16,7 +16,7 @@
  * `ownsSessionFacts`, and adds its raw per-binding listeners through
  * `onBind`.
  */
-import type { Context } from '@deepseek-ai/cordis'
+import type { ChannelHostLogger } from '../channel-host.js'
 import type { AgentEvent, AgentEventMeta, AgentEventOf } from '../../../agent/events.js'
 import type { AgentSession } from '../../../agent/session.js'
 import { attachInteraction } from '../../../channel/interaction.js'
@@ -270,7 +270,7 @@ export function createSessionBinder(deps: {
   return { bind }
 }
 
-export function createBindingFeed(ctx: Context, deps: {
+export function createBindingFeed(host: { readonly logger: ChannelHostLogger }, deps: {
   owner: ChannelOwner
   binding: ChannelBinding
   state: ChannelState
@@ -301,7 +301,7 @@ export function createBindingFeed(ctx: Context, deps: {
     inputConvergence,
     retireAttachment: deps.retireAttachment,
     ...(deps.onReset === undefined ? {} : { onReset: deps.onReset }),
-    warn: message => ctx.logger.warn(message),
+    warn: message => host.logger.warn(message),
   })
 
   /** Forget every per-session projection ledger: the projector's and the

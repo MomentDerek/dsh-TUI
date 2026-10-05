@@ -91,6 +91,7 @@ import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, EXIT_ALT_SCREEN, SHOW_CURSOR } from '../ink/termio/dec.js'
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMultiplexer } from '../ink/termio/osc.js'
 import { fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
+import { markBoot } from '../utils/bootTrace.js'
 
 /**
  * Interactive TUI front door for DeepSeek Harness agents.
@@ -173,6 +174,7 @@ export function resolveTuiHostMode(
 }
 
 export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx): Promise<void> {
+  markBoot('runtime-apply')
   const config = configValues<Config>(runtimeConfig)
   // /restart handoff diagnosis: the replacement process is marked by env and
   // logs its boot progress to ~/.dsh-tui/restart.log (ordinary launches stay
@@ -601,6 +603,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // the hard failure: silently swapping what the user named would be worse.
   let backendStart: Awaited<ReturnType<typeof openBackendStartup>> | undefined
   let backendFallbackNotice: string | undefined
+  markBoot('session-open-start')
   if (backendChoice !== 'dsh') {
     try {
       backendStart = await openBackendStartup(ctx, await loadBackend(backendChoice), {
@@ -651,6 +654,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       meta,
       config.preset,
     )
+  markBoot('session-open-end')
   // Workspace ownership is a DSH session-store fact (skipped off DSH).
   if (agent !== undefined) try {
     // Opening a persisted TUI session is an explicit ownership action too.
@@ -2177,7 +2181,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // Kernel-switch replacement: send the ready ACK once the first frame after
   // adoption is flushed. Does nothing on an ordinary boot.
   armFirstFrameAck(process.stdout)
+  markBoot('render-start')
   instance = await render(tree, { exitOnCtrlC: false, terminalImages: bootedTerminalImages })
+  markBoot('render-done')
   const isRecompose = lastBootedFullscreen !== undefined
   lastBootedFullscreen = bootedFullscreen
   lastBootedTerminalImages = bootedTerminalImages

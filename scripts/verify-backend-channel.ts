@@ -476,9 +476,10 @@ try {
 {
   const { createCoreChannel } = await import('../src/dsh-adapter/channel/core/compose.js')
   const { createChannelOwner } = await import('../src/dsh-adapter/channel/owner.js')
+  const { cordisChannelHost } = await import('../src/dsh-adapter/channel/cordis-host.js')
   const owner = createChannelOwner()
   const current = fakeSession('d7d7d7d7-d7d7-4d7d-8d7d-d7d7d7d7d7d7')
-  const core = createCoreChannel(ctx, current, { model: 'm', provider: '', cwd: workdir, activity: false }, owner)
+  const core = createCoreChannel(cordisChannelHost(ctx), current, { model: 'm', provider: '', cwd: workdir, activity: false }, owner)
   let release: ((session: FakeSession) => void) | undefined
   const attached: string[] = []
   core.extend({

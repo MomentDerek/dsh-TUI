@@ -17,6 +17,7 @@ import { normalizeSplashFont, type SplashFontSetting } from '../components/splas
 import { normalizeBrandSetting, type BrandSetting } from '../branding.js'
 import { editableConfig, type RuntimeConfig } from './compat/settings.js'
 import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
+import { markBoot } from '../utils/bootTrace.js'
 
 export const name = 'dsh-tui'
 // `tuiWorkspaces` must stay OUT of this code-level inject (issue #183): the
@@ -445,6 +446,7 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
  * @returns a promise settling when the Loader entry has scheduled its runtime.
  */
 export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promise<void> {
+  markBoot('row-apply')
   // Upstream drift is NO LONGER spammed to stderr here: per-package
   // console.warn lines interleave with the TUI frame redraw and arrive
   // garbled (typewriter animation repaints over them). The merged,

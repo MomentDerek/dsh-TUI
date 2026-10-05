@@ -331,8 +331,11 @@ for (const file of files) {
   for (const ref of refs) {
     const where = `${path}:${ref.line}`
     if (under(path, CORE_DIR)) {
-      if (ref.specifier.startsWith('@deepseek-ai/') && ref.specifier !== '@deepseek-ai/cordis') {
-        violations.push(`${where} imports '${ref.specifier}'; channel core may import only @deepseek-ai/cordis`)
+      // The core is built against ChannelHost (channel/channel-host.ts), so
+      // a host that owns the process can compose it without a Cordis root
+      // (docs/standalone-host-design.md, Phase 0).
+      if (ref.specifier.startsWith('@deepseek-ai/')) {
+        violations.push(`${where} imports '${ref.specifier}'; channel core must not import @deepseek-ai/* (take host services through ChannelHost)`)
       }
       if (ref.specifier === '../extensions.js' || ref.specifier.startsWith('../../backend/')) {
         violations.push(`${where} imports '${ref.specifier}'; channel core must not depend on DSH extensions or backend code`)

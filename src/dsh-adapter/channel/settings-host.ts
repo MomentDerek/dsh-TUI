@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import type { ServiceLookup } from './channel-host.js'
 import type { LlmConfigurableProvider, LlmDiscoveredModel } from '@deepseek-ai/dsh-llm'
 import { t } from '../../i18n.js'
 import type { ChannelState } from '../channel/types.js'
@@ -7,7 +7,7 @@ import type { OAuthProviderStatus, OAuthSetupHost, ProfilePathOp, ProviderSetupH
 import type { SettingsHost } from '../settingsEditor.js'
 import { settingsValue } from '../compat/settings.js'
 
-export function createSettingsHosts(ctx: Context, assertActive: () => void = () => undefined): Pick<ChannelState, 'settingsHost' | 'providerSetup' | 'oauthProviderStatuses' | 'backendAuth'> {
+export function createSettingsHosts(services: ServiceLookup, assertActive: () => void = () => undefined): Pick<ChannelState, 'settingsHost' | 'providerSetup' | 'oauthProviderStatuses' | 'backendAuth'> {
   let settingsHostResolved = false
   let settingsHostCache: SettingsHost | undefined
   return {
@@ -19,7 +19,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
       // seams the `/provider` wizard uses: settings (namespace descriptors +
       // revision-fenced mutate) and credentials (secret writes). Structurally
       // typed like the other optional seams in this file.
-      const settings = ctx.get('settings') as
+      const settings = services.get('settings') as
         | {
           describe(options?: { redactSecrets?: boolean }): readonly {
             ns: string
@@ -38,7 +38,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
           ): Promise<void>
         }
         | undefined
-      const credentials = ctx.get('credentials') as
+      const credentials = services.get('credentials') as
         | {
           resolve(ref: string): Promise<{ value: string } | undefined>
           set(ref: string, value: string): Promise<void>
@@ -86,7 +86,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
       // settings (profile persistence), credentials (key storage) and the
       // llm runtime's configurable-provider directory + model discovery.
       // Structurally typed like the other optional seams in this file.
-      const llm = ctx.get('llm') as
+      const llm = services.get('llm') as
         | {
           listConfigurableProviders(): readonly LlmConfigurableProvider[]
           discoverModels(
@@ -100,7 +100,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
           ): Promise<readonly LlmDiscoveredModel[]>
         }
         | undefined
-      const settings = ctx.get('settings') as
+      const settings = services.get('settings') as
         | {
           describe(): readonly { ns: string; revision: number; value?: unknown; user?: unknown }[]
           get?(ns: string): unknown
@@ -114,7 +114,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
           ): Promise<void>
         }
         | undefined
-      const credentials = ctx.get('credentials') as
+      const credentials = services.get('credentials') as
         | {
           resolve(ref: string): Promise<{ value: string } | undefined>
           set(ref: string, value: string): Promise<void>
@@ -135,7 +135,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
       // The OAuth sign-in surface (dsh-auth-style plugin), structural and
       // optional: mounting the plugin lights up the wizard's OAuth branch,
       // and without it the wizard is exactly what it was before.
-      const oauthApi = (ctx.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
+      const oauthApi = (services.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
       // Real catalog membership on this mount: routes the adapter knows from
       // its installed catalog (`declared !== true`). A stored profile naming
       // such a route is an activation/override of the catalog route — even
@@ -334,7 +334,7 @@ export function createSettingsHosts(ctx: Context, assertActive: () => void = () 
     async oauthProviderStatuses(): Promise<readonly OAuthProviderStatus[] | undefined> {
       // Same optional seam the wizard's OAuth branch reads: absent plugin →
       // undefined, and `/login` renders exactly its pre-plugin lines.
-      const api = (ctx.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
+      const api = (services.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
       return api === undefined ? undefined : api.providers()
     }
   }

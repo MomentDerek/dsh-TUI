@@ -1,0 +1,192 @@
+/**
+ * Opt-in startup timing probe (docs/standalone-host-design.md, Phase 0
+ * baseline), not a CI check.
+ *
+ * Run: pnpm compile && node scripts/probe-startup-baseline.mjs [--backend dsh|claude] [--runs 5]
+ *
+ * Requires the installed dsh and dsh-tui profile (like
+ * verify-installed-startup.mjs) and the host's node-pty. Copies the profile
+ * into an isolated HOME, swaps the dsh-tui package's `bin/` and `lib/` for
+ * this checkout's, links this checkout's Claude Agent SDK in, and starts the
+ * profile launcher in a PTY with `DSH_TUI_BOOT_TRACE`. Each run waits for the
+ * post-render injection endpoint and the painted prompt, then sends /quit.
+ * Never submits a model request and never touches the real profile; the
+ * dsh-purge bundle is left out because it rewrites the global dsh bin.js.
+ *
+ * Prints, per run and as medians, milliseconds from spawn to: the dsh
+ * process start, the dsh-tui row's apply, session open start/end, render
+ * start/done, the injection endpoint, and the painted prompt. A run ends
+ * once the trace shows `render-done` (plus up to 1.5s for the screen
+ * columns), then the TUI gets SIGTERM.
+ *
+ * Known gap (2026-10-06, WSL): under this PTY the TUI renders only empty
+ * frames — with this checkout's lib and with the installed one alike — so
+ * `inject`/`prompt` stay empty there; the trace columns do not depend on it.
+ *
+ * Debug switches: PROBE_TIMEOUT_MS (per-run wait for render, default 90000),
+ * PROBE_DEBUG=1 (byte counter on stderr), PROBE_KEEP=1 (keep the isolated
+ * root and print its path).
+ */
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { homedir, tmpdir } from 'node:os'
+import { delimiter, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import xterm from '@xterm/headless'
+import { settled } from './lib/term-test.mjs'
+
+const args = process.argv.slice(2)
+const option = (name, fallback) => {
+  const index = args.indexOf(name)
+  return index === -1 ? fallback : args[index + 1]
+}
+const backend = option('--backend', 'dsh')
+const runs = Number(option('--runs', '5'))
+const repo = fileURLToPath(new URL('..', import.meta.url))
+if (!existsSync(join(repo, 'lib', 'types', 'index.js'))) throw new Error('run pnpm compile first')
+
+const executable = name => {
+  const path = (process.env.PATH ?? '').split(delimiter).map(dir => join(dir, name)).find(existsSync)
+  if (path === undefined) throw new Error(`missing launcher: ${name}`)
+  return realpathSync(path)
+}
+const dshEntry = executable('dsh')
+const pty = createRequire(dshEntry)('node-pty')
+
+// ── isolated profile ───────────────────────────────────────────────────────
+const sourceHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+const sourceProfile = join(sourceHome, 'profiles', 'dsh-tui')
+const root = mkdtempSync(join(tmpdir(), 'dsh-tui-baseline-'))
+const targetHome = join(root, '.dsh')
+const targetProfile = join(targetHome, 'profiles', 'dsh-tui')
+const modules = join(targetProfile, 'node_modules')
+mkdirSync(modules, { recursive: true, mode: 0o700 })
+// dsh-purge (when the profile bundles it) patches the GLOBAL dsh bin.js on
+// every start (autoApplyOnStart): a probe must never run it. Drop it from the
+// bundle list and the dependencies, and drop the profile's own patch layer,
+// whose rows only configure it.
+const PROBE_EXCLUDED = new Set(['dsh-purge'])
+const manifest = JSON.parse(readFileSync(join(sourceProfile, 'package.json'), 'utf8'))
+for (const name of PROBE_EXCLUDED) delete manifest.dependencies?.[name]
+if (Array.isArray(manifest.dsh?.profile?.bundles)) {
+  manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(name => !PROBE_EXCLUDED.has(name))
+}
+writeFileSync(join(targetProfile, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
+writeFileSync(join(targetProfile, 'cordis.patch.yml'), '[]\n')
+if (existsSync(join(sourceProfile, 'cordis.yml'))) cpSync(join(sourceProfile, 'cordis.yml'), join(targetProfile, 'cordis.yml'))
+// Every installed package stays a link; only dsh-tui is a real copy, so its
+// imports resolve through this profile's node_modules (one Cordis instance).
+for (const entry of readdirSync(join(sourceProfile, 'node_modules'))) {
+  if (entry === '@deepseek-harness-tui' || entry === '@anthropic-ai' || entry === '@deepseek-ai' || PROBE_EXCLUDED.has(entry)) continue
+  symlinkSync(join(sourceProfile, 'node_modules', entry), join(modules, entry), 'dir')
+}
+// A profile installed before DSH 0.2 can hold a schemastery without volatile
+// Config support, which the TUI refuses; take the host's own copy (what a
+// fresh profile install resolves) so the probe measures the boot, not a
+// stale profile.
+mkdirSync(join(modules, '@deepseek-ai'))
+const hostRequire = createRequire(dshEntry)
+for (const entry of readdirSync(join(sourceProfile, 'node_modules', '@deepseek-ai'))) {
+  const target = entry === 'schemastery'
+    ? dirname(hostRequire.resolve('@deepseek-ai/schemastery/package.json'))
+    : join(sourceProfile, 'node_modules', '@deepseek-ai', entry)
+  symlinkSync(target, join(modules, '@deepseek-ai', entry), 'dir')
+}
+const tuiPackage = join(modules, '@deepseek-harness-tui', 'dsh-tui')
+cpSync(join(sourceProfile, 'node_modules', '@deepseek-harness-tui', 'dsh-tui'), tuiPackage, { recursive: true, dereference: false })
+for (const dir of ['bin', 'lib']) {
+  rmSync(join(tuiPackage, dir), { recursive: true, force: true })
+  cpSync(join(repo, dir), join(tuiPackage, dir), { recursive: true })
+}
+mkdirSync(join(modules, '@anthropic-ai'))
+symlinkSync(realpathSync(join(repo, 'node_modules', '@anthropic-ai', 'claude-agent-sdk')), join(modules, '@anthropic-ai', 'claude-agent-sdk'), 'dir')
+const fallback = join(sourceHome, 'profiles', 'node_modules')
+if (existsSync(fallback)) symlinkSync(fallback, join(targetHome, 'profiles', 'node_modules'), 'dir')
+const launcher = join(tuiPackage, 'bin', 'dsh-tui.js')
+
+// ── one run ────────────────────────────────────────────────────────────────
+const COLS = 100
+const ROWS = 32
+async function run(index) {
+  rmSync(join(root, '.dsh-tui'), { recursive: true, force: true })
+  rmSync(join(root, 'sessions'), { recursive: true, force: true })
+  const trace = join(root, `trace-${index}.jsonl`)
+  const env = {
+    ...process.env,
+    HOME: root,
+    USERPROFILE: root,
+    DSH_HOME: targetHome,
+    DSH_TUI_SESSION_ROOT: join(root, 'sessions'),
+    DSH_TUI_WORKSPACE_TARGET: process.cwd(),
+    DSH_TUI_BACKEND: backend,
+    DSH_TUI_BOOT_TRACE: trace,
+    DSH_TUI_LANG: 'en',
+    DSH_TELEMETRY_MODE: 'DISABLED',
+    NODE_ENV: 'production',
+    TERM: 'xterm-256color',
+  }
+  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG']) delete env[key]
+  const terminal = new xterm.Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
+  const startedAt = Date.now()
+  const child = pty.spawn(process.execPath, [launcher], { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd: process.cwd(), env })
+  let exit
+  let output = ''
+  terminal.onData(data => { if (exit === undefined) child.write(data) })
+  child.onData(data => { output = (output + data).slice(-256 * 1024); terminal.write(data) })
+  child.onExit(event => { exit = event })
+  const screen = () => {
+    const buffer = terminal.buffer.active
+    return Array.from({ length: ROWS }, (_, row) => buffer.getLine(buffer.baseY + row)?.translateToString(true) ?? '').join('\n')
+  }
+  const discovery = join(root, '.dsh-tui', 'inject', 'servers.json')
+  const injected = () => {
+    try { return JSON.parse(readFileSync(discovery, 'utf8')).length > 0 } catch { return false }
+  }
+  const at = {}
+  const debug = process.env.PROBE_DEBUG === '1' ? setInterval(() => { console.error(`[probe] +${Date.now() - startedAt}ms bytes=${output.length} exit=${exit?.exitCode}`) }, 1000) : undefined
+  const watch = setInterval(() => {
+    if (at.inject === undefined && injected()) at.inject = Date.now() - startedAt
+    if (at.prompt === undefined && screen().includes('❯')) at.prompt = Date.now() - startedAt
+  }, 5)
+  const traced = name => existsSync(trace) && readFileSync(trace, 'utf8').includes(`"mark":"${name}"`)
+  try {
+    // The trace is the measurement; the screen columns are best effort (see
+    // the header: in some PTY setups the TUI paints nothing).
+    const ok = await settled(() => exit !== undefined || traced('render-done'), { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS ?? 90000) })
+    if (!ok || exit !== undefined) throw new Error(`run ${index}: no render (exit ${exit?.exitCode})\ntrace: ${existsSync(trace) ? readFileSync(trace, 'utf8') : 'none'}\nraw(${output.length}): ${JSON.stringify(output.slice(-1500))}`)
+    await settled(() => at.inject !== undefined && at.prompt !== undefined, { timeoutMs: 1500 })
+    child.kill('SIGTERM')
+    await settled(() => exit !== undefined, { timeoutMs: 10000 })
+  } finally {
+    clearInterval(watch)
+    if (debug !== undefined) clearInterval(debug)
+    if (exit === undefined) child.kill('SIGKILL')
+    terminal.dispose()
+  }
+  const marks = existsSync(trace) ? readFileSync(trace, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : []
+  const first = marks[0]
+  const result = { ...at }
+  if (first !== undefined) result['dsh-process'] = first.at - first.ms - startedAt
+  for (const mark of marks) result[mark.mark] ??= mark.at - startedAt
+  return result
+}
+
+const COLUMNS = ['dsh-process', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'render-start', 'render-done', 'inject', 'prompt']
+const results = []
+try {
+  for (let index = 0; index < runs; index += 1) {
+    const result = await run(index)
+    results.push(result)
+    console.log(`run ${index + 1}: ${COLUMNS.map(name => `${name}=${result[name] ?? '-'}`).join(' ')}`)
+  }
+} finally {
+  if (process.env.PROBE_KEEP === '1') console.error(`[probe] kept ${root}`)
+  else rmSync(root, { recursive: true, force: true })
+}
+const median = values => {
+  const sorted = values.filter(value => typeof value === 'number').sort((a, b) => a - b)
+  return sorted.length === 0 ? '-' : sorted[Math.floor(sorted.length / 2)]
+}
+console.log(`\nbackend=${backend} runs=${runs} (ms from spawn of the profile launcher, median)`)
+for (const name of COLUMNS) console.log(`  ${name.padEnd(20)} ${median(results.map(result => result[name]))}`)
+process.exit(0)

@@ -6,19 +6,17 @@
  * changes, and the git-branch breadcrumb. Each lookup degrades when its row
  * is not mounted, whatever backend serves the session.
  */
-import type { Context } from '@deepseek-ai/cordis'
-import { adapterRuntimeFor } from '../../../adapter/kernel/runtime-context.js'
 import type { AdapterRuntimeOptions } from '../../../adapter/kernel/runtime.js'
 import { readGrantStore } from '../../../adapter/standard/grants.js'
-import { getHostCommandTrees } from '../../command-trees.js'
+import { getHostCommandTrees, type TuiCommandTreeRuntime } from '../../command-trees.js'
 import { runForegroundShell, type ForegroundShell } from '../../compat/shell.js'
-import { installDecisionGuard, markDecisionDispatchTopology } from '../../decision-guard.js'
 import { getHostGrantStore } from '../../host-grants.js'
 import { getHostRenderers, type TuiRendererRuntime } from '../../renderers.js'
 import { getHostSceneRuntime, type TuiSceneRuntime } from '../../scenes.js'
-import { getHostSettingsSections, getLocalSettingsSectionsHost, type TuiSettingsSectionsRuntime } from '../../settings-sections.js'
+import { getHostSettingsSections, type TuiSettingsSectionsRuntime } from '../../settings-sections.js'
 import { getHostThemes, type TuiThemeRuntime } from '../../themes.js'
-import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from '../../workspaces.js'
+import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime, type TuiWorkspaceRuntime } from '../../workspaces.js'
+import type { ChannelHost, ServiceLookup } from '../channel-host.js'
 import type { ChannelOwner } from '../owner.js'
 import type { ChannelState } from '../types.js'
 
@@ -42,9 +40,9 @@ export interface CoreHost {
  * is effectful state, so it is owned at acquisition: a later construction
  * failure rolls it back.
  */
-export function resolveCoreHost(ctx: Context, owner: Pick<ChannelOwner, 'own'>): CoreHost {
-  const adapterRuntime = adapterRuntimeFor(ctx)
-  const themeHost = getHostThemes(ctx.get('tuiThemes') as TuiThemeRuntime | undefined)
+export function resolveCoreHost(host: ChannelHost, owner: Pick<ChannelOwner, 'own'>): CoreHost {
+  const adapterRuntime = host.runtime
+  const themeHost = getHostThemes(host.get('tuiThemes') as TuiThemeRuntime | undefined)
   // Backstop: the extensions row installs the decision-subscription gate,
   // but the channel is the dispatch path. A stale patch without that row (or
   // a bare embed mounting neither) would otherwise leave tui/input and
@@ -56,31 +54,31 @@ export function resolveCoreHost(ctx: Context, owner: Pick<ChannelOwner, 'own'>):
   // shadowed by an early snapshot.
   const fallbackGrantStore = readGrantStore(undefined, undefined, adapterRuntime)
   const currentGrantStore = (): ReturnType<typeof readGrantStore> =>
-    getHostGrantStore(ctx.get('tuiPluginHost')) ?? fallbackGrantStore
-  installDecisionGuard(ctx, currentGrantStore())
+    getHostGrantStore(host.get('tuiPluginHost')) ?? fallbackGrantStore
+  host.installDecisionGuard(currentGrantStore())
   // The channel is the real DecisionEvents dispatch path. Record that
   // topology so the live driver can distinguish "guard installed" (not a
   // live feature) from "events can actually be dispatched here".
-  owner.own(markDecisionDispatchTopology(ctx))
+  owner.own(host.markDecisionDispatchTopology())
   return {
     adapterRuntime,
     themeHost,
     // Workspace registry runtime (optional service, issue #183): mounted by
     // the bundle patch's dsh-tui-workspaces row; absent the row (stale patch
     // or a bare embedder), degrade to the local-only runtime.
-    workspaceService: getHostWorkspaceRuntime(ctx.get('tuiWorkspaces')) ?? createLocalWorkspaceRuntime(),
-    commandTrees: getHostCommandTrees(ctx.get('tuiCommandTrees')),
+    workspaceService: getHostWorkspaceRuntime(host.get('tuiWorkspaces') as TuiWorkspaceRuntime | undefined) ?? createLocalWorkspaceRuntime(),
+    commandTrees: getHostCommandTrees(host.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined),
     // Plugin scene runtime (optional, dsh-tui-scenes row): absent the row,
     // `pluginScene` simply stays undefined.
-    sceneRuntime: getHostSceneRuntime(ctx.get('tuiScenes') as TuiSceneRuntime | undefined),
+    sceneRuntime: getHostSceneRuntime(host.get('tuiScenes') as TuiSceneRuntime | undefined),
     // Falls back to the in-package local host when the composition's
     // service row is unavailable (issue #557).
     settingsSectionsRuntime: getHostSettingsSections(
-      ctx.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined,
-    ) ?? getLocalSettingsSectionsHost(ctx),
+      host.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined,
+    ) ?? host.localSettingsSections(),
     // Custom-entry text renderers (optional, dsh-tui-extensions row): absent
     // the row, unknown plugin event types stay invisible in the transcript.
-    rendererRuntime: getHostRenderers(ctx.get('tuiRenderers') as TuiRendererRuntime | undefined),
+    rendererRuntime: getHostRenderers(host.get('tuiRenderers') as TuiRendererRuntime | undefined),
     currentGrantStore,
   }
 }
@@ -115,7 +113,7 @@ export function startHostSubscriptions(
  * lands on a different cwd (/resume, /workspace, issue #96) so the
  * breadcrumb never shows the previous workspace's branch.
  */
-export function createGitBranchRefresher(ctx: Context, deps: {
+export function createGitBranchRefresher(services: ServiceLookup, deps: {
   owner: Pick<ChannelOwner, 'current'>
   state: Pick<ChannelState, 'cwd' | 'gitBranch' | 'emit'>
   /** Record the resolved branch against the bound session (the session
@@ -125,7 +123,7 @@ export function createGitBranchRefresher(ctx: Context, deps: {
   return () => {
     const { state } = deps
     state.gitBranch = undefined
-    const shell = ctx.get('shell') as ForegroundShell | undefined
+    const shell = services.get('shell') as ForegroundShell | undefined
     if (!shell) return
     // Capture the requested cwd: a /resume landing while this query is in
     // flight refreshes the branch for the new cwd, so a late reply from the

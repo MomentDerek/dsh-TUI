@@ -19,7 +19,6 @@
  * core alone: every action is backed by a capability, the core, or explicitly
  * unavailable.
  */
-import type { Context } from '@deepseek-ai/cordis'
 import { markChannelReadDirty } from '../../../adapter/channel/read-view.js'
 import type { AgentCapabilities } from '../../../adapter/ports/channel-capabilities.js'
 import type { AgentIdentity, AgentMessageSubmitInput, AgentMessageSubmitResult } from '../../../adapter/ports/channel-view.js'
@@ -61,6 +60,7 @@ import { createCoreReports } from './reports.js'
 import { createSessionControls, localCommandsFor } from './session-controls.js'
 import { createCoreSessionActions } from './sessions.js'
 import { createWorkspaceActions } from '../workspace-actions.js'
+import type { ChannelHost } from '../channel-host.js'
 import { createBackendOpener, createSessionSwitch, SESSION_MOUNT_LEDGER, type NewSessionOpener, type ResumeSessionOpener } from './session-switch.js'
 import { createAgentTrajectorySource } from '../../trajectory/agent-source.js'
 
@@ -129,7 +129,7 @@ export interface ChannelExtension {
 export type CoreChannel = ReturnType<typeof createCoreChannel>
 
 export function createCoreChannel(
-  ctx: Context,
+  channelHost: ChannelHost,
   initialSession: AgentSession,
   options: ChannelLaunchOptions,
   owner: ChannelOwner,
@@ -141,7 +141,7 @@ export function createCoreChannel(
   // first, so a throw anywhere later in construction still stops it. Replaced
   // sessions are closed by the binding at adoption.
   owner.own(() => { binding.releaseOwned() })
-  const host: CoreHost = resolveCoreHost(ctx, owner)
+  const host: CoreHost = resolveCoreHost(channelHost, owner)
 
   let extension: ChannelExtension = {}
   let started = false
@@ -295,8 +295,8 @@ export function createCoreChannel(
     localImageStore ??= createLocalImageStore(() => binding.session.capabilities.images?.limits ?? NO_IMAGES)
     return localImageStore
   }
-  const composer = createComposerImages(ctx, owner, { generation: () => state.agentBindingGeneration, localImages })
-  const files = createCoreFiles(ctx, {
+  const composer = createComposerImages(channelHost, owner, { generation: () => state.agentBindingGeneration, localImages })
+  const files = createCoreFiles(channelHost, {
     owner,
     binding,
     state: () => state,
@@ -305,7 +305,7 @@ export function createCoreChannel(
     // Read late: the session controls are built after the files.
     mcpServers: () => controls.mcpServers(),
   })
-  const inputDelivery = createInputDelivery(ctx, owner, binding, () => state,
+  const inputDelivery = createInputDelivery(channelHost, owner, binding, () => state,
     (...args) => notify(...args), trackPending, untrackPending, composer,
     () => currentSelection, (messageId, info) => selectionAttachments.remember(messageId, info),
     files.fallbackFs, localImages, () => contextRegistry.consume())
@@ -372,7 +372,7 @@ export function createCoreChannel(
     subscribe: emitter.subscribe,
     emit: emitter.emit,
     emitStream: emitter.emitStream,
-    ...createSettingsHosts(ctx, owner.assertActive),
+    ...createSettingsHosts(channelHost, owner.assertActive),
     ...createPreferences(() => state),
     /** Mount-owned settings namespace: the section registers under it, so this
      *  is the only ns whose section carries the TUI's user layer. */
@@ -434,7 +434,7 @@ export function createCoreChannel(
       const fence = mcpFence()
       const auth = fence.session.capabilities.auth
       if (auth === undefined) return undefined
-      const oauth = (ctx.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
+      const oauth = (channelHost.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
       const backend = state.backendCapabilities.backendLabel
       return { login: async present => {
         const login = auth.login?.bind(auth)
@@ -729,7 +729,7 @@ export function createCoreChannel(
   }
 
   const controls = createSessionControls({ state: () => state, backendLabel: () => state.backendCapabilities.backendLabel })
-  const feed = createBindingFeed(ctx, {
+  const feed = createBindingFeed(channelHost, {
     owner,
     binding,
     state,
@@ -795,7 +795,7 @@ export function createCoreChannel(
 
   /** `!!` commands on their way to the session (`/new` waits them out). */
   const shellInputs = { started: 0, inFlight: 0 }
-  const sessionSwitch = createSessionSwitch(ctx, {
+  const sessionSwitch = createSessionSwitch(channelHost, {
     owner,
     binding,
     state: () => state,
@@ -850,7 +850,7 @@ export function createCoreChannel(
     canOpen: options.openSession !== undefined && options.sessionCatalog !== undefined,
   })
 
-  const local = createCoreLocalActions(ctx, {
+  const local = createCoreLocalActions(channelHost, {
     owner,
     binding,
     state,
@@ -885,7 +885,7 @@ export function createCoreChannel(
     refreshGitBranch: () => refreshGitBranch(),
     notify,
   })
-  const refreshGitBranch = createGitBranchRefresher(ctx, {
+  const refreshGitBranch = createGitBranchRefresher(channelHost, {
     owner,
     state,
     noteBranch: branch => { extension.noteBranch?.(branch) },
@@ -973,13 +973,10 @@ export function createCoreChannel(
       // The startup session's history, read ahead of construction, paints
       // before any live event (an extension owning the facts replays its own).
       feed.bind(extension.bind?.ownsSessionFacts === true ? undefined : options.initialHistory)
-      // Cordis owns the Channel lifetime. Rebinding handles the common case;
+      // The host owns the Channel lifetime. Rebinding handles the common case;
       // this effect closes the final timer and releases the DecisionEvents
-      // dispatch-topology marker when the Channel's context unloads.
-      const effect = (ctx as Context & {
-        effect?: (setup: () => () => void, label?: string) => void
-      }).effect
-      effect?.call(ctx, () => () => {
+      // dispatch-topology marker when the host unloads the Channel.
+      channelHost.effect?.(() => () => {
         // The context owns the complete Channel lifetime. Keep emitter and
         // IDE-link teardown in the same finally funnel.
         state.releaseContributions()

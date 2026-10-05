@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AgentSession } from '../agent/session.js'
 import { createDshSession, isAgentSession } from './backend/session.js'
+import { cordisChannelHost } from './channel/cordis-host.js'
 import { createCoreChannel } from './channel/core/compose.js'
 import { attachDshExtensions } from './channel/extensions.js'
 import { attachSessionWorkingActivity } from './channel/session-activity.js'
@@ -37,7 +38,7 @@ export function createChannel(
   const owner = createChannelOwner()
   try {
     const session = isAgentSession(initial) ? initial : createDshSession(ctx, { agent: initial, handle: options.handle })
-    const core = createCoreChannel(ctx, session, options, owner)
+    const core = createCoreChannel(cordisChannelHost(ctx), session, options, owner)
     // DSH extensions attach only to a DSH session; other backends get the
     // core and whatever their session capabilities offer.
     const native = session.capabilities.native.dsh
