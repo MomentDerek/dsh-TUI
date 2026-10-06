@@ -503,7 +503,7 @@ ec48de22）。本节按时间记录每一步做了什么、发现了什么、设
 3. 在这台 WSL 上，用 node-pty 起的 TUI 只渲染空帧（每帧只有清屏）。已排除：本 checkout 的
    lib 与原版 0.13.0 一样；全新 HOME 与复制的真实偏好一样；fullscreen 与 inline 一样；
    直接起 profile 副本与经全局启动器一样；PTY 尺寸正常（100×32），没有崩溃日志。原因未查明；
-   时间点打点不依赖屏幕，所以基线仍有效。可见首帧要在真实终端里手测。
+   时间点打点不依赖屏幕，所以基线仍有效。可见首帧要在真实终端里手测。（**更正**：根因不是 PTY，而是隔离 profile 与全局安装的 dsh 组合时共享依赖路由出错，见「Phase 1 验收」一节的「DSH 空帧的根因」。）
 
 ### 2026-10-06 · Phase 1 spike：Claude 内核不组合 DSH profile 的上限
 
@@ -555,7 +555,7 @@ Claude 内核：交接里预期会撞的点全部已有降级——`registerBund
   约 700–750ms（模块 + 配置 + 首帧），后端打开的 630ms 与界面并行。
 - 环境发现 3 的范围缩小了：spike 下同一个 node-pty 能正常画出完整界面（启动台、输入框、
   状态栏），所以空帧只出现在「dsh-tui 启动器 → dsh」这条链上，与 TUI 渲染本身无关。原因
-  仍未查明。
+  仍未查明。（**更正**：根因不是 PTY，而是隔离 profile 与全局安装的 dsh 组合时共享依赖路由出错，见「Phase 1 验收」一节的「DSH 空帧的根因」。）
 
 **对设计的影响（待用户/chimney 决定）**：交接里的推论成立——Phase 1 需要的是「DSH 无关」，
 不是「Cordis 无关」。TUI 自己持有一个裸 Cordis 根就能跑，`tui*` 服务原样住在里面；5.1 的
@@ -665,10 +665,170 @@ dsh 启动链上。干净环境的绝对值待重测。
 3. Claude 内核下 `/restart`、`/update`（入口带 `profile`）。
 4. 启动期 `/quit` 与 Ctrl+C，确认没有遗留 `claude` 子进程。
 
+### 2026-10-06 · Phase 1 验收：tui-test 模拟终端
+
+（写于交接一节之后。）用 [microsoft/tui-test](https://github.com/microsoft/tui-test)
+（`@microsoft/tui-test` 0.1.0，devDependency）把交接清单 1–4 做成可重复的验收脚本
+`scripts/accept-host-entry.mjs`：PTY + 会应答终端查询（DA1、OSC 11 等）的屏幕模型，按
+屏幕文本、终端模式（alt screen、光标、bracketed paste、focus、鼠标）、退出码、启动打点和
+`restart.log` 断言。隔离 profile 的构建从探针抽到 `scripts/lib/isolated-profile.mjs`，
+`probe-startup-baseline.mjs` 改为共用。
+
+**怎么跑**：`pnpm compile && node scripts/accept-host-entry.mjs [--only a,b] [--keep] [--no-auth]`。
+非 CI 门禁；需要已安装的 dsh 与 dsh-tui profile、PATH 上的 `claude`、Linux/macOS（以
+`env -i` 启动，环境精确）。隔离 HOME 只**链接** `~/.claude/.credentials.json`（令牌刷新写回
+真实文件）并**拷贝** `~/.claude.json`；不发模型请求，`DSH_TUI_CLAUDE_LIVE=1` 才加一条
+`live-send`。慢启动 / 打开失败用一个假 `claude`（经指定 CLI 路径的环境变量接入，见脚本头部）：`--version`
+交给真 CLI，会话启动前按 `FAKE_CLAUDE_DELAY` 等待、`FAKE_CLAUDE_FAIL_FILE` 存在时退出 1。
+每个用例都查退出后的终端模式，并用唯一环境变量标记扫 `/proc/*/environ` 确认没有遗留进程。
+`-landing` / `-chat` 两种入口：新启动落在落地页（launchpad），`DSH_TUI_NO_LAUNCHPAD=1`
+直接进对话页——两处的 Enter 与命令是不同的代码路径，这次的几个缺陷都只在其中一边。
+
+**结果**（全部修复后，15 个用例，14 通过、1 失败）：
+
+| 用例 | 结果 | 说明 |
+| --- | --- | --- |
+| startup-fullscreen / startup-inline（60 列） | 通过 | 首帧约 1.4–1.5s；走入口不经 dsh；接管；`/quit` 恢复终端 |
+| startup-not-ready-landing / -chat | 通过 | 草稿保留、不排队、会话命令被拒且不执行、`/help` 放行；落地页上提示在 Tips 行 |
+| open-failed-landing / -chat | 通过 | 失败行 + `/new` 提示行（落地页自动收起）；`/new` 打开会话 |
+| initial-prompt-held | 通过 | 命令行首句到达入口，会话未就绪时不入队 |
+| quit / ctrlc / sigterm-while-starting | 通过 | 退出码、终端恢复、无遗留 claude 进程；SIGTERM 以信号结束、无安全模式提示 |
+| restart-landing / restart-chat | 通过 | 新入口进程起来并接管；不经 dsh |
+| kernel-to-dsh-landing / -chat | 通过 | 交给 dsh、DSH 画面出现、仍在 alt screen、旧进程 15s 后仍在监督、DSH 里 `/quit` 恢复终端 |
+| dsh-to-claude | 失败（已知 J，main 同样） | 重起到入口并接管 Claude 会话；但交接后已不在 alt screen（见 J） |
+
+**修复（均有回归）**
+
+- **A 落地页绕过启动期拦截。**落地页的 Enter 走 `Chat.tsx` 的 `closeLaunchpad`，直接
+  `channel.submit`，不经 `PromptInput` 的 `ready` 判定：启动期按 Enter 草稿被排进队列
+  （「Queued · delivered after the turn」），接管后也没发出；落地页上的参数段、动作按钮、
+  补全菜单直达 `runCommand`，非白名单命令照跑。修：`Chat` 加 `refusedAtStartup`，用在
+  `closeLaunchpad`（收起落地页之前，草稿留在原处）、`runCommand` 入口、落地页动作与菜单、
+  外部注入的 `submit`。回归：`verify-startup-adoption.tsx` 的屏幕级用例改为对话页 / 落地页
+  各跑一遍（38 项），去掉修复后落地页那组变红。
+- **B 退出后 bracketed paste 与 focus 上报被重新打开。**`finishExit` 的 `detachForShutdown`
+  只停渲染、不卸 React 树；收尾序列写完后的 150ms 等待里，一次迟到的提交挂载了 `useInput`，
+  `App.handleSetRawMode` 计数为 0 便重新开 raw 模式并写 `?2004h`、`?1004h`——shell 拿回
+  的终端开着这两项（bash 下切窗口会打出 `^[[I`/`^[[O`）。修：`App.detachForShutdown` 置闩，
+  其后的开启请求直接返回（对应的关闭见计数为 0 本就返回）。回归：`verify-exit-mouse-cleanup.tsx`
+  第 4 节，去掉修复后变红。入口路径复现；profile 路径在 PTY 下不挂 App（见下），无法验证，
+  但漏斗相同，判断同样存在。
+- **F 从落地页 `/restart`、`/kernel` 让旧进程崩溃。**`/restart` 的旧进程释放根、拉起替身后
+  留下来等它；落地页随命令收起，`Chat` 的求星弹窗 effect 重新布防，700ms 后定时器读
+  `channel.working`——channel UI 生命周期已结束，按设计抛「Channel UI lifetime has ended」，
+  旧进程以 7 退出，启动器弹「进入安全模式？」，替身却已接管，两者抢同一个终端。修（窄）：
+  该定时器读不到 channel 即放弃。验收 `restart-landing` 覆盖（修前 4/4 复现）。与内核无关。
+- **D 失败行的 `/new` 提示被吃掉。**notice 行渲染成单行分隔线标题，`startup-open-failed`
+  的第二行（`/new 重试 · /kernel 切换内核 · /quit 退出`）没有位置，错误信息一长就只剩截断的
+  第一行。修：拆成两条 notice（原因只取首行；提示单独一行，i18n `startup-open-failed-hint`）。
+- **G 入口收到 SIGTERM 后启动器弹安全模式。**入口收尾后以**数值** 143 退出，启动器只把
+  「被信号杀死」当信号结局，143 当成异常退出。dsh 自己对 SIGTERM 是收尾后退出 0，所以 main
+  上没有这个问题，是 Phase 1 引入的。修：`host-entry.ts` 收尾后摘掉处理器、用同一信号结束
+  自己（SIGHUP 同理；只摘自己的处理器，渲染器经 signal-exit 挂的清理照常运行），启动器原样
+  透传。
+
+- **H 命令行首句提示在入口路径下丢失（用户真实终端确认）。**`dsh-tui --backend claude "首句"`
+  两层原因：(1) `plugin.ts` 只从 `ctx.cmdlineArgs` 读首句，那是 dsh CLI 挂的，入口的裸根上
+  没有，首句恒为空（同文件另两处都有 `?? process.argv.slice(2)` 兜底，唯独这里漏了）；
+  (2) 即使读到，挂载时 `channel.submit` 交给的是占位会话，它按 5.3 拒收，消息停在 pending
+  显示「Queued」，接管后无人重投。修：补 argv 兜底；channel 未就绪时订阅、`ready` 后再提交
+  （启动会话接管，或打开失败后 `/new` 打开的会话）。连带：替身进程（/restart、/update、内核
+  切换）带着原应用参数重起，会把首句再发一次（推断 main 的 DSH 路径同样如此，未实测）——
+  `restartChildEnv` 给替身加 `DSH_TUI_LAUNCH_PROMPT_SENT=1`，plugin 见到即跳过首句。验收：
+  `initial-prompt-held`（不发请求：首句到达入口、未就绪时不入队）；`live-initial-prompt`
+  （`DSH_TUI_CLAUDE_LIVE=1`：首句发出、`/restart` 后不重发）。修复后用户在真实终端确认首句已发出。另注：用已发布的
+  0.13.0 跑 `dsh-tui --backend claude …` 会把 `claude` 当成首句的一部分发给 DSH——那个版本的
+  启动器还不认识 `--backend`（main 上已有、未发版），不是本分支的问题。
+
+- **I 内核切换（Claude → DSH）后旧进程崩溃、新界面被甩到后台（用户真实终端发现）。**F 的同类：
+  `Chat` 的迁移提示定时器在挂载 12s 后扫描其它 agent 的本地记录，近期用过（例如正在用 Claude
+  Code）就 `channel.notify`；此时旧进程已释放根、只是留下来监督替身，读失效 channel 抛错，旧
+  进程以 7 退出，启动器弹安全模式、结束等待，替身（入口 → dsh）成了后台孤儿，终端表现为卡住。
+  第二个实例说明逐个定时器打补丁不可靠，改为类级：进程级守卫（`update-overflow-guard.ts`）
+  加 `addProcessErrorAbsorber`，`runRestart` 释放根后登记一个只吸收「Channel UI lifetime has
+  ended」的吸收器并记进 restart.log（`supervisor: late UI read after dispose ignored`），其它
+  异常照旧崩溃。覆盖 /restart、/update 与内核切换，与内核无关（main 的 DSH 路径同样受益）。
+  回归：`verify-update-overflow-guard` A4b（吸收、未命中照旧重抛、注销）；验收
+  `kernel-to-dsh-*` 加「切换后 15s 旧进程仍在、无安全模式」（迁移提示是否触发取决于隔离 HOME
+  里有无近期 agent 活动，所以这条主要防回退）。复现：模拟终端里切换后 2–6s 内 code 7，修后
+  15s 进程链完整、restart.log 记一次吸收。
+
+- **C 落地页没有通知区（用户决定按建议修）。**启动期 Enter / 命令被拒、会话打开失败在落地页上
+  都是静默的；而新启动（非 resume）一律落在落地页，Phase 1「先挂载后打开」让「在落地页上等会话」
+  成了常态，打开失败时用户只看到一个永远不就绪的落地页。修：(1) 落地页新增 `notice` 属性，
+  Tips 行优先显示粘贴提示、其次 Chat 传入的最近一条 channel 通知（单行截断）；(2) channel 新增
+  只读 `startupFailure`（启动会话打开失败的原因，接管或 `/new` 后清空，`ChannelUi` 契约同步），
+  Chat 见到它就收起落地页，露出对话里的失败行与 `/new` 提示，落地页草稿移入对话输入框。用户
+  决定：启动期间落地页上的「设置」「会话与工作区」等整屏入口**仍按 5.3 白名单拒绝**（现在会在
+  Tips 行说明原因），不放开。回归：`verify-startup-adoption` 落地页一组加「提示在屏幕上」，新增
+  `launchpad-failed` 一组（失败行与 `/new` 提示在屏、草稿移入输入框；去掉修复后变红），共 43 项。
+
+**未修（用户决定暂不处理，或待决定）**
+
+- **E 落地页丢键（用户决定暂不修）。**同一批输入里的多个编辑键只生效一个（连按或按住退格只
+  删掉一部分；无头回归里也只能逐键喂）。不是 Phase 1 引入，影响按住重复键的用户。
+- **J DSH → Claude 切换闪屏，之后界面落在主屏（main 同样，待决定）。**原始字节：DSH 在 alt
+  screen 里写完「Starting Claude…」后，旧 dsh 进程释放根时卸载了 React 树，`AlternateScreen`
+  的卸载清理照常写 `?1049l`（旧进程不是替身，`adopting` 为假，不跳过）；替身按交接约定不再写
+  `?1049h`，于是画在主屏上，内容进 scrollback。关掉入口分流（`DSH_TUI_HOST_ENTRY=0`，即 main
+  的行为）同样复现，不是 Phase 1 引入。反方向（Claude → DSH）旧进程是入口、树不卸，没有这个
+  问题。修法方向：交接持有 alt screen 期间（`keepAltScreen`）让 `AlternateScreen` 的清理跳过
+  `EXIT_ALT_SCREEN`，标记要在释放根之前置上。验收 `dsh-to-claude` 的对应检查标为已知失败。
+- **F 的同类问题（监督阶段已由 I 类级处理）。**根因是退出漏斗结束 channel 生命周期但不卸 React 树（卸树会跑
+  `AlternateScreen` 的清理、写 `EXIT_ALT_SCREEN`，与内核切换时旧进程握住 alt screen 等替身的
+  设计冲突），所以任何在此之后触发、读 channel 的定时器都会让旧进程崩溃。这次只找到求星这一
+  个；类级修法可选：给 `ChannelUi` 加一个不抛错的存活查询供定时器自查，或在 detach 时卸树并让
+  `AlternateScreen` 的清理感知交接。
+- **启动器不转发 SIGTERM**（main 上同样如此）：`kill -TERM <启动器 pid>` 只结束启动器，子进程
+  （入口或 dsh）留在终端上。清单第 4 项因此改为对入口进程发信号验收。
+
+**DSH 空帧的根因（已查明，测试环境问题，不是产品缺陷）**：用户在真实终端里用隔离环境做
+默认（DSH）启动同样卡住，于是确认此前所谓「PTY 下 DSH 链只画空帧」与 PTY 无关。判别：把已安装
+的 0.13.0 原版放进同一个隔离 profile 也卡，换成本分支、发布文件对齐、schemastery 换回、预置真实
+偏好都不解决。原因在 dsh 的「profile 解析路由」（`@deepseek-ai/dsh-app-boot`，接管 Node 的
+模块解析，按 profile 安装时的解析表给共享依赖选副本）：手工拼的隔离 profile 与那张表对不上，
+从全局安装位置运行的 dsh 把真实 profile 里 `react-reconciler` 的 `require('react')` 路由到了
+**全局安装的 dsh-tui 启动器包里自带的 react**，进程里两份 React，树永远提交不了。同一份 dsh 只要
+`lib/` 不在全局安装位置下（`node_modules` 仍链回）就路由正确。dsh 自己安装的 profile 不受影响，
+所以用户的真实环境一直正常。修（测试侧）：`scripts/lib/isolated-profile.mjs` 新增 `dshBin`——
+在隔离根下放一份 `lib/` 拷贝（约 92K）加链接、一个 `dsh` 小脚本；验收脚本与启动探针把它放在
+PATH 最前。此后 DSH 一侧可以完整自动化：`kernel-to-dsh-*` 由「部分」升级为完整断言，新增
+`dsh-to-claude`。（顺带：本机全局 dsh 的 `lib/bin.js` 被 dsh-purge 插入了一段只在 `DSH_HOME`
+未设置时生效的 shim，与此事无关。）
+
+**交接清单完成度**
+
+| 项 | 状态 |
+| --- | --- |
+| 0 真实 pnpm 安装形态 | 用户决定暂不做（隔离 profile 是手工拼的，不能代替 `dsh plugin add`） |
+| 1 启动：首帧、还在启动、本地命令、就绪后发送、失败提示与 `/new` | 自动化（就绪后真实发送需 `DSH_TUI_CLAUDE_LIVE=1`）；落地页一侧见 C |
+| 2 `/kernel` 双向 | 自动化：两个方向的交接、画面、旧进程监督、退出恢复；Claude → DSH 无闪屏，DSH → Claude 有闪屏（J，main 同样） |
+| 3 `/restart`、`/update` | `/restart` 自动化；`/update` 涉网络与下载，未做 |
+| 4 启动期 `/quit`、Ctrl+C、`kill -TERM` | 自动化（TERM 发给入口进程，见上） |
+
+**验证**（全部修复后）：`pnpm build`（89 项门禁全过）、`verify:package`；聚焦回归
+`verify-startup-adoption`（43）、`verify-launchpad-onboarding-chat`（104）、`verify-launchpad`（210）、
+`verify-exit-mouse-cleanup`、`verify-update-overflow-guard`、`verify-handoff-pty-gate`、
+`verify-host-entry`（17）、`verify-launcher`、`verify-update`、`verify-shutdown-fallback`、
+`verify:initial-prompt` 通过。验收 15 个用例 14 通过，唯一失败是已知的 J（main 同样）。CI 组：
+input-terminal 全过；channel-ui 失败 `verify-activity-store`、`verify-settings-compat`、
+`verify-compaction-progress`、`verify-splash-font-setting`，render-scroll 失败 `verify-splash-eggs`、
+`repro-picker-windowing`——都在交接一节「main 上同样失败」的清单里。顺带改的测试夹具：
+`verify-launchpad-onboarding-chat` 的假 channel 改按契约提供会过期的通知对象（原为字符串数组，
+落地页读 `.text` 时为空），E5 改为「跳过提示先显示在 Tips 行、过期后首启文案回来」——此前这条
+提示在落地页上根本不可见；`verify-startup-argv`（`verify:initial-prompt`）的沙箱补上替身标记常量与
+已就绪的 channel。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
+>
+> **更新：测试已做，见上一节「Phase 1 验收：tui-test 模拟终端」**：修复 A–D、F–I（含落地页
+> 通知区 C、内核切换后监督进程崩溃的类级处理 I）；用户决定暂不做的：启动期放开整屏入口、E 落地页
+> 丢键、清单第 0 项；待决定：J（DSH → Claude 闪屏，main 同样）、启动器不转发 SIGTERM。原先
+> 「PTY 下 DSH 链只画空帧」已查明是隔离环境问题并修正了测试工具，DSH 一侧可完整自动化。
+> 下面的「下一步：测试」保留作记录。
 
 **提交（`feat/standalone-host`，均未 push）**
 
@@ -725,7 +885,7 @@ dsh 启动链上。干净环境的绝对值待重测。
   **全局** dsh 的 `lib/bin.js`，写坏后 `dsh`/`dsh-tui` 全部起不来（报找不到
   `profile-boot-BP_C0vpU.js`）。测试环境里排除它；若全局 dsh 被改坏，需要用户修复。
 - 本机 node-pty 下，经「dsh-tui 启动器 → dsh」链起的 TUI 只画空帧（原因未查明）；走本包入口
-  时画面正常。所以 PTY 自动化只能测入口路径，DSH 路径要在真实终端看。
+  时画面正常。所以 PTY 自动化只能测入口路径，DSH 路径要在真实终端看。（**更正**：根因不是 PTY，而是隔离 profile 与全局安装的 dsh 组合时共享依赖路由出错，见「Phase 1 验收」一节的「DSH 空帧的根因」。）
 - 以下失败在 main（ec48de22）上同样存在，与本分支无关：`verify-activity-store`、
   `verify-compaction-progress`、`verify-splash-font-setting`、`verify-settings-compat`、
   `verify-splash-eggs`、`repro-picker-windowing`；`verify-update-checksum` 是下载流计时断言，
