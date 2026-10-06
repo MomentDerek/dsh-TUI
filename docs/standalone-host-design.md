@@ -2,7 +2,8 @@
 
 [文档索引](README.md) · [架构与限制](architecture.md) · [多后端架构](agent-backend-design.md)
 
-状态：Phase 0 完成，Phase 1 进行中（原型分支 `feat/standalone-host`）。基于 `main`（ec48de22）与
+状态：Phase 0、Phase 1 完成，Phase 2 进行中（根模型已定单根）（原型分支 `feat/standalone-host`；规划见实施记录
+「Phase 2 规划」一节）。基于 `main`（ec48de22）与
 `@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。2026-10-06 修订分期：Phase 1 只做「DSH 无关」，
 TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 
@@ -133,6 +134,9 @@ channel 核心里还直接读 `ctx` 的位置（`CoreHost` 没盖住的）：`cr
 
 ### 5.1 TuiHost：把 CoreHost 补全
 
+> 2026-10-07：根模型选定**单根**（TUI 的根即 DSH 根，实施记录「Phase 2 第 2.2 块」），TuiHost 与
+> 桥接行不再必要；本节保留作两根方案的记录。
+
 > 2026-10-06 修订：TuiHost 推迟到 **Phase 2**。Phase 1 spike 证明 `plugin.ts` 的 `apply` 在裸
 > Cordis 根上零改动即可跑 Claude 内核，Phase 1 不需要「Cordis 无关」。TuiHost 真正必要的时刻
 > 是 Phase 2：`runProfile` 的 `boot()` 会另建一个 Cordis 根，两根并存时第三方插件在 DSH 根里
@@ -234,6 +238,10 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
 
 ### 5.4 DSH 后端：进程内 `runProfile`
 
+> 2026-10-07 修订：`runProfile` 的 `boot()` 必建新根，「用 `runProfile`」即两根；app-boot 已导出
+> `mountRootInclude` 等原语，「单根、复刻 `prepare`」成为候选。宿主 cordis 是嵌套副本，模块身份与
+> 解析劫持的先后是判别约束。见实施记录「Phase 2 规划」第 1–3 条与 2.2。
+
 - **用 `runProfile`，不拼底层原语。**它是 `@deepseek-ai/dsh` 的公开子路径导出；
   `scripts/run.ts` 用的 `boot()` 级原语已经漂过一次（引用了 0.2.0-rc.2 不再导出的
   函数）。
@@ -248,6 +256,9 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
   `resolvedProfile` 是否存在）；探测失败回退到现在的「spawn dsh」路径。
 
 ### 5.5 进程所有权与退出
+
+> 2026-10-07 修订：下文「没有新问题」只在单根下成立。`runProfile` 的 SIGTERM/SIGINT 处理与
+> `installFailLoud` 不可关闭，两根下与入口自己的处理器冲突，见实施记录「Phase 2 规划」第 4 条与 2.5。
 
 读 0.2.0-rc.2 的 `runProfile` 实现可以确认：现在的 TUI **已经**和它跑在同一个进程里
 （dsh 的 `bin.js` 就是调用 `runProfile`），它装的 SIGINT/SIGTERM 处理、
@@ -851,8 +862,234 @@ raw 模式）是同一道闩。顺带覆盖普通退出：迟到的重渲染不�
 render-scroll 79 项中失败的 `verify-splash-eggs`、`repro-picker-windowing` 是 main 上就有的
 既有失败。修在旧进程一侧，与入口分流无关，`DSH_TUI_HOST_ENTRY=0`（main 的路径）同样受益。
 
+### 2026-10-07 · Phase 2 规划：调研结论与分块
+
+（写于交接一节之后。）两份代码调研（宿主 dsh 0.2.0-rc.2 的 `runProfile`；`plugin.ts` 的分相与
+`ctx` 用法）推翻了正文的几个前提，先记结论，再给分块。**根模型（单根 / 两根）不在本节拍板，
+由 2.2 的 spike 定；TuiHost（5.1）的去留随之定。**
+
+**调研结论**
+
+1. **`runProfile` 必然两根。**签名 `runProfile({ environment, profile, resolvedProfile?,
+   fromDefaultProfile?, patchFiles, args, packageManager? }): Promise<{ ctx, shutdown }>`，
+   `boot()` 后即返回（不等应用退出）。`boot()` 永远 `new Context()`，不能传入已有根，唯一注入点
+   是组合前的 `prepare`。所以「用 `runProfile`」=「TUI 根与 DSH 根并存」= 要桥接 14 个 `tui*`
+   服务、决策守卫两边装、`tui/*` 事件两条总线、全部按 `compositionRoot(ctx)` 键的 WeakMap
+   （`adapterRuntimeFor`、`bindQuestionStore`、`bindApprovalStore`、`registerTuiChannel`、
+   各 `tui*` runtime、本地 settings sections、command attribution）。
+2. **单根的漂移面比 5.4 写的时候小。**`dsh-app-boot` 导出 `boot`、`mountRootInclude(ctx, …)`
+   （收调用方的 ctx）、`auditStartupEntries`、`installFailLoud`（可传假 `proc`、返回卸载函数）、
+   `PluginPackages`、`readProfilePatches`、`createRuntimeResolution`；`dsh-cmdline` 导出
+   `provideCmdline`。只有 `createProcessShutdown`（约 40 行）不导出。「TUI 自己的根当 DSH 根、
+   复刻 `prepare`」成为可比较的候选：`tui*` 服务、守卫、WeakMap 全部原样工作，第三方插件不需要桥。
+   代价是复刻 `runProfile` 的组合步骤（profileContext、launch environment、PluginPackages、
+   cmdline、代理、appReady、审计），跟 DSH 版本走。
+3. **模块身份是判别约束。**宿主 dsh 的 `cordis` 4.0.4 **嵌套**在
+   `@deepseek-ai/dsh/node_modules/` 下，`host-entry.ts` 用的是本包解析到的那份。两根模型下两份
+   cordis 几乎必然是两个模块实例（`Service`/`Context` 的 `instanceof`、跨根 `ctx.set`）；单根
+   模型下入口建根必须改用宿主 realpath 的 cordis。更深一层：`createRuntimeResolution`（app-boot
+   的解析劫持）在 `prepare` 里才装，Phase 2 下 TUI 模块在劫持**前**加载、DSH 侧插件在劫持**后**
+   加载，react / schemastery 可能被路由成两份——正是 Phase 1 验收里「两份 React、树提交不了」
+   那一类故障。
+4. **5.5「进程所有权没有新问题」不再成立。**`runProfile` 装 `SIGTERM → interrupt(0)`、
+   `SIGINT → interrupt(130)`（dispose 后 `process.exit`，超时 5s 强退）与 `installFailLoud`，
+   **不可关闭、不摘除**；入口自己也装了 SIGTERM/SIGHUP。两套并存时一次 SIGTERM 触发两个
+   dispose 再 `exit`，终端恢复与 fd 3 ACK 的顺序没有保证。另：`loadLayeredEnv`（把 `.env` 层写进
+   `process.env`）在 `bin.js` 里、不在 `runProfile` 里，入口要自己先调；`resolvedProfile` 仍会重写
+   `<profile.dir>/cordis.yml`（空根）；`args` 即 `ctx.cmdlineArgs`；`bin.js` 开头有一段按脚本位置
+   设 `DSH_HOME` 的 shim。
+5. **入口路径下全部 `tui*` 缺席。**`apply` 从不注册任何 `tui*` 服务，它们只由 patch 行
+   （`dsh-tui-workspaces` … `dsh-tui-extensions`，cordis.patch.yml 318–363）插入；Phase 1 入口里
+   走本地回退（`createLocalWorkspaceRuntime`、`getLocalSettingsSectionsHost`、channel 私有授权存储、
+   静态主题 JSON），插件对话框 / 状态 / 面板 / 场景关闭。`resolveCoreHost` 仍在构造时快照。
+6. **D1 的现状**：`createChannel` 只在构造时会话已是 DSH 时 `attachDshExtensions`；`adoptStartup`
+   接管的会话即使是 DSH 也不挂扩展；`core.extend` 在 `start` 后抛（compose.ts 924）；
+   `attachDshExtensions` 构造时读 `dshChannelBinding(core.binding).agent`，并把 ctx 传给约 20 个
+   动作工厂，监听 `commands/change`、`agent/request`、`inject(['jobs'])`。
+7. **今天用 TUI ctx 挂到 DSH 服务上的**：`ctx.plugin(toolAskUser)`、`system-prompt/assemble`、
+   问卷应答器、`approval/request` 与 `session/event` 监听、`startSessionMountHeartbeat`、
+   `refreshLastRunRecord`、退出漏斗对 `ctx.root.fiber` 的 dispose。两根模型下全部要改到 DSH ctx。
+8. **本仓库没有 `@deepseek-ai/dsh` 依赖**（不在 dependencies / devDependencies / `.pnpm`）；
+   `pnpm-workspace.yaml` 177、216 行的 app-boot / cmdline allowlist 仍是 0.1.x 旧范围。
+9. **Phase 1 遗留（待核实）**：退出漏斗崩溃分支的 `writeResumeMarkers`（plugin.ts 约 1786 行）
+   无条件 `ctx.agents.get(...)`，裸根上 `ctx.agents` 不存在，Claude 内核经入口崩溃时会在收尾里
+   二次抛，可能吞掉崩溃行或打乱终端恢复。2.1 之前用一条无头复现确认再修。
+
+**分块**（每块完成即在本节下追加记录；正文 5.1 / 5.4 / 5.5 / §4 / 第 7 节随实现修订）
+
+| 块 | 内容 | 验收 |
+| --- | --- | --- |
+| 2.0 | 核实并修上面第 9 条 | 无头复现：入口路径下渲染期抛错，退出码、崩溃行、终端恢复 |
+| 2.1 | **D1，与根模型无关**：`adoptStartup` 接管时允许挂一次扩展（`extendOnAdopt` 之类的单次窗口，`start` 后其余 `extend` 仍抛）；`attachDshExtensions` 对 `binding.agent` 的读取延后到挂载时；扩展收的 ctx 与 channel host 分开传 | `verify-backend-channel` / `verify-startup-adoption` 加「占位会话 → 接管 DSH 会话 → 扩展动作可用（model / mode / resume / 审批）」，假 ctx 无头；失败即触发 D2 讨论 |
+| 2.2 | **根模型 spike（时间盒，两条都做）**。单根：入口用宿主 cordis `new Context()` → 渲染 → 复刻 `prepare` → `mountRootInclude` 挂 dsh-tui profile，看 `tui*` 行能否插进已渲染的根、审计是否通过、复刻了多少非导出内部。两根：`runProfile` 起 DSH 根，桥接行把 TUI 根的 `tuiPanels` 同名暴露进 DSH 根，一个示例插件 `inject: ['tuiPanels']` 注册面板并在卸载时随 fiber 清理 | 判别项：(a) 在真实 profile 里从本包与从宿主 dsh 分别 resolve cordis / react / schemastery，劫持装上前后各一次，是否同路径、单实例；(b) 同步冻结时长（6.1）；(c) 复刻 / 桥接的代码量与依赖的非公开接口数。结论与数字写进本节，由用户决定根模型 |
+| 2.3 | plugin.ts 拆分：DSH 专属相（预设、问卷 / 提示接缝、`resolveAgent`、工作区挂接、活动 / 上下文 store、审批、心跳、退出漏斗的 DSH 分支）抽成 `openDshStartup(dshCtx, …)`；`dsh-tui` 行「有入口槽就只做 DSH 侧、无槽走旧路径」——同时回答第 10 节第 4 条 | profile 路径（`DSH_TUI_HOST_ENTRY=0`）行为零变化：CI 组与现有聚焦回归 |
+| 2.4 | 入口 DSH 路径：能力探测成功时进程内加载，失败或 `DSH_TUI_HOST_ENTRY=0` 时照旧 `delegateToDsh`；冻结前画「正在启动 DSH」静态态；入口先调 `loadLayeredEnv`、保留 `DSH_HOME` shim 语义、应用参数进 `cmdlineArgs` | `probe-startup-baseline --backend dsh --entry host`：首帧对比 Phase 0 基线与预载分支 |
+| 2.5 | 信号 / 退出所有权（第 4 条）：单根下由入口统一装；两根下入口在 `runProfile` 前摘自己的处理器，DSH fiber dispose 的 effect 先走 TUI 退出漏斗 | `accept-host-entry.mjs` 加 DSH 内核用例：SIGTERM / `/quit` / Ctrl+C / `/kernel` 两向 / `/restart`，终端恢复、ACK、无遗留进程 |
+| 2.6 | 契约与门禁：`@deepseek-ai/dsh/profile-boot`（或单根所需的 app-boot / cmdline 导出）进 `contract.ts` 与能力探测；宿主 realpath import 只许在 `src/dsh-adapter/`（`verify:boundary`）；allowlist 旧范围 | `verify:contract` 覆盖探测与回退；加依赖本身是第 10 节第 7 条，**等维护者决定** |
+| 2.7 | 验收：第三方插件三样例（主题、面板、`tui/input` 拦截）在新路径下工作；单实例断言（cordis、react） | 写进 `accept-host-entry.mjs` |
+
+顺序：2.0 → 2.1 与 2.2 并行（2.1 不依赖根模型，且最早给出 D1/D2 的实证）→ 用户定根模型 →
+2.3 → 2.4 / 2.5 → 2.6 / 2.7。单根若成立，5.1 的 TuiHost 与「桥接行」会像 Phase 1 那样不再必要，
+2.3 退化为「`dsh-tui` 行在入口槽存在时跳过渲染、把 DSH 会话交给已挂载的 channel」；两根则按
+正文第 3 节终态做。
+
+### 2026-10-07 · Phase 2 第 2.1 块：DSH 扩展晚挂（D1）
+
+（写于交接一节之后。）**结论：D1 可行，不触发 D2。**`extensions.ts` 的逻辑没改（只改注释）。
+
+- `core/compose.ts`：新增单次窗口 `extendOnAdopt(hook)`（只能在 `start` 前注册一次）；`extend`
+  的守卫改为 `started && !adoptWindow`。`start()` 里内联的动作表抽成 `coreDelegates()` +
+  `installActions(replace)`——`commandCompletions` 在安装时按 `extension.completions` 计算，晚挂后
+  必须重装。`attachOnAdopt(candidate)`：取出并清空钩子 → 开窗、调钩子、关窗 → 扩展有变化则
+  `installActions(true)` 并跑新扩展的 `start.before/after`。位置在 `adoptStartup` 尾段
+  `controls.reset()` 之后、`ready = true` 与 `feed.bind` 之前。
+- `action-readiness.ts` 加 `reinstall`；`core/actions.ts` 的 `installChannelActions` 加 `replace`。
+- `core/session-switch.ts`：`createBackendOpener` 加可选 `attach(candidate)`，`adoptWith` 在
+  `resetControls()` 后、`bind` 前调用——启动失败后 `/new`、`/resume` 打开的 DSH 会话同样挂扩展。
+- `channel.ts`：构造时即 DSH 会话照旧（profile 路径零变化）；否则有 `options.startup` 时注册
+  `extendOnAdopt(adopted 为 DSH 时 attachDshExtensions(core, ctx, …))`。扩展用的 Cordis ctx 只在
+  这一行传入，两根模型下换成 DSH 根的 ctx 即可。
+
+**关键取舍**
+
+- `binding.agent` 等的「延后读取」靠延后调用实现：`attachDshExtensions` 在 `binding.adopt` 尾段
+  运行，此时 binding 已指向 DSH 候选会话，约 20 个工厂的读取天然是挂载时读取。
+- 尾段顺序是硬约束：核心先写身份、cwd、能力快照、命令表，再挂扩展，扩展写的值（`agentId =
+  agent.id`、DSH 能力、带标注的命令表、`subagentControl` / `jobControl`）总是赢；挂在 `feed.bind`
+  之前，扩展的 `agent/request` 监听与 bind 钩子早于会话第一个事件。扩展挂载时自己重放
+  `rawHistory`，`ownsSessionFacts` 为真，`feed.bind(history)` 忽略 seed，不重复绘制。
+- 与构造路径的一处顺序差异：晚挂时 `start.before` 在 `startHostSubscriptions` 之后（只有 settings
+  sections、scenes 两项订阅，已核对无关）。
+- 挂扩展抛错按既有尾段失败处理（关候选、`owner.dispose()`，最终 unhandled rejection，响亮）。
+
+**5.3 延后字段逐项**：`backendLabel`——由扩展覆盖，不用改（但启动失败行在挂扩展前取值，DSH
+占位会话要在 2.4 传 `backendLabel`，否则显示小写 `dsh`）；`messaging` / `subagentControl.history`
+——Phase 1 已按会话构造，DSH 整体替换；`defaultOpeners`——opener 活读
+`extension.newSession ?? defaultOpeners`，挂上后下一次 `/new` 自动走 DSH；`snapshotOf` 的
+`dsh:false`——靠尾段顺序由扩展覆盖；working-activity——按 bind 判断，晚挂的 DSH `bind` 整体替换
+它的 `onBind`，与 profile 路径等价（DSH 会话本就不挂它）。
+
+**窗口语义**：在第一次成功接管真会话时消耗（启动接管或失败后的 `/new` / `/resume`）；启动期
+`/new` 抢先则 `/new` 消耗、迟到的启动会话照旧被 `prepare` 关掉；首个会话是 Claude 也消耗，之后
+`extend` 照抛。
+
+**回归**：`verify-backend-channel.ts` +15 项（176 → 191）：占位会话接管 DSH 会话 8 项（agent id
+刻意不等于 session id；能力快照与命令表与构造时 DSH channel 逐字节相同；listModels / providers /
+presets / efforts / resumeTo / permissionPresets / agentViewRows / cycleMode 的结果与提示一致）；
+失败后 `/new` 打开 DSH 会话 3 项；窗口语义 3 项。去掉修复后三组分别变红（去掉 `channel.ts` 钩子 →
+`agentId` 错；去掉 opener `attach` → `/new` 组红；去掉 `installActions(true)` → 动作提示变成核心的
+「Not supported by this kernel」）。
+
+**验证**：`pnpm build`（89 项门禁）通过（中途一次 `verify:overlay-occlusion`、`verify:btw` 在并行
+负载下红，单跑各 3/3 绿、最终 build 绿）；channel-ui 组 147 项失败 4 项，均在既有失败清单内；
+`verify-startup-adoption`（43）、`verify-channel-composition` 通过。
+
+**遗留（交给后续块）**
+
+1. 两根模型下：`attachDshExtensions` 还从 core 的 `ChannelHost`（TUI 侧）读 `adapterRuntime`、
+   `workspaceService`、`commandTrees`、`currentGrantStore`，要跟着改；单根不用。
+2. 2.4：DSH 占位会话传 `backendLabel`；失败后首个 `/new` 经 `options.openSession` 打开，绕过 DSH
+   扩展 `newSessionOpener` 的 preset、mount 预留与工作区所有权——DSH 内核的 `openSession` 要自己处理。
+3. 新用例在裸 ctx（无 llm / agents 服务）上证明「走 DSH 实现且与构造路径等价」，真实服务下的晚挂
+   留到 2.4 / 2.5 验收。
+
+### 2026-10-07 · Phase 2 第 2.2 块：根模型 spike
+
+（写于交接一节之后。）spike 代码一次性，留在 worktree
+`/home/moment/Code/working/dsh-TUI/.claude/worktrees/agent-aeb8deb9c2504a266`（未提交）的
+`scripts/spike-2.2/`：`measure-identity.mjs`、`single-root.mjs` / `run-single.mjs`、`two-root.mjs` /
+`run-two.mjs`；`plugin.ts` 只在 `apply` 顶部加了一个 `__DSH_TUI_SPIKE_SLOT__` 槽。A、B 都跑在隔离
+profile 上（`isolated-profile.mjs` 的 `dshBin`，排除 dsh-purge）；真实 profile 只做只读解析，未被
+写入（mtime 已核）。机器：3 亿次空循环空载约 1.8s。**spike 建议单根；待用户决定。**
+
+**C(a) 模块身份**
+
+| 包 | 从 profile 内的 dsh-tui 解析（劫持前 = 劫持后） | 从宿主解析 |
+| --- | --- | --- |
+| cordis | 宿主嵌套那份（经 `~/.dsh/profiles/node_modules` 链接） | 同一份 |
+| react / react-reconciler | profile 本地 19.3.0 | 宿主不用 react |
+| schemastery | 真实 profile 本地 3.18.2；隔离 profile 为宿主 3.18.4 | 宿主 3.18.4 |
+
+- 产品形态下 cordis 只有一个模块实例；react 只有一份（宿主解析表里 react 指向全局 dsh-tui 启动器包
+  自带的那份，但 profile 内模块先命中本地）。schemastery 在真实 profile 上本就两版本两实例（`.cjs`
+  与 `.mjs` 各一份），今天的 dsh 路径同样如此，不是新问题。正文 5.4 担心的「两份 cordis」只在
+  worktree 开发布局里出现。
+- **新发现（Phase 1 就有）**：profile 的 `pnpm-workspace.yaml` 是 `autoInstallPeers: false`，profile
+  里没有任何 `@deepseek-ai/*` peer。去掉 `<DSH_HOME>/profiles/node_modules`（本机此目录 9 月 18 日
+  建、全是宿主依赖的 scoped 链接，创建者**未确认**）后，劫持前解析 cordis 得 `ERR_MODULE_NOT_FOUND`，
+  Phase 1 的 `plugin.js` 报 `Cannot find package '@deepseek-ai/dsh-session'`。即：**Phase 1 入口在
+  没有这个链接目录的机器上起不来**；入口必须先装宿主的解析劫持（`PluginPackages`），再 import 任何
+  TUI 模块。单根、两根都要这样做，也顺带修掉这个问题。「先挂界面、再复刻 prepare」的顺序因此改为
+  「先劫持、再挂界面、再组合」。入口装一次劫持、`runProfile` 再装一次，实测不报错。
+
+**A 单根：端到端跑通**
+
+顺序：宿主 realpath 的 cordis `new Context()` → 复刻 `boot()` 前置四步（`ctx.baseUrl`、
+`provide('dshHomePath')`、`internal/update` 的 prepend 全局监听、`plugin(Loader)`）→ 复刻 `runProfile`
+的 prepare（`PluginPackages` 劫持等）→ import TUI 模块、Phase 1 的 `apply` 渲染（Claude 内核，假
+claude，打开失败）→ 同一根上 `mountRootInclude` → `loader.await` → `auditStartupEntries`。
+
+- 屏幕上是完整界面（启动台、失败行与 `/new` 提示、输入框、状态栏）；审计通过；13 个 `tui*` 行服务
+  全部插进已渲染的根；dsh-tui 行经槽跳过渲染，拿到的就是入口的根，`agents.create` 成功。
+- 首帧（从 spike 模块开始执行算）：宿主模块 39ms；劫持链约 217ms（`createRuntimeResolution` 约
+  60ms，真实 profile 上 185ms；`PluginPackages` 约 30ms）；TUI 模块图 675–754ms；渲染完成约
+  990–1105ms。真实环境估计多 300–350ms 劫持前置，仍早于 Phase 1 入口的约 1.35s。
+- 唯一注册冲突：入口 `apply` 自己 `new UserQuestionService(ctx)`（plugin.ts 约 369 行），profile 的
+  `user-questions` 行随之报 `service "userQuestions" has been registered`（非必需行，审计只警告）；
+  同处 `ctx.plugin(toolAskUser)` 可能与 profile 的 ask-user 行重复。归 2.3。
+- 未测：构造时快照的服务（`resolveCoreHost` 的 `tuiThemes` 等、plugin.ts 约 505 / 2079 行的
+  `tuiStatus` 等）在组合后需要重新解析（`tuiPanels` 走模块级 store，不受影响）；入口 channel 接管
+  DSH 会话（2.1 已做 channel 侧，真实根下归 2.3 / 2.4）。
+- 开放项：UI 模式下根收尾约 20s（headless 46ms），卡在建会话之后、`fiber.dispose` 附近，原因未查，
+  判断与根模型无关，2.5 要查。
+
+**B 两根：能接上，代价是结构性的**
+
+- 产品形态（同一份 cordis、同一份 dsh-tui 模块）：朴素 `provide` + `set` 能把服务放进 DSH 根，但示例
+  插件 `register` 被 TUI 自己的守卫拒绝（`tuiPanels.register requires a live non-root plugin
+  activation`）。2a 每个调用方在 TUI 根开 fiber：`tuiCtx.plugin` 抛 `root.plugin is unavailable from
+  a plugin activation`，改用内部 `withHostRootCapability` 才通，且注册结果晚一个 tick（同步 API 语义
+  变了）；2b 共享桥接 fiber 同步转发：DSH 插件的 ALS 令牌被判 stale；2c 在 2b 上加
+  `AsyncResource.bind` 重入：通。2a / 2c 的注册都随示例插件 fiber dispose 清掉。
+- **能用的桥全部丢插件身份**（pluginId 变成兜底的 `act1`/`act2`）：每插件配额、effect ledger 归属、
+  `tuiPluginStorage` 按身份分的命名空间都会错——正确性问题。
+- `runProfile` 给 SIGTERM、SIGINT、unhandledRejection、uncaughtException 各加 1 个匿名监听，摘不掉
+  （实测 0 → 1）。单根不调 `runProfile`，`installFailLoud` 由入口装并可卸载。
+- 推广工作面：`tui*` 服务实际 **15 个**（比正文多 `tuiToast`、`tuiMessageObserver`、
+  `tuiPluginStorage`），约 60 个公开方法，桥接本体估 600–900 行；另需身份转发、守卫语义重定义（61 处
+  调用点 / 17 个文件）、根映射（`compositionRoot` 37 处 / 23 个文件）、6 个 `tui/*` 决策事件双总线。
+
+**C(b) 同步冻结**（10ms 打点最大间隔，`monitorEventLoopDelay` 对照）：A headless 组合 1295–1436ms、
+最大单段 803–904ms（含首次加载 TUI 模块图）；A-UI（TUI 已加载）组合 984–1075ms、最大单段
+764–844ms；B profile 组合 830–879ms、最大单段 647–691ms（B 禁了 dsh-tui 与 panels 两行，不对等）。
+**冻结由 DSH 插件图同步加载决定，单段 0.65–0.9s，与根模型无关**（6.1 不变）。
+
+**C(c) 代码量（单根）**：spike 胶水约 45 行；对应上游逻辑约 210 行（`runProfile` 约 65、
+`composeProfile` 约 12、`createAppReady` 约 20、`createProcessShutdown` 约 55、`boot()` 约 57）；
+生产版估 140–160 行。需手抄的未导出：`createProcessShutdown`、`createAppReady`、`composeProfile`、
+`boot()` 前置四步。须从宿主嵌套 `node_modules` 按 realpath 取的公开包 8 个：cordis、dsh-app-boot、
+cordis-plugin-loader（须与 app-boot 同实例，经 app-boot 的 `createRequire` 解析）、dsh-home-paths、
+dsh-launch-environment、dsh-cmdline、dsh-http-proxy、`dsh/profile-boot`。用到的导出：
+`loadLayeredEnv`、`createRuntimeResolution`、`PluginPackages`、`installFailLoud`、
+`readProfilePatches`、`mountRootInclude`、`auditStartupEntries`、`prepareProfile`、`INSTALL_ANCHOR`、
+`PROFILE_ROOT_FILENAME`。
+
+**单根的风险**：复刻面随 DSH 版本漂移（约 210 行上游逻辑，需进 `verify:contract` 版本线与能力探测）；
+8 个宿主嵌套包按 realpath 取；首帧多 300–350ms 劫持前置；已渲染界面对快照服务要重新解析；真实根
+下的会话接管未验证。
+
+**决定（2026-10-07，用户）：选单根。**下面的影响据此生效，正文 5.1 / 5.4 / 5.5 / 第 3 节在 2.3 起随实现修订。
+
+**单根对设计与后续块的影响**：5.1 TuiHost 与第 3 节的桥接行不再必要；5.4 改为「复刻 prepare +
+`mountRootInclude`」；5.5 恢复「进程所有权归入口」；2.3 退化为「去掉入口自注册的
+`userQuestions` / `toolAskUser`、快照服务改实时解析、`dsh-tui` 行在入口槽存在时只把 DSH 会话交给已
+挂载的 channel」；入口顺序改为「劫持 → 挂界面 → 组合」，Claude 内核也走劫持（顺带修掉 profiles
+链接目录依赖）。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
+> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.1（D1）已提交；2.2 spike 后用户选定单根，下一步 2.0 / 2.3。**
+>
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
 >
