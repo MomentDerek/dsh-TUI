@@ -6,8 +6,8 @@
  *
  * Requires the installed dsh and dsh-tui profile (like
  * verify-installed-startup.mjs) and the host's node-pty. Copies the profile
- * into an isolated HOME, swaps the dsh-tui package's `bin/` and `lib/` for
- * this checkout's, links this checkout's Claude Agent SDK in, and starts the
+ * into an isolated HOME (scripts/lib/isolated-profile.mjs: this checkout's
+ * `bin/` and `lib/`, its Claude Agent SDK linked in), and starts the
  * profile launcher in a PTY with `DSH_TUI_BOOT_TRACE`. Each run waits for the
  * post-render injection endpoint and the painted prompt, then sends /quit.
  * Never submits a model request and never touches the real profile; the
@@ -28,12 +28,12 @@
  * final screen on stderr), PROBE_KEEP=1 (keep the isolated
  * root and print its path).
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { homedir, tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import xterm from '@xterm/headless'
+import { buildIsolatedProfile } from './lib/isolated-profile.mjs'
 import { settled } from './lib/term-test.mjs'
 
 const args = process.argv.slice(2)
@@ -50,66 +50,8 @@ const entryMode = option('--entry', 'host')
 if (entryMode !== 'host' && entryMode !== 'profile') throw new Error(`--entry host|profile, got ${entryMode}`)
 const runs = Number(option('--runs', '5'))
 const repo = fileURLToPath(new URL('..', import.meta.url))
-if (!existsSync(join(repo, 'lib', 'types', 'index.js'))) throw new Error('run pnpm compile first')
-
-const executable = name => {
-  const path = (process.env.PATH ?? '').split(delimiter).map(dir => join(dir, name)).find(existsSync)
-  if (path === undefined) throw new Error(`missing launcher: ${name}`)
-  return realpathSync(path)
-}
-const dshEntry = executable('dsh')
+const { root, dshHome: targetHome, launcher, dshEntry, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-baseline-' })
 const pty = createRequire(dshEntry)('node-pty')
-
-// ── isolated profile ───────────────────────────────────────────────────────
-const sourceHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
-const sourceProfile = join(sourceHome, 'profiles', 'dsh-tui')
-const root = mkdtempSync(join(tmpdir(), 'dsh-tui-baseline-'))
-const targetHome = join(root, '.dsh')
-const targetProfile = join(targetHome, 'profiles', 'dsh-tui')
-const modules = join(targetProfile, 'node_modules')
-mkdirSync(modules, { recursive: true, mode: 0o700 })
-// dsh-purge (when the profile bundles it) patches the GLOBAL dsh bin.js on
-// every start (autoApplyOnStart): a probe must never run it. Drop it from the
-// bundle list and the dependencies, and drop the profile's own patch layer,
-// whose rows only configure it.
-const PROBE_EXCLUDED = new Set(['dsh-purge'])
-const manifest = JSON.parse(readFileSync(join(sourceProfile, 'package.json'), 'utf8'))
-for (const name of PROBE_EXCLUDED) delete manifest.dependencies?.[name]
-if (Array.isArray(manifest.dsh?.profile?.bundles)) {
-  manifest.dsh.profile.bundles = manifest.dsh.profile.bundles.filter(name => !PROBE_EXCLUDED.has(name))
-}
-writeFileSync(join(targetProfile, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-writeFileSync(join(targetProfile, 'cordis.patch.yml'), '[]\n')
-if (existsSync(join(sourceProfile, 'cordis.yml'))) cpSync(join(sourceProfile, 'cordis.yml'), join(targetProfile, 'cordis.yml'))
-// Every installed package stays a link; only dsh-tui is a real copy, so its
-// imports resolve through this profile's node_modules (one Cordis instance).
-for (const entry of readdirSync(join(sourceProfile, 'node_modules'))) {
-  if (entry === '@deepseek-harness-tui' || entry === '@anthropic-ai' || entry === '@deepseek-ai' || PROBE_EXCLUDED.has(entry)) continue
-  symlinkSync(join(sourceProfile, 'node_modules', entry), join(modules, entry), 'dir')
-}
-// A profile installed before DSH 0.2 can hold a schemastery without volatile
-// Config support, which the TUI refuses; take the host's own copy (what a
-// fresh profile install resolves) so the probe measures the boot, not a
-// stale profile.
-mkdirSync(join(modules, '@deepseek-ai'))
-const hostRequire = createRequire(dshEntry)
-for (const entry of readdirSync(join(sourceProfile, 'node_modules', '@deepseek-ai'))) {
-  const target = entry === 'schemastery'
-    ? dirname(hostRequire.resolve('@deepseek-ai/schemastery/package.json'))
-    : join(sourceProfile, 'node_modules', '@deepseek-ai', entry)
-  symlinkSync(target, join(modules, '@deepseek-ai', entry), 'dir')
-}
-const tuiPackage = join(modules, '@deepseek-harness-tui', 'dsh-tui')
-cpSync(join(sourceProfile, 'node_modules', '@deepseek-harness-tui', 'dsh-tui'), tuiPackage, { recursive: true, dereference: false })
-for (const dir of ['bin', 'lib']) {
-  rmSync(join(tuiPackage, dir), { recursive: true, force: true })
-  cpSync(join(repo, dir), join(tuiPackage, dir), { recursive: true })
-}
-mkdirSync(join(modules, '@anthropic-ai'))
-symlinkSync(realpathSync(join(repo, 'node_modules', '@anthropic-ai', 'claude-agent-sdk')), join(modules, '@anthropic-ai', 'claude-agent-sdk'), 'dir')
-const fallback = join(sourceHome, 'profiles', 'node_modules')
-if (existsSync(fallback)) symlinkSync(fallback, join(targetHome, 'profiles', 'node_modules'), 'dir')
-const launcher = join(tuiPackage, 'bin', 'dsh-tui.js')
 
 // ── one run ────────────────────────────────────────────────────────────────
 const COLS = 100
@@ -121,6 +63,8 @@ async function run(index) {
   const env = {
     ...process.env,
     HOME: root,
+    // The relocated dsh first (see scripts/lib/isolated-profile.mjs).
+    PATH: `${dshBin}${delimiter}${process.env.PATH ?? ''}`,
     USERPROFILE: root,
     DSH_HOME: targetHome,
     DSH_TUI_SESSION_ROOT: join(root, 'sessions'),
@@ -190,7 +134,7 @@ try {
   }
 } finally {
   if (process.env.PROBE_KEEP === '1') console.error(`[probe] kept ${root}`)
-  else rmSync(root, { recursive: true, force: true })
+  else rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }) // a CLI that just got TERM may still be writing
 }
 const median = values => {
   const sorted = values.filter(value => typeof value === 'number').sort((a, b) => a - b)
