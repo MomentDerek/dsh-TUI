@@ -19,6 +19,9 @@
  *    present) preceding EXIT_ALT_SCREEN.
  * 4. A useInput mounting after detachForShutdown does not re-enter raw mode
  *    (no bracketed-paste / focus-reporting enable after the exit cleanup).
+ * 6. An <AlternateScreen> removed after detachForShutdown (a late render
+ *    throwing into the root error boundary) writes no EXIT_ALT_SCREEN: the
+ *    DSH → Claude kernel switch keeps the alt screen for the replacement.
  */
 import React from 'react'
 import { closeSync, openSync, readFileSync } from 'node:fs'
@@ -247,6 +250,41 @@ const sleep = (ms: number): Promise<void> =>
   const sink = new PassThrough() as unknown as NodeJS.WriteStream
   const empty = serializeDiff({ stdout: sink, stderr: sink }, [])
   check('serializeDiff of an empty diff is empty', empty === '')
+}
+
+// ---------------------------------------------------------------------------
+// 6. An <AlternateScreen> deleted after detachForShutdown must not write
+// EXIT_ALT_SCREEN. Found by the Phase 1 acceptance (J): after a DSH → Claude
+// switch released the root, Chat re-rendered, read the ended channel and
+// threw; the root error boundary swapped the tree for its error view and
+// AlternateScreen's cleanup left the alt screen the replacement was about to
+// draw on. The control group (no detach) proves the case does delete it.
+// ---------------------------------------------------------------------------
+for (const detach of [false, true]) {
+  const stdout = fakeTTY()
+  const stdin = new FakeStdin()
+  let explode: (() => void) | undefined
+  const Reader = () => {
+    const [ended, setEnded] = React.useState(false)
+    explode = () => setEnded(true)
+    if (ended) throw new Error('dsh-tui: Channel UI lifetime has ended')
+    return React.createElement(Text, null, 'chat')
+  }
+  const instance = await render(React.createElement(AlternateScreen, null, React.createElement(Reader)), {
+    stdout,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    exitOnCtrlC: false,
+    patchConsole: true,
+  })
+  await sleep(20) // 固定窗:pacing 让挂载的插入 effect 写出进入序列
+  check('alt screen entered', drain(stdout).includes(ENTER_ALT_SCREEN))
+  if (detach) instance.detachForShutdown()
+  explode?.()
+  await sleep(50) // 固定窗:pacing 让迟到的提交与其删除 effect 跑完
+  const late = drain(stdout)
+  if (detach) check('late boundary swap after detach writes no EXIT_ALT_SCREEN', !late.includes(EXIT_ALT_SCREEN))
+  else check('control: the same swap without detach leaves the alt screen', late.includes(EXIT_ALT_SCREEN))
+  instance.unmount()
 }
 
 console.log(results.join('\n'))

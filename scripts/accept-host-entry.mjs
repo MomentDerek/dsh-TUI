@@ -56,6 +56,10 @@
  * Linux (/proc), that no process carrying the case's marker variable is
  * left; elsewhere that check is reported as skipped.
  *
+ * DSH_TUI_DEBUG_MOUSE=1 is passed through to the TUI: alt-screen enter/exit
+ * and 1049 writes land in <isolated root>/.dsh-tui/mouse-debug.log (with
+ * `--keep`).
+ *
  * Run: pnpm compile && node scripts/accept-host-entry.mjs [--only a,b] [--keep] [--no-auth]
  * `--keep` keeps the isolated root (credentials link included) and prints it.
  */
@@ -154,6 +158,7 @@ async function launch(name, { env = {}, cols = 100, rows = 30, settings, landing
     DSH_TELEMETRY_MODE: 'DISABLED',
     NODE_ENV: 'production',
     DSH_TUI_ACCEPT_MARKER: marker,
+    ...(process.env.DSH_TUI_DEBUG_MOUSE ? { DSH_TUI_DEBUG_MOUSE: '1' } : {}),
     CLAUDE_CODE_EXECUTABLE: fakeClaude,
     // A fresh launch opens on the landing page; without it, on the chat page.
     ...(landing ? {} : { DSH_TUI_NO_LAUNCHPAD: '1' }),
@@ -428,10 +433,10 @@ await runCase('dsh-to-claude', async ({ check, launch }) => {
   check('the replacement is the package entry', await until(() => run.traced('entry-start'), 30000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
   check('and adopts a Claude session', await until(() => run.traced('startup-adopted'), 30000))
   check('the Claude screen is up', await until(async () => !(await run.screen()).includes(DSH_SCREEN) && (await run.screen()).includes(PROMPT), 10000), lines(await run.screen()).slice(-6).join('\n'))
-  // Known, also on main (DSH_TUI_HOST_ENTRY=0): the old dsh process unmounts
-  // its tree while disposing, and AlternateScreen's cleanup leaves the alt
-  // screen before the replacement draws — a flash, then the main screen.
-  check('still on the alternate screen after the handoff (known: fails on main too)', (await run.t.state()).modes.alternate_screen === true)
+  // J: after the old dsh process released its root, a late Chat render threw
+  // into the root error boundary and AlternateScreen's cleanup left the alt
+  // screen before the replacement drew (a flash, then the main screen).
+  check('still on the alternate screen after the handoff', (await run.t.state()).modes.alternate_screen === true)
   await checkSupervised(run, check)
   await run.command('/quit')
   await checkExit(run, check, { code: 0 })

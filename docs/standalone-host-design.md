@@ -684,7 +684,7 @@ dsh 启动链上。干净环境的绝对值待重测。
 `-landing` / `-chat` 两种入口：新启动落在落地页（launchpad），`DSH_TUI_NO_LAUNCHPAD=1`
 直接进对话页——两处的 Enter 与命令是不同的代码路径，这次的几个缺陷都只在其中一边。
 
-**结果**（全部修复后，15 个用例，14 通过、1 失败）：
+**结果**（全部修复后，15 个用例，14 通过、1 失败；2026-10-07 修好 J 后 15 个全过，见下一节）：
 
 | 用例 | 结果 | 说明 |
 | --- | --- | --- |
@@ -695,7 +695,7 @@ dsh 启动链上。干净环境的绝对值待重测。
 | quit / ctrlc / sigterm-while-starting | 通过 | 退出码、终端恢复、无遗留 claude 进程；SIGTERM 以信号结束、无安全模式提示 |
 | restart-landing / restart-chat | 通过 | 新入口进程起来并接管；不经 dsh |
 | kernel-to-dsh-landing / -chat | 通过 | 交给 dsh、DSH 画面出现、仍在 alt screen、旧进程 15s 后仍在监督、DSH 里 `/quit` 恢复终端 |
-| dsh-to-claude | 失败（已知 J，main 同样） | 重起到入口并接管 Claude 会话；但交接后已不在 alt screen（见 J） |
+| dsh-to-claude | 失败（已知 J，main 同样；2026-10-07 已修） | 重起到入口并接管 Claude 会话；但交接后已不在 alt screen（见 J） |
 
 **修复（均有回归）**
 
@@ -767,7 +767,8 @@ dsh 启动链上。干净环境的绝对值待重测。
 
 - **E 落地页丢键（用户决定暂不修）。**同一批输入里的多个编辑键只生效一个（连按或按住退格只
   删掉一部分；无头回归里也只能逐键喂）。不是 Phase 1 引入，影响按住重复键的用户。
-- **J DSH → Claude 切换闪屏，之后界面落在主屏（main 同样，待决定）。**原始字节：DSH 在 alt
+- **J DSH → Claude 切换闪屏，之后界面落在主屏（main 同样，2026-10-07 已修；下面的根因判断有误，
+  更正见下一节）。**原始字节：DSH 在 alt
   screen 里写完「Starting Claude…」后，旧 dsh 进程释放根时卸载了 React 树，`AlternateScreen`
   的卸载清理照常写 `?1049l`（旧进程不是替身，`adopting` 为假，不跳过）；替身按交接约定不再写
   `?1049h`，于是画在主屏上，内容进 scrollback。关掉入口分流（`DSH_TUI_HOST_ENTRY=0`，即 main
@@ -802,7 +803,7 @@ PATH 最前。此后 DSH 一侧可以完整自动化：`kernel-to-dsh-*` 由「�
 | --- | --- |
 | 0 真实 pnpm 安装形态 | 用户决定暂不做（隔离 profile 是手工拼的，不能代替 `dsh plugin add`） |
 | 1 启动：首帧、还在启动、本地命令、就绪后发送、失败提示与 `/new` | 自动化（就绪后真实发送需 `DSH_TUI_CLAUDE_LIVE=1`）；落地页一侧见 C |
-| 2 `/kernel` 双向 | 自动化：两个方向的交接、画面、旧进程监督、退出恢复；Claude → DSH 无闪屏，DSH → Claude 有闪屏（J，main 同样） |
+| 2 `/kernel` 双向 | 自动化：两个方向的交接、画面、旧进程监督、退出恢复；Claude → DSH 无闪屏，DSH → Claude 有闪屏（J，main 同样；2026-10-07 已修） |
 | 3 `/restart`、`/update` | `/restart` 自动化；`/update` 涉网络与下载，未做 |
 | 4 启动期 `/quit`、Ctrl+C、`kill -TERM` | 自动化（TERM 发给入口进程，见上） |
 
@@ -819,6 +820,37 @@ input-terminal 全过；channel-ui 失败 `verify-activity-store`、`verify-sett
 提示在落地页上根本不可见；`verify-startup-argv`（`verify:initial-prompt`）的沙箱补上替身标记常量与
 已就绪的 channel。
 
+### 2026-10-07 · 修 J：DSH → Claude 交接后不再掉回主屏
+
+**根因（更正上一节的判断）**：不是旧进程卸载了整棵树——`detachForShutdown` 之后
+`instance.unmount()` 本就是空操作。用 `DSH_TUI_DEBUG_MOUSE` 加栈抓到的链路是：旧 dsh 进程
+`runRestart` 释放 Cordis 根 → DSH 的服务随根撤下，触发 `Chat` 再渲染一次 → 渲染里读
+`channel.subscribe`，channel 生命周期已结束，抛「Channel UI lifetime has ended」→ Ink `App`
+的根错误边界把 children 换成 `ErrorOverview` → 被删掉的 `<AlternateScreen>` 在清理里写
+`?1049l`，此时替身还没画。入口作旧进程时释放根不触发这次重渲染，所以 Claude → DSH 没有
+这个问题。这是 F、I 之后第三例「dispose 之后迟到的 UI 读」，前两例在定时器里、到了进程级
+吸收器，这一例在渲染里、被错误边界吞掉。
+
+**修（类级）**：退出漏斗 `detachForShutdown` 之后，终端由漏斗全权负责（该写的恢复序列它已
+写完；内核切换时它有意不写 `EXIT_ALT_SCREEN`，把 alt screen 留给替身）。所以 Ink 的
+`writeRaw`（`<AlternateScreen>` 等经 `TerminalWriteContext` 写控制序列的唯一出口）与 `App`
+的同名出口在 detach 之后丢弃写入（`DSH_TUI_DEBUG_MOUSE` 下记一行）。与 B（detach 后不再开
+raw 模式）是同一道闩。顺带覆盖普通退出：迟到的重渲染不会再在主屏上多写一次 `1049l`（tmux 下
+会恢复保存的光标位置，压掉退出提示，`detachForShutdown` 注释里记过这类问题）。正常
+`unmount()` 路径不经这道闩，行为不变。错误边界随后的 `handleExit` 落到已 detach 的
+`unmount()`，空操作。
+
+**回归**：`verify-exit-mouse-cleanup` 第 6 节——`<AlternateScreen>` 下的组件在 detach 后抛错
+进根边界，断言 detach 后没有 `EXIT_ALT_SCREEN`；对照组不 detach，断言有（证明这次删除确实
+会写）。去掉修复后第 6 节变红。验收 `dsh-to-claude` 的「交接后仍在 alt screen」改为正式断言；
+`accept-host-entry.mjs` 透传 `DSH_TUI_DEBUG_MOUSE`（日志在隔离根的 `.dsh-tui/mouse-debug.log`，
+配合 `--keep`）。
+
+**验证**：验收 15 个用例全过；`pnpm build`（89 项门禁）、`verify-exit-mouse-cleanup`、
+`verify-handoff-atomic`、`verify-handoff-pty-gate` 通过；CI 组 input-terminal 31 项全过，
+render-scroll 79 项中失败的 `verify-splash-eggs`、`repro-picker-windowing` 是 main 上就有的
+既有失败。修在旧进程一侧，与入口分流无关，`DSH_TUI_HOST_ENTRY=0`（main 的路径）同样受益。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
@@ -826,7 +858,7 @@ input-terminal 全过；channel-ui 失败 `verify-activity-store`、`verify-sett
 >
 > **更新：测试已做，见上一节「Phase 1 验收：tui-test 模拟终端」**：修复 A–D、F–I（含落地页
 > 通知区 C、内核切换后监督进程崩溃的类级处理 I）；用户决定暂不做的：启动期放开整屏入口、E 落地页
-> 丢键、清单第 0 项；待决定：J（DSH → Claude 闪屏，main 同样）、启动器不转发 SIGTERM。原先
+> 丢键、清单第 0 项；待决定：启动器不转发 SIGTERM（J 已于 2026-10-07 修复，见「修 J」一节）。原先
 > 「PTY 下 DSH 链只画空帧」已查明是隔离环境问题并修正了测试工具，DSH 一侧可完整自动化。
 > 下面的「下一步：测试」保留作记录。
 

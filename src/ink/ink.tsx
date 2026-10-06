@@ -2692,8 +2692,21 @@ export default class Ink {
   // change on every render() call (initial mount + each resize), which
   // cascades through useContext → <AlternateScreen>'s useLayoutEffect dep
   // array → spurious exit+re-enter of the alt screen on every SIGWINCH.
+  //
+  // After detachForShutdown the exit funnel has written (or, for a
+  // kernel-switch handoff, deliberately withheld) the terminal restore, so a
+  // late React commit must not write control sequences of its own. The case
+  // that matters: a render after the Cordis root is released reads the ended
+  // channel and throws, the root error boundary swaps the tree for its error
+  // view, and <AlternateScreen>'s cleanup would write EXIT_ALT_SCREEN —
+  // dropping a fullscreen handoff (DSH → Claude) to the main screen before
+  // the replacement draws, or repeating 1049l on the main screen after a
+  // plain exit.
   private writeRaw(data: string): void {
-    if (this.isDetachedForShutdown) return;
+    if (this.isDetachedForShutdown) {
+      logMouseDebug('stdout: raw write after shutdown detach dropped', { len: data.length, head: data.slice(0, 60) });
+      return;
+    }
     if (data.includes('\x1b[?1049')) {
       logMouseDebug('stdout:1049', { len: data.length, head: data.slice(0, 60) });
     }
