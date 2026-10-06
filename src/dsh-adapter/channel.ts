@@ -42,12 +42,26 @@ export function createChannel(
     // DSH extensions attach only to a DSH session; other backends get the
     // core and whatever their session capabilities offer.
     const native = session.capabilities.native.dsh
-    if (native !== undefined) attachDshExtensions(core, ctx, native, options)
+    if (native !== undefined) {
+      attachDshExtensions(core, ctx, native, options)
+    } else if (options.startup !== undefined) {
+      // A placeholder (`options.startup`) learns its backend at the first
+      // adoption: a DSH session adopted then gets the same extensions,
+      // attached inside that adoption (docs/standalone-host-design.md 5.3,
+      // D1). The Cordis context the extensions serve from is passed here,
+      // apart from the channel host the core was built on.
+      core.extendOnAdopt(adopted => {
+        const dsh = adopted.capabilities.native.dsh
+        if (dsh !== undefined) attachDshExtensions(core, ctx, dsh, options)
+      })
+    }
     // A backend that builds its own working line (the Claude backend) exposes
     // it as a capability. DSH keeps using its projection above. Without the
     // capability or the publish option nothing is attached.
     // A placeholder (`options.startup`) serves nothing yet, so its real
-    // session's capability decides per bind.
+    // session's capability decides per bind. (A DSH session adopted later
+    // replaces these bind hooks with its own: `extend` merges `bind` whole,
+    // and DSH publishes through its projection, as when built for DSH.)
     if (session.capabilities.workingActivity !== undefined || options.startup !== undefined) attachSessionWorkingActivity(core, options)
     return core.start()
   } catch (error) {

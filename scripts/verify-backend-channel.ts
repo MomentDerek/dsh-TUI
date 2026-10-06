@@ -15,7 +15,12 @@
  *  - fence events of a replaced session by binding generation.
  *
  * A DSH channel built from the same entry point keeps its full command list
- * (capability snapshot = every built-in, `commandList` untouched).
+ * (capability snapshot = every built-in, `commandList` untouched). A channel
+ * mounted on a startup placeholder that adopts a DSH session (or retries a
+ * failed startup with a `/new` that opens one) gets the DSH extensions then
+ * and answers like the channel built for DSH; the late-extension window is
+ * one adoption wide and `extend` still refuses a started core otherwise
+ * (docs/standalone-host-design.md 5.3, D1).
  *
  * A non-DSH session is served by the same channel core as DSH, so the
  * backend-neutral features reach it too: the IDE selection channel (consumed
@@ -575,6 +580,110 @@ try {
     check('DSH reports no backend cost', dsh.costReport === undefined)
   } finally {
     dsh.releaseContributions()
+  }
+}
+
+// ── a startup placeholder adopting a DSH session gets the DSH extensions ──
+{
+  // docs/standalone-host-design.md 5.3 (D1): a channel mounted on a
+  // placeholder learns its backend at the first adoption. A DSH session
+  // adopted then must be served exactly as a channel built for it: the DSH
+  // snapshot, command list and composition facts, the agent's identity, and
+  // the DSH actions (model, mode, presets, resume, the agent view). The
+  // agent id differs from its session id here, so an identity written by the
+  // core after the extension would show.
+  const { createStartingSession } = await import('../src/agent/starting-session.js')
+  const { createDshSession } = await import('../src/dsh-adapter/backend/session.js')
+  const stubAgentCtx = { on: () => () => undefined }
+  const dshAgent = (sessionId: string) => ({
+    id: `agent-${sessionId}`, status: 'idle', session: { id: sessionId, seq: 0, events: [] }, ctx: stubAgentCtx,
+    followup: () => undefined, steer: () => undefined, inbox: { remove: () => true },
+  })
+  const dshSession = (sessionId: string) => createDshSession(ctx, { agent: dshAgent(sessionId) as never, handle: undefined })
+  const launch = { model: 'deepseek-chat', provider: 'deepseek', cwd: workdir, activity: false }
+  /** The same DSH reads and actions on two channels: their answers and the
+   *  toasts they raise must match. */
+  const probe = async (state: ReturnType<typeof createChannel>) => {
+    const models = await state.listModels()
+    const providers = await state.listProviders()
+    const presets = await state.listPresets()
+    const efforts = await state.listEfforts()
+    const resume = await state.resumeTo('99999999-9999-4999-8999-999999999999')
+    const permissions = state.permissionPresets()
+    const agentView = state.agentViewRows()
+    await state.cycleMode()
+    return { models, providers, presets, efforts, resume, permissions, agentView, mode: state.mode.id, toasts: state.notifications.map(item => item.text) }
+  }
+
+  const reference = createChannel(ctx, dshSession('dsh-ref'), launch)
+  let finishStartup: ((opened: { session: AgentSession; history: readonly AgentEvent[] }) => void) | undefined
+  const late = createChannel(ctx, createStartingSession('dsh', workdir), {
+    ...launch,
+    startup: new Promise(resolve => { finishStartup = resolve }),
+  })
+  try {
+    // The snapshot carries no `dsh` flag; `dsh: true` shows as the DSH-only
+    // facts (rewind, models through providers) on a session declaring none.
+    const servedAsDsh = (state: ReturnType<typeof createChannel>): boolean =>
+      state.backendCapabilities.rewind && state.backendCapabilities.models && state.backendCapabilities.modelRoutes === 'providers'
+    check('before the adoption the placeholder is not served as DSH', !late.ready && !servedAsDsh(late))
+    const expected = await probe(reference)
+    finishStartup!({ session: dshSession('dsh-late'), history: [] })
+    check('the placeholder adopts the DSH session', await settled(() => late.ready) && late.sessionRef.backendId === 'dsh' && late.sessionRef.sessionId === 'dsh-late')
+    check('… its identity is the DSH agent\'s', late.agentId === 'agent-dsh-late' && late.sessionId === 'dsh-late', { agentId: late.agentId, sessionId: late.sessionId })
+    check('… its capability snapshot is the one built for DSH (dsh: true)', servedAsDsh(late) && JSON.stringify(late.backendCapabilities) === JSON.stringify(reference.backendCapabilities), { late: late.backendCapabilities, reference: reference.backendCapabilities })
+    check('… its command list and composition facts are DSH\'s', JSON.stringify(late.commandList) === JSON.stringify(reference.commandList) && JSON.stringify(late.capabilities()) === JSON.stringify(reference.capabilities()))
+    check('… the trajectory is the raw DSH log', late.trajectoryBackendLabel() === reference.trajectoryBackendLabel())
+    const before = late.notifications.length
+    const actual = await probe(late)
+    check('… model, provider, preset, effort, resume, permission, agent-view and mode actions answer as on DSH', JSON.stringify({ ...actual, toasts: actual.toasts.slice(before) }) === JSON.stringify(expected), { actual, expected })
+    const refusals = ['model', 'provider', 'preset', 'effort', 'resume', 'permission', 'agentview', 'mode'].map(unavailableText)
+    check('… and none of them is reported unavailable', !late.notifications.some(item => refusals.includes(item.text)), late.notifications.map(item => item.text))
+  } finally {
+    late.releaseContributions()
+    reference.releaseContributions()
+  }
+
+  // A failed startup open is retried by `/new` through `openSession`; when
+  // that opens a DSH session, the extensions attach then.
+  const retried = createChannel(ctx, createStartingSession('dsh', workdir), {
+    ...launch,
+    startup: Promise.reject(new Error('backend down')),
+    openSession: () => Promise.resolve(dshSession('dsh-retry')),
+  })
+  try {
+    check('a failed startup open leaves the placeholder', await settled(() => retried.startupFailure !== undefined) && !retried.ready)
+    check('`/new` adopts a DSH session', await retried.newSession() === true && retried.ready && retried.sessionRef.sessionId === 'dsh-retry')
+    check('… and serves it with the DSH extensions', retried.backendCapabilities.rewind && retried.backendCapabilities.modelRoutes === 'providers' && retried.agentId === 'agent-dsh-retry' && JSON.stringify(retried.commandList) === JSON.stringify(annotateCommandCapabilities(LOCAL_COMMANDS, retried.capabilities())))
+  } finally {
+    retried.releaseContributions()
+  }
+
+  // The window is one adoption wide: a non-DSH startup session consumes it,
+  // and `extend` keeps refusing a started core.
+  const { createCoreChannel } = await import('../src/dsh-adapter/channel/core/compose.js')
+  const { createChannelOwner } = await import('../src/dsh-adapter/channel/owner.js')
+  const { cordisChannelHost } = await import('../src/dsh-adapter/channel/cordis-host.js')
+  const core = createCoreChannel(cordisChannelHost(ctx), createStartingSession('fake', workdir), {
+    model: 'm', provider: '', cwd: workdir, activity: false,
+    startup: Promise.resolve({ session: fakeSession('f1f1f1f1-f1f1-41f1-81f1-f1f1f1f1f1f1'), history: [] }),
+    openSession: () => Promise.resolve(fakeSession('f2f2f2f2-f2f2-42f2-82f2-f2f2f2f2f2f2')),
+  }, createChannelOwner())
+  const hooked: string[] = []
+  core.extendOnAdopt(session => { hooked.push(session.ref.sessionId) })
+  const coreState = core.start()
+  try {
+    let refused = false
+    try { core.extend({}) } catch { refused = true }
+    check('`extend` after start is refused outside the adoption window', refused)
+    let reregistered = false
+    try { core.extendOnAdopt(() => undefined) } catch { reregistered = true }
+    check('the adoption hook registers only before start', reregistered)
+    await settled(() => coreState.ready)
+    check('the first adoption runs the hook once', hooked.length === 1 && hooked[0] === 'f1f1f1f1-f1f1-41f1-81f1-f1f1f1f1f1f1')
+    check('a later `/new` does not reopen the window', await coreState.newSession() === true && hooked.length === 1)
+  } finally {
+    coreState.releaseContributions()
   }
 }
 

@@ -147,6 +147,17 @@ export function createCoreChannel(
 
   let extension: ChannelExtension = {}
   let started = false
+  /**
+   * The single late-extension window (docs/standalone-host-design.md 5.3,
+   * D1): a channel mounted on a placeholder learns its real session only at
+   * the first adoption, so the composition root registers (before `start`)
+   * one hook that may `extend` the core inside that adoption's tail. It is
+   * consumed by the first real session adopted, by the startup open or by a
+   * `/new` / `/resume` retry after a failed one; `extend` throws at every
+   * other time after `start`.
+   */
+  let adoptHook: ((session: AgentSession) => void) | undefined
+  let adoptWindow = false
 
   const emitter = createChannelEmitter(() => state, () => extension.flushDeferred?.() ?? false, {
     // Folding drops a row's full text on the promise that `loadOlder`
@@ -841,6 +852,7 @@ export function createCoreChannel(
     snapshotOf,
     resetControls: controls.reset,
     bind: seed => feed.bind(seed),
+    attach: candidate => { attachOnAdopt(candidate) },
     bound: () => binding.session,
     mounts: SESSION_MOUNT_LEDGER,
     ...(options.sessionPrefs === undefined ? {} : { touch: (sessionId: string) => options.sessionPrefs?.touch(sessionId) }),
@@ -921,6 +933,7 @@ export function createCoreChannel(
         state.displayCwd = host.workspaceService.describe(candidate.cwd).description ?? candidate.cwd
         state.backendCapabilities = snapshotOf(candidate)
         controls.reset()
+        attachOnAdopt(candidate)
         state.ready = true
         state.startupFailure = undefined
         feed.bind(history)
@@ -952,6 +965,80 @@ export function createCoreChannel(
     refreshGitBranch: () => refreshGitBranch(),
     notify,
   })
+  /** The actions the core serves itself (read at install time: the
+   *  completion catalog is the extension's). */
+  const coreDelegates = (): Partial<ChannelActionDelegates> => ({
+    commandCompletions: files.commandCompletions(extension.completions ?? NO_COMPLETION_CATALOG),
+    runLocalCommand: local.runLocalCommand,
+    loadOlder: local.loadOlder,
+    clear: () => {
+      local.clear()
+      clearedGeneration = state.agentBindingGeneration
+    },
+    setActivityFrames: local.setActivityFrames,
+    pushLocal: local.pushLocal,
+    listFileCandidates: files.listFileCandidates,
+    listFiles: files.listFiles,
+    doctorInfo: reports.doctorInfo,
+    exportSession: reports.exportSession,
+    newSession: () => sessionSwitch.newSession(),
+    // `/agents` from the event-driven roster (the DSH extension serves its own).
+    mcpStatus: () => {
+      if (binding.session.capabilities.mcp === undefined) return unavailableLines('mcp')
+      const fence = mcpFence()
+      return controls.mcpReport(fence.session, fence.current) ?? [t('backend-mcp-loading')]
+    },
+    listSubagents: () => Promise.resolve(binding.session.capabilities.subagents === undefined ? unavailableLines('agents') : activity.listLines()),
+    resolveWorkspace: workspaces.resolveWorkspace,
+    switchWorkspace: workspaces.switchWorkspace,
+    ...sessionActions.delegates,
+  })
+  const installActions = (replace: boolean): void => {
+    installChannelActions(actionReadiness, {
+      unavailable,
+      unavailableLines,
+      capability: createCapabilityDelegates({
+        owner,
+        session: () => binding.session,
+        state: () => state,
+        notify,
+        unavailable,
+        unavailableLines,
+        guarded,
+      }),
+      core: coreDelegates(),
+      extension: extension.delegates,
+    }, replace)
+  }
+  /**
+   * Inside the tail of the first real session's adoption (the binding is
+   * already the candidate's): let the registered hook extend the core for
+   * it, then serve what it contributed as `start` would have: the action
+   * table again, then its runtime starts (the host subscriptions already
+   * run). Called after the core has written the session's identity,
+   * capability snapshot and command list, so whatever the extension writes
+   * wins; before the bind, so its listeners and bind hooks precede the
+   * session's first events. A throw fails the adoption transaction (the
+   * binding revokes the candidate and the channel), like any tail failure.
+   */
+  const attachOnAdopt = (candidate: AgentSession): void => {
+    const hook = adoptHook
+    if (hook === undefined) return
+    adoptHook = undefined
+    const before = extension
+    adoptWindow = true
+    try {
+      hook(candidate)
+    } finally {
+      adoptWindow = false
+    }
+    if (extension === before) return
+    installActions(true)
+    if (extension.start !== before.start) {
+      extension.start?.before?.()
+      extension.start?.after?.()
+    }
+  }
   const refreshGitBranch = createGitBranchRefresher(channelHost, {
     owner,
     state,
@@ -977,60 +1064,31 @@ export function createCoreChannel(
     reports,
     resetIdeSelection,
     refreshGitBranch,
-    /** Merge an extension's contributions (before `start`). */
+    /** Merge an extension's contributions (before `start`, or inside the
+     *  `extendOnAdopt` hook). */
     extend(next: ChannelExtension): void {
-      if (started) throw new Error('dsh-tui: Channel extensions must attach before the channel starts')
+      if (started && !adoptWindow) throw new Error('dsh-tui: Channel extensions must attach before the channel starts')
       extension = {
         ...extension,
         ...next,
         delegates: { ...extension.delegates, ...next.delegates },
       }
     },
+    /**
+     * Register (before `start`) the one hook the first real session adopted
+     * runs, inside its adoption tail, to `extend` the core for that session
+     * (a placeholder-mounted channel learns its backend only then).
+     */
+    extendOnAdopt(hook: (session: AgentSession) => void): void {
+      if (started) throw new Error('dsh-tui: Channel adoption extensions must register before the channel starts')
+      if (adoptHook !== undefined) throw new Error('dsh-tui: Channel adoption extension already registered')
+      adoptHook = hook
+    },
     /** Install the actions, start the runtime, bind the session. */
     start(): ChannelState {
       if (started) throw new Error('dsh-tui: Channel already started')
       started = true
-      const core: Partial<ChannelActionDelegates> = {
-        commandCompletions: files.commandCompletions(extension.completions ?? NO_COMPLETION_CATALOG),
-        runLocalCommand: local.runLocalCommand,
-        loadOlder: local.loadOlder,
-        clear: () => {
-          local.clear()
-          clearedGeneration = state.agentBindingGeneration
-        },
-        setActivityFrames: local.setActivityFrames,
-        pushLocal: local.pushLocal,
-        listFileCandidates: files.listFileCandidates,
-        listFiles: files.listFiles,
-        doctorInfo: reports.doctorInfo,
-        exportSession: reports.exportSession,
-        newSession: () => sessionSwitch.newSession(),
-        // `/agents` from the event-driven roster (the DSH extension serves its own).
-        mcpStatus: () => {
-          if (binding.session.capabilities.mcp === undefined) return unavailableLines('mcp')
-          const fence = mcpFence()
-          return controls.mcpReport(fence.session, fence.current) ?? [t('backend-mcp-loading')]
-        },
-        listSubagents: () => Promise.resolve(binding.session.capabilities.subagents === undefined ? unavailableLines('agents') : activity.listLines()),
-        resolveWorkspace: workspaces.resolveWorkspace,
-        switchWorkspace: workspaces.switchWorkspace,
-        ...sessionActions.delegates,
-      }
-      installChannelActions(actionReadiness, {
-        unavailable,
-        unavailableLines,
-        capability: createCapabilityDelegates({
-          owner,
-          session: () => binding.session,
-          state: () => state,
-          notify,
-          unavailable,
-          unavailableLines,
-          guarded,
-        }),
-        core,
-        extension: extension.delegates,
-      })
+      installActions(false)
       // Everything below can synchronously invoke external callbacks. It runs
       // only after the owner is registered and the complete delegate surface
       // is installed; the outer construction transaction rolls every step back.

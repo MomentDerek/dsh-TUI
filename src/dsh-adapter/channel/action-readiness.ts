@@ -166,6 +166,12 @@ export function createChannelActionReadiness() {
       if (delegates !== undefined) throw new Error('dsh-tui: Channel actions are already installed')
       delegates = Object.freeze(next)
     },
+    /** Replace the installed table once more: the startup adoption's late
+     *  extension (core/compose.ts) adds its delegates to a started channel. */
+    reinstall(next: ChannelActionDelegates): void {
+      if (delegates === undefined) throw new Error('dsh-tui: Channel actions are not installed')
+      delegates = Object.freeze(next)
+    },
     getReadyActions(): ChannelActionDelegates {
       if (delegates === undefined) throw new Error('dsh-tui: Channel actions are not installed')
       return delegates
