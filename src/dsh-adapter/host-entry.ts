@@ -89,17 +89,29 @@ async function runClaude(): Promise<void> {
     ...(env.DSH_TUI_BACKEND === undefined ? {} : { backend: env.DSH_TUI_BACKEND as TuiConfig['backend'] }),
   })
   // Signals: dispose the tree (the TUI's exit funnel restores the terminal
-  // and closes the backend session), bounded, then exit like the signal.
+  // and closes the backend session), bounded, then die by the signal itself.
+  // A numeric 143/129 reads as a crash to the launcher (the safe-mode
+  // prompt); a signal death is passed on.
+  // Only this handler comes off: the renderer's own signal cleanup stays and
+  // re-raises the signal once it is the last listener.
   let leaving = false
-  const leave = (code: number): void => {
+  const handlers = {
+    SIGTERM: () => { leave('SIGTERM') },
+    SIGHUP: () => { leave('SIGHUP') },
+  }
+  const leave = (signal: keyof typeof handlers): void => {
     if (leaving) return
     leaving = true
-    const timer = setTimeout(() => process.exit(code), 3000)
+    const die = (): void => {
+      process.removeListener(signal, handlers[signal])
+      process.kill(process.pid, signal)
+    }
+    const timer = setTimeout(die, 3000)
     timer.unref()
-    void ctx.root.fiber.dispose().finally(() => process.exit(code))
+    void ctx.root.fiber.dispose().finally(die)
   }
-  process.on('SIGTERM', () => { leave(143) })
-  process.on('SIGHUP', () => { leave(129) })
+  process.on('SIGTERM', handlers.SIGTERM)
+  process.on('SIGHUP', handlers.SIGHUP)
   try {
     await apply(ctx, config, ctx, { deferBackendOpen: true, profile })
   } catch (error) {

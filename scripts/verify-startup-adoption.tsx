@@ -11,16 +11,20 @@
  *    resumed session runs where it was recorded), its capability snapshot
  *    and subagent control, its history painted, the placeholder closed;
  *  - a failed open leaves the placeholder bound with a notice row naming the
- *    error and `/new`; `/new` then opens through `openSession` and is ready;
+ *    error and one of its own naming `/new` (a notice is one line); `/new`
+ *    then opens through `openSession` and is ready;
  *  - a channel released mid-open closes the session when it arrives, with no
  *    notice;
  *  - `/new` run while the open is still going wins: the startup session is
  *    closed on arrival and no failure notice appears.
  *
- * Screen level (real `Chat` over a not-ready channel): Enter on a typed
- * prompt keeps the draft and says the backend is still starting; a non-local
- * command is refused the same way; a local one (`/help`) runs; after the
- * adoption the same draft is sent to the real session.
+ * Screen level (real `Chat` over a not-ready channel, in the composer and
+ * on the first-boot landing page, whose Enter has its own submit path):
+ * Enter on a typed prompt keeps the draft and says the backend is still
+ * starting (on the landing page in its Tips row); a non-local command is
+ * refused the same way; a local one (`/help`) runs; after the adoption Enter
+ * sends to the real session. A failed open closes the landing page, so the
+ * failure row and its `/new` hint show, and the draft moves to the composer.
  *
  * Run: node --import tsx/esm scripts/verify-startup-adoption.tsx
  */
@@ -150,7 +154,8 @@ const notices = (channel: { rows: readonly { kind: string; text: string }[] }): 
   const open = deferred()
   const channel = createChannel(ctx, createStartingSession('claude', LAUNCH), launch(open.promise))
   open.reject(new Error('handshake refused'))
-  check('a failed open leaves a notice naming the error and /new', await settled(() => notices(channel).some(text => text.includes('handshake refused') && text.includes('/new'))), JSON.stringify(notices(channel)))
+  check('a failed open leaves a notice naming the error', await settled(() => notices(channel).some(text => text.includes('handshake refused'))), JSON.stringify(notices(channel)))
+  check('and a notice of its own naming /new', notices(channel).some(text => text.startsWith('/new')), JSON.stringify(notices(channel)))
   check('still not ready after the failure', channel.ready === false && channel.agentId === '')
   const before = opened.length
   const ok = await channel.newSession()
@@ -185,84 +190,113 @@ const notices = (channel: { rows: readonly { kind: string; text: string }[] }): 
 }
 
 // ── the real Chat over a not-ready channel ────────────────────────────
-const open = deferred()
-const channel = createChannel(ctx, createStartingSession('claude', process.cwd()), { ...launch(open.promise), cwd: process.cwd() })
-const COLS = 100
-const ROWS = 30
-const term = new XTerm({ cols: COLS, rows: ROWS, scrollback: 200, allowProposedApi: true })
-class FakeStdout extends Writable {
-  columns = COLS
-  rows = ROWS
-  isTTY = true
-  _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { term.write(String(chunk), callback) }
-}
+// Twice: once in the chat composer, once on the landing page (first boot),
+// whose Enter reaches the channel through its own submit path.
+const notReady = t('startup-not-ready', { backend: 'Claude' })
 class FakeStdin extends PassThrough {
   isTTY = true
   setRawMode() { return this }
   ref() { return this }
   unref() { return this }
 }
-const stdin = new FakeStdin()
-const stdout = new FakeStdout()
-const screen = (): string => viewportLines(term, ROWS).join('\n')
-const instance = await ui.render(
-  React.createElement(Chat, {
-    channel: channel as never,
-    questionStore: new QuestionStore(),
-    approvalStore: new ApprovalStore(),
-    onExit: () => undefined,
-    fullscreen: false,
-    trajectorySeen: true,
-  }),
-  { stdout: stdout as never, stdin: stdin as never, stderr: stdout as never, exitOnCtrlC: false, patchConsole: false },
-)
-for (const value of instances.values()) instances.set(process.stdout, value)
-const toasts = (): string => channel.notifications.map(item => item.text).join(' | ')
-const notReadyCount = (): number => channel.notifications.filter(item => item.text === notReady).length
-const notReady = t('startup-not-ready', { backend: 'Claude' })
-const typeLine = async (text: string): Promise<void> => {
-  for (const char of text) stdin.write(char)
-  // 固定窗:pacing the prompt applies typed characters on its own render tick.
-  await sleep(60)
+async function screenCase(surface: 'composer' | 'launchpad' | 'launchpad-failed', sessionId: string): Promise<void> {
+  const label = (text: string): string => `${surface}: ${text}`
+  const open = deferred()
+  const channel = createChannel(ctx, createStartingSession('claude', process.cwd()), { ...launch(open.promise), cwd: process.cwd() })
+  const COLS = 100
+  const ROWS = 30
+  const term = new XTerm({ cols: COLS, rows: ROWS, scrollback: 200, allowProposedApi: true })
+  class FakeStdout extends Writable {
+    columns = COLS
+    rows = ROWS
+    isTTY = true
+    _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { term.write(String(chunk), callback) }
+  }
+  const stdin = new FakeStdin()
+  const stdout = new FakeStdout()
+  const screen = (): string => viewportLines(term, ROWS).join('\n')
+  const instance = await ui.render(
+    React.createElement(Chat, {
+      channel: channel as never,
+      questionStore: new QuestionStore(),
+      approvalStore: new ApprovalStore(),
+      onExit: () => undefined,
+      fullscreen: false,
+      trajectorySeen: true,
+      ...(surface !== 'composer' ? { launchpadOnBoot: true } : {}),
+    }),
+    { stdout: stdout as never, stdin: stdin as never, stderr: stdout as never, exitOnCtrlC: false, patchConsole: false },
+  )
+  for (const value of instances.values()) instances.set(process.stdout, value)
+  const toasts = (): string => channel.notifications.map(item => item.text).join(' | ')
+  const notReadyCount = (): number => channel.notifications.filter(item => item.text === notReady).length
+  const typeLine = async (text: string): Promise<void> => {
+    for (const char of text) stdin.write(char)
+    // 固定窗:pacing the prompt applies typed characters on its own render tick.
+    await sleep(60)
+  }
+  const clearLine = async (): Promise<void> => {
+    // One key per tick: the landing page applies one edit per input batch.
+    for (let i = 0; i < 24; i += 1) {
+      stdin.write('\x7f')
+      // 固定窗:pacing each backspace lands in its own input batch.
+      await sleep(surface !== 'composer' ? 15 : 0)
+    }
+    // 固定窗:pacing backspaces land before the next keystroke batch.
+    await sleep(60)
+  }
+  const real = fakeSession(sessionId, process.cwd())
+  try {
+    // 固定窗:pacing the key handlers attach after the first frame.
+    await sleep(300)
+    if (surface === 'launchpad-failed') {
+      // A failed open closes the landing page: the failure row and its /new
+      // hint are in the transcript it covered; the draft moves along.
+      await typeLine('kept draft')
+      open.reject(new Error('handshake refused'))
+      check(label('the failure row and the /new hint are on screen'), await settled(() => screen().includes('handshake refused') && screen().includes('/new to retry')), screen())
+      check(label('the draft moves to the composer'), await settled(() => screen().includes('kept draft')), screen())
+      check(label('still not ready'), !channel.ready)
+      return
+    }
+    await typeLine('hello early')
+    stdin.write('\r')
+    check(label('Enter while starting says the backend is still starting'), await settled(() => toasts().includes(notReady)), toasts())
+    // The landing page has no toast area: the notice takes its Tips row.
+    check(label('the notice is on screen'), await settled(() => screen().includes(notReady.slice(0, 30))), screen())
+    check(label('the draft stays in place'), screen().includes('hello early'), screen())
+    check(label('nothing was submitted'), real.submits.length === 0)
+    await clearLine()
+    await typeLine('/status')
+    const beforeStatus = notReadyCount()
+    stdin.write('\r')
+    check(label('a session command is refused while starting'), await settled(() => notReadyCount() > beforeStatus) && screen().includes('/status'), screen())
+    await clearLine()
+    await typeLine('/help')
+    const beforeHelp = notReadyCount()
+    stdin.write('\r')
+    // The composer consumes the line; the landing page keeps it under the
+    // help overlay it opens.
+    const helpRan = surface !== 'composer' ? () => screen().includes('for this help') : () => !screen().includes('/help')
+    check(label('a local command runs while starting'), await settled(helpRan) && notReadyCount() === beforeHelp, screen())
+    // 固定窗:pacing whatever /help opened settles before Esc closes it.
+    await sleep(200)
+    stdin.write('\x1b')
+    // 固定窗:pacing Esc is a standalone key only after the escape timeout.
+    await sleep(200)
+    open.resolve({ session: real, history: [] })
+    check(label('the channel becomes ready'), await settled(() => channel.ready))
+    await clearLine()
+    await typeLine('hello ready')
+    stdin.write('\r')
+    check(label('after the adoption Enter sends to the real session'), await settled(() => real.submits.some(item => item.input.text === 'hello ready')), JSON.stringify(real.submits.map(item => item.input.text)))
+  } finally {
+    instance.unmount()
+    channel.releaseContributions()
+  }
 }
-const clearLine = async (): Promise<void> => {
-  for (let i = 0; i < 24; i += 1) stdin.write('\x7f')
-  // 固定窗:pacing backspaces land before the next keystroke batch.
-  await sleep(60)
-}
-const real = fakeSession('77777777-7777-4777-8777-777777777777', process.cwd())
-try {
-  // 固定窗:pacing the key handlers attach after the first frame.
-  await sleep(300)
-  await typeLine('hello early')
-  stdin.write('\r')
-  check('Enter while starting says the backend is still starting', await settled(() => toasts().includes(notReady)), toasts())
-  check('the draft stays in the composer', screen().includes('hello early'), screen())
-  check('nothing was submitted', real.submits.length === 0)
-  await clearLine()
-  await typeLine('/status')
-  const beforeStatus = notReadyCount()
-  stdin.write('\r')
-  check('a session command is refused while starting', await settled(() => notReadyCount() > beforeStatus) && screen().includes('/status'), screen())
-  await clearLine()
-  await typeLine('/help')
-  const beforeHelp = notReadyCount()
-  stdin.write('\r')
-  check('a local command runs while starting', await settled(() => !screen().includes('/help')) && notReadyCount() === beforeHelp, screen())
-  // 固定窗:pacing whatever /help opened settles before Esc closes it.
-  await sleep(200)
-  stdin.write('\x1b')
-  // 固定窗:pacing Esc is a standalone key only after the escape timeout.
-  await sleep(200)
-  open.resolve({ session: real, history: [] })
-  check('the channel becomes ready', await settled(() => channel.ready))
-  await clearLine()
-  await typeLine('hello ready')
-  stdin.write('\r')
-  check('after the adoption Enter sends to the real session', await settled(() => real.submits.some(item => item.input.text === 'hello ready')), JSON.stringify(real.submits.map(item => item.input.text)))
-} finally {
-  instance.unmount()
-  channel.releaseContributions()
-}
+await screenCase('composer', '77777777-7777-4777-8777-777777777777')
+await screenCase('launchpad', '88888888-8888-4888-8888-888888888888')
+await screenCase('launchpad-failed', '99999999-9999-4999-8999-999999999999')
 console.log(`\nverify-startup-adoption: ${passed} checks passed`)
 process.exit(0)

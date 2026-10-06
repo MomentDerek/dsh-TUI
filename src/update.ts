@@ -43,6 +43,13 @@ const UPDATED_FROM_ENV = 'DSH_TUI_UPDATED_FROM'
 const RESTART_CHILD_ENV = 'DSH_TUI_RESTART_CHILD'
 
 /**
+ * env marker on every replacement (/restart, /update, kernel switch): it is
+ * started with the original app arguments, so a command-line prompt in them
+ * was already sent by the first process and must not be sent again.
+ */
+export const LAUNCH_PROMPT_SENT_ENV = 'DSH_TUI_LAUNCH_PROMPT_SENT'
+
+/**
  * Field-diagnosis log for the /restart terminal handoff, appended by BOTH
  * processes: the exiting TUI logs the funnel path, the spawned replacement
  * logs its boot progress, and every line carries pid + timestamp — so a
@@ -2135,6 +2142,7 @@ export function restartChildEnv(
     // Marks the replacement so its own boot logs to restart.log without
     // noisy logging on every ordinary launch (/restart only).
     ...(kind === 'restart' ? { [RESTART_CHILD_ENV]: '1' } : {}),
+    [LAUNCH_PROMPT_SENT_ENV]: '1',
     ...options.env,
   }
   // The Config schema preserves '', so an absent session must be represented

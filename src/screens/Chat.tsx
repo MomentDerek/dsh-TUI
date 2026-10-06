@@ -162,7 +162,7 @@ import { Launchpad, launchpadVisible, type LaunchpadAction } from './Launchpad.j
 import { resolveLaunchpadActions } from '../components/launchpadActions.js'
 import { Onboarding } from './Onboarding.js'
 import { appendHistory } from '../history.js'
-import { isHiddenCommandName, isLocalCommandName, parseCommandName } from '../commands.js'
+import { isBootSafeCommand, isHiddenCommandName, isLocalCommandName, parseCommandName } from '../commands.js'
 import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/trajectory/index.js'
 import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
 import { readTrajectorySeen, writeTrajectorySeen } from '../trajectoryPrefs.js'
@@ -1025,7 +1025,16 @@ export function Chat({
     // 让开屏先画半秒：弹窗压在介绍动画之上，而不是同抢第一帧。
     const timer = setTimeout(() => {
       // 到点时回合已经开始的仍不弹（channel 是活对象，读到的是当前值）。
-      if (channel.working) return
+      // 退出漏斗结束 channel 生命周期时不卸这棵树：/restart、/kernel 的旧
+      // 进程留着等替身，从落地页发出时本定时器恰在此后触发，读 channel 会抛
+      // 「lifetime has ended」并让旧进程崩溃——读不到就是不该弹了。
+      let working: boolean
+      try {
+        working = channel.working
+      } catch {
+        return
+      }
+      if (working) return
       if (starModalPreview) {
         const preview = STAR_MILESTONES.findIndex(milestone => milestone.hours === 99)
         if (preview >= 0) setStarModal({ index: preview, phase: 'ask' })
@@ -2014,7 +2023,7 @@ export function Chat({
         const controller = promptControllerRef.current
         if (!controller) return
         const text = controller.append('').trim()
-        if (text === '') return
+        if (text === '' || refusedAtStartup(undefined)) return
         channel.submit(text)
         controller.clear()
         channel.notify(
@@ -2450,6 +2459,18 @@ export function Chat({
   }
 
   /**
+   * The startup phase's refusal (`ChannelUi.ready`; the standalone entry
+   * mounts before its session opens), shared by every path that reaches a
+   * command or a send without the composer: true when `name` (undefined for
+   * plain text) must wait, after the notice says why.
+   */
+  const refusedAtStartup = (name: string | undefined): boolean => {
+    if (channel.ready !== false || (name !== undefined && isBootSafeCommand(name))) return false
+    channel.notify(t('startup-not-ready', { backend: kernelCurrentOption?.shortLabel ?? channel.backendCapabilities.backendId }), { color: 'warning', timeoutMs: 2500 })
+    return true
+  }
+
+  /**
    * Submit launchpad input or a selected command through the chat routes.
    *
    * THREE cases, and they are genuinely different:
@@ -2475,6 +2496,8 @@ export function Chat({
    */
   const submitLaunchpad = (submit: string): void => {
     const text = submit.trim()
+    // Refused BEFORE the page closes, so the draft stays on it.
+    if (text !== '' && refusedAtStartup(text.startsWith('/') ? parseCommandName(text)?.name : undefined)) return
     // 首启时 openHomeOnBoot 与落地页同时为真：会话浏览器已经开着、只是被落地页盖住。
     // 提交首句后必须把它收掉，否则用户落到浏览器而不是"草稿就在眼前的对话"，
     // 与本函数 doc 承诺的落点直接矛盾。
@@ -2519,6 +2542,33 @@ export function Chat({
   }
 
   /**
+   * A failed startup open closes the landing page: the failure row and its
+   * `/new` hint live in the transcript the page covers, and a page left up
+   * would only keep refusing input with no reason given. The draft moves to
+   * the composer once it mounts (the effect below waits for its controller).
+   */
+  const launchpadDraftHandoffRef = React.useRef<string | undefined>(undefined)
+  const startupFailure = channel.startupFailure
+  React.useEffect(() => {
+    if (!launchpadOpen || startupFailure === undefined) return
+    launchpadDraftHandoffRef.current = launchpadDraft
+    setLaunchpadOpen(false)
+    setSupervisorOpen(false)
+    setLaunchpadFocus(-1)
+    setLaunchpadDraft('')
+    setLaunchpadCaret(0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the draft is read at the moment of the failure, not tracked
+  }, [launchpadOpen, startupFailure])
+  React.useEffect(() => {
+    const draft = launchpadDraftHandoffRef.current
+    if (launchpadOpen || draft === undefined) return
+    const controller = promptControllerRef.current
+    if (controller === null) return
+    launchpadDraftHandoffRef.current = undefined
+    if (draft.trim() !== '') controller.append(draft)
+  })
+
+  /**
    * The screen's command dispatcher. Every entry point reaches this one
    * closure — PromptInput's `onRunCommand`, the completion menu, this screen's
    * own `/` cases, and the launchpad handoff above. There is deliberately no
@@ -2529,6 +2579,10 @@ export function Chat({
     rawInput = '',
     images: readonly ComposerImageRef[] = [],
   ): boolean | Promise<boolean> => {
+    // Startup phase: the landing page, the onboarding wizard and the
+    // status-bar shortcuts dispatch here without the composer's
+    // tryRunCommand, so the boot-safe filter repeats at this chokepoint.
+    if (refusedAtStartup(name)) return true
     switch (name) {
       case 'activity': {
         // Ported from the pi working-activity extension: bare `/activity`
@@ -6101,6 +6155,10 @@ export function Chat({
       backendId: kernelCurrentId,
       backendLabel: kernelCurrentOption?.shortLabel,
     })
+    const lastNotification = channel.notifications.at(-1)
+    const launchpadNotice = lastNotification === undefined
+      ? undefined
+      : { text: lastNotification.text, ...(lastNotification.color === undefined ? {} : { color: lastNotification.color }) }
     const launchpad = (
       <Launchpad
         query={launchpadDraft}
@@ -6116,6 +6174,8 @@ export function Chat({
         onStarClick={runStarAction}
         firstRun={onboardingPending}
         actions={launchpadActions}
+        // 落地页没有 toast 区：最近一条 channel 通知借 Tips 行显示。
+        notice={launchpadNotice}
         // 参数行四段点开的既有选择器（第五版）：pickerPanels 与聊天页共用
         // 同一份 JSX，盖在落地页之上；选择器开着时落地页键盘让位（inputPaused）。
         overlayPanel={launchpadOverlayUp ? pickerPanels : undefined}
@@ -6163,6 +6223,7 @@ export function Chat({
           // launchpadGate 的授权位（防御：异步误置的整屏状态盖不走启动页）。
           // 其余命令（star / update——反馈在对话页的转录/通知）仍收掉落地页
           // 再执行，这是用户主动执行命令，不是「返回」。
+          if (refusedAtStartup(action.command)) return
           if (launchpadScreenCommands.has(action.command)) {
             authorizeLaunchpadCover()
           } else if (!overlayCommandNames.has(action.command)) {

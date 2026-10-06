@@ -702,10 +702,8 @@ const dict = {
   // The screen mounts on a placeholder session while the backend opens:
   // typing works, sending waits (`ChannelUi.ready === false`).
   'startup-not-ready': { zh: '{{backend}} 还在启动——就绪后按 Enter 发送', en: '{{backend}} is still starting — press Enter to send once it is ready' },
-  'startup-open-failed': {
-    zh: '{{backend}} 会话没能打开：{{err}}\n/new 重试 · /kernel 切换内核 · /quit 退出',
-    en: '{{backend}} session failed to open: {{err}}\n/new to retry · /kernel to switch kernel · /quit to exit',
-  },
+  'startup-open-failed': { zh: '{{backend}} 会话没能打开：{{err}}', en: '{{backend}} session failed to open: {{err}}' },
+  'startup-open-failed-hint': { zh: '/new 重试 · /kernel 切换内核 · /quit 退出', en: '/new to retry · /kernel to switch kernel · /quit to exit' },
   'resume-raced': { zh: '会话打开期间当前会话开始了新的回合，已取消恢复；该回合在当前会话中继续', en: 'The current session started a turn while the other one was opening — the resume was cancelled; the turn continues here' },
   'new-session-raced': { zh: '新会话打开期间当前会话开始了新的回合，已取消 /new；该回合在当前会话中继续', en: 'The current session started a turn while the new one was opening — /new was cancelled; the turn continues here' },
   'new-session-attach-failed': { zh: '会话已创建，但工作区挂载失败 · {{err}}', en: 'Session created, but workspace attachment failed · {{err}}' },

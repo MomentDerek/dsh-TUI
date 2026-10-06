@@ -922,6 +922,7 @@ export function createCoreChannel(
         state.backendCapabilities = snapshotOf(candidate)
         controls.reset()
         state.ready = true
+        state.startupFailure = undefined
         feed.bind(history)
         disposePrevious('dispose')
         state.emit()
@@ -933,7 +934,12 @@ export function createCoreChannel(
       // Released, or a `/new` / `/resume` replaced the placeholder first.
       if (!owner.current() || binding.session !== adoption.session) return
       logForDebugging(`channel: startup session failed to open (${error instanceof Error ? error.message : String(error)})`)
-      state.rows.push({ id: rowIds.value++, kind: 'notice', text: t('startup-open-failed', { backend, err: error instanceof Error ? error.message : String(error) }) })
+      // A notice is one line: the reason's first line, and the way out on a
+      // row of its own so a long reason cannot crowd it out.
+      const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0]
+      state.startupFailure = reason
+      state.rows.push({ id: rowIds.value++, kind: 'notice', text: t('startup-open-failed', { backend, err: reason }) })
+      state.rows.push({ id: rowIds.value++, kind: 'notice', text: t('startup-open-failed-hint') })
       state.emit()
     })
   }

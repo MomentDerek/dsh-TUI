@@ -98,6 +98,8 @@ if (probeMode) {
   const submitted = []
   const scope = {
     ctx, process, initialPromptFromCmdlineArgs, resumeTargetFromArgv,
+    // A replacement process skips the prompt (src/update.ts restartChildEnv).
+    LAUNCH_PROMPT_SENT_ENV: 'DSH_TUI_LAUNCH_PROMPT_SENT',
     KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs,
     resolveRememberedBackend, resolveResumeTarget, isRegisteredBackend, parseBackendChoice,
     config: {
@@ -107,7 +109,8 @@ if (probeMode) {
     },
     shadow: false,
     backendStart: undefined,
-    channel: { submit: text => submitted.push(text) },
+    // The profile path opens the session before the mount: ready at once.
+    channel: { ready: true, submit: text => submitted.push(text) },
   }
   const context = createContext(scope)
   runInContext([

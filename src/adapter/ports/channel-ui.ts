@@ -56,6 +56,9 @@ export interface ChannelUi {
    * is always `true`.
    */
   readonly ready: boolean
+  /** Why the startup session failed to open, while it stays unopened (the
+   *  placeholder is still bound); cleared once a session is adopted. */
+  readonly startupFailure: string | undefined
   readonly rows: readonly ChatRow[]
   /** Live editor selection from the IDE channel (undefined = no IDE / no
    *  selection / link dropped). Protocol-2 pushes carry the editor buffer's

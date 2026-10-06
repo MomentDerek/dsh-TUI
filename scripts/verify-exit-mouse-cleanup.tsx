@@ -17,13 +17,15 @@
  *    synchronous cleanup (EXIT_ALT_SCREEN → DISABLE_MOUSE_TRACKING →
  *    SHOW_CURSOR) to the stdout stream's own fd, with the last frame (when
  *    present) preceding EXIT_ALT_SCREEN.
+ * 4. A useInput mounting after detachForShutdown does not re-enter raw mode
+ *    (no bracketed-paste / focus-reporting enable after the exit cleanup).
  */
 import React from 'react'
 import { closeSync, openSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
-import { render, AlternateScreen, Text } from '../src/ui.js'
+import { render, AlternateScreen, Text, useInput } from '../src/ui.js'
 import instances from '../src/ink/instances.js'
 import {
   DISABLE_MOUSE_TRACKING,
@@ -203,7 +205,43 @@ const sleep = (ms: number): Promise<void> =>
 }
 
 // ---------------------------------------------------------------------------
-// 4. serializeDiff keeps the empty-diff contract after the extraction.
+// 4. A useInput that mounts after detachForShutdown (a late React commit
+// while the exit funnel settles, found by the Phase 1 tui-test acceptance)
+// must not re-enter raw mode: the funnel's DBP/DFE are already written.
+// ---------------------------------------------------------------------------
+{
+  const stdout = fakeTTY()
+  const stdin = new FakeStdin()
+  let mountLate: (() => void) | undefined
+  const Late = () => {
+    useInput(() => undefined)
+    return React.createElement(Text, null, 'late input')
+  }
+  const Root = () => {
+    const [late, setLate] = React.useState(false)
+    mountLate = () => setLate(true)
+    return React.createElement(Text, null, late ? React.createElement(Late) : 'root')
+  }
+  const instance = await render(React.createElement(Root), {
+    stdout,
+    stdin: stdin as unknown as NodeJS.ReadStream,
+    exitOnCtrlC: false,
+    patchConsole: true,
+  })
+  drain(stdout)
+  instance.detachForShutdown()
+  drain(stdout)
+  mountLate?.()
+  await sleep(50) // 固定窗:pacing 让迟到的提交与其 layout effect 跑完
+  const late = drain(stdout)
+  check('late useInput after detach writes no bracketed-paste enable', !late.includes('\x1b[?2004h'))
+  check('late useInput after detach writes no focus-reporting enable', !late.includes('\x1b[?1004h'))
+  check('late useInput after detach leaves stdin cooked', !stdin.isRaw)
+  instance.unmount()
+}
+
+// ---------------------------------------------------------------------------
+// 5. serializeDiff keeps the empty-diff contract after the extraction.
 // ---------------------------------------------------------------------------
 {
   const sink = new PassThrough() as unknown as NodeJS.WriteStream

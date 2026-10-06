@@ -155,6 +155,7 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
 export const CHANNEL_UI_PROPERTIES = [
   'version',
   'ready',
+  'startupFailure',
   'rows',
   'status',
   'sessionTitle',

@@ -56,7 +56,7 @@ import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit 
 import { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
-import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
+import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
 import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelPanels, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
@@ -94,7 +94,8 @@ import instances from '../ink/instances.js'
 import { cursorMove, DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from '../ink/termio/csi.js'
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, EXIT_ALT_SCREEN, SHOW_CURSOR } from '../ink/termio/dec.js'
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMultiplexer } from '../ink/termio/osc.js'
-import { fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
+import { addProcessErrorAbsorber, fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
+import { CHANNEL_UI_LIFETIME_ENDED } from '../adapter/channel/ui.js'
 import { markBoot } from '../utils/bootTrace.js'
 
 /**
@@ -1759,8 +1760,26 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // Submit once the channel exists; delivery goes through the normal pending/inbox
   // chain, so no special timing is needed. The parser separates startup flags
   // from literal prompt text.
-  const initialPrompt = initialPromptFromCmdlineArgs(cmdlineArgs)
-  if (initialPrompt) submitChannel(initialPrompt)
+  // The standalone entry has no dsh CLI to mount `ctx.cmdlineArgs`; its own
+  // argv carries only the app arguments. A replacement keeps the original
+  // arguments, but the first process already sent their prompt.
+  const initialPrompt = process.env[LAUNCH_PROMPT_SENT_ENV] === '1' ? '' : initialPromptFromCmdlineArgs(cmdlineArgs ?? process.argv.slice(2))
+  if (initialPrompt) {
+    // The standalone entry mounts on a placeholder session that refuses every
+    // send (docs/standalone-host-design.md 5.3) and nothing replays it after
+    // the adoption: hold the prompt until the channel is ready (the startup
+    // session, or the one a `/new` retry opens after a failed open).
+    if (channel.ready) {
+      submitChannel(initialPrompt)
+    } else {
+      const unsubscribe = channel.subscribe(() => {
+        if (!channel.ready) return
+        unsubscribe()
+        submitChannel(initialPrompt)
+      })
+      ctx.effect(() => unsubscribe, 'dsh-tui initial prompt after startup')
+    }
+  }
   // Attach the stderr reporter to the live channel and flush anything a
   // startup-spawned server produced while the channel didn't exist yet.
   notifyStderr = (text, options) => notifyChannel(text, options)
@@ -2860,6 +2879,17 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
   logRestartEvent('runRestart: entered, disposing cordis root')
   disposeRootAndThen(ctx, () => {
     logRestartEvent('runRestart: root disposed, starting restartTui')
+    // From here this process only supervises the replacement. Its React tree
+    // is not unmounted (a kernel switch keeps the alt screen up for the
+    // replacement), so a late timer in it can still read the channel, whose
+    // ended lifetime throws: moot now, logged instead of killing the
+    // supervisor — that crash ended the launcher's wait and left the
+    // replacement running in the background.
+    addProcessErrorAbsorber(error => {
+      if (!(error instanceof Error) || error.message !== CHANNEL_UI_LIFETIME_ENDED) return false
+      logRestartEvent('supervisor: late UI read after dispose ignored', { at: error.stack?.split('\n').slice(1, 4).map(line => line.trim()).join(' | ') })
+      return true
+    })
     void restartTui(sessionId, options).then(
       restartCode => {
         logRestartEvent('runRestart: restartTui resolved', { restartCode })
