@@ -171,7 +171,29 @@ function trackCompositionRoot(root: Context): void {
     // Minimal embedders may expose Context without an event helper. The
     // shape/lifecycle checks below remain as a conservative fallback.
   }
-  guardRootCapabilities(root)
+  if (!deferredGuardRoots.has(root as object)) guardRootCapabilities(root)
+}
+
+/** Roots whose capability guard waits for their composition (below). */
+const deferredGuardRoots = new WeakSet<object>()
+
+/**
+ * Hold the root-capability guard back on `root` until the returned release
+ * runs. The package's own entry mounts the TUI on its root first and composes
+ * the DSH profile into that root afterwards (docs/standalone-host-design.md
+ * Phase 2, single root): DSH's own plugins use root capabilities while they
+ * activate (`ctx.accessor` effects on the root fiber), which the guard would
+ * refuse. On the profile path the TUI only touches the root once the profile
+ * rows load, so the guard arrives during the composition; the entry releases
+ * it right after its composition settles. Fiber tracking itself starts at
+ * once either way.
+ */
+export function deferRootCapabilityGuard(root: Context): () => void {
+  deferredGuardRoots.add(root as object)
+  return () => {
+    if (!deferredGuardRoots.delete(root as object)) return
+    if (trackedRoots.has(root as object)) guardRootCapabilities(root)
+  }
 }
 
 function invalidateActivation(fiber: object): void {

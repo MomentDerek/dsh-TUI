@@ -14,7 +14,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { KERNEL_SWITCH_HANDOFF_ENV, isKernelId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
 import { profilePatchPath, readProfileTuiSettings } from './tuiSettingsFile.js'
 
-export { HOST_ENTRY_ENV, HOST_ENTRY_PATH_ENV, hostEntryDisabled } from './kernelPrefs.js'
+export { HOST_ENTRY_DSH_ENV, HOST_ENTRY_ENV, HOST_ENTRY_PATH_ENV, hostEntryDisabled, hostEntryDshEnabled } from './kernelPrefs.js'
 
 /** The profile the launcher would have started (`dsh --profile <name>`). */
 export const HOST_PROFILE_ENV = 'DSH_TUI_PROFILE'

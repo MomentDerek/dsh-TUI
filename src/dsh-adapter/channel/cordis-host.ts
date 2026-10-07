@@ -34,5 +34,12 @@ export function cordisChannelHost(ctx: Context, services: Readonly<Record<string
     installDecisionGuard: grants => { installDecisionGuard(ctx, grants) },
     markDecisionDispatchTopology: () => markDecisionDispatchTopology(ctx),
     localSettingsSections: () => getLocalSettingsSectionsHost(ctx),
+    // Cordis announces every service change on the root; bare embedders
+    // (scripts) without `on` hear nothing.
+    ...(typeof (ctx as { on?: unknown }).on !== 'function' ? {} : {
+      watchServices: listener => ctx.on('internal/service' as never, ((name: unknown) => {
+        if (typeof name === 'string') listener(name)
+      }) as never),
+    }),
   }
 }

@@ -144,6 +144,19 @@ export function hostEntryDisabled(env: NodeJS.ProcessEnv = process.env): boolean
 }
 
 /**
+ * Opt-in (docs/standalone-host-design.md Phase 2): `DSH_TUI_HOST_ENTRY_DSH=1`
+ * runs the DSH kernel in the package's own entry too, composing the profile
+ * into the entry's Cordis root after the screen mounts, instead of handing the
+ * launch to `dsh --profile`. Ignored while `DSH_TUI_HOST_ENTRY=0`.
+ */
+export const HOST_ENTRY_DSH_ENV = 'DSH_TUI_HOST_ENTRY_DSH'
+
+/** Whether the DSH kernel runs in the host entry (the opt-in above). */
+export function hostEntryDshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[HOST_ENTRY_DSH_ENV] === '1' && !hostEntryDisabled(env)
+}
+
+/**
  * The kernel boot runs on (plugin.ts backendChoice): a valid switch handoff
  * first, then the Config row, then DSH_TUI_BACKEND, then the remembered
  * choice, else dsh. An invalid DSH_TUI_BACKEND still means dsh, which is what

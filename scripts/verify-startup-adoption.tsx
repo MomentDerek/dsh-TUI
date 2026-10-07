@@ -149,6 +149,17 @@ const notices = (channel: { rows: readonly { kind: string; text: string }[] }): 
   check('releasing closes the real session', await settled(() => real.disposed))
 }
 
+// ── the opener's route and preset (the in-process DSH kernel) ─────────
+{
+  const open = deferred()
+  const channel = createChannel(ctx, createStartingSession('claude', LAUNCH), { ...launch(open.promise), agentPreset: 'boot-preset' })
+  check('before adoption the construction route stands', channel.model === 'Claude' && channel.provider === 'claude' && channel.agentPreset === 'boot-preset')
+  open.resolve({ session: fakeSession('77777777-7777-4777-8777-777777777777', LAUNCH), history: [], route: { provider: 'deepseek-official', model: 'deepseek-v4-pro' }, agentPreset: 'standard' })
+  check('the adoption takes the route the opener resolved', await settled(() => channel.ready) && channel.model === 'deepseek-v4-pro' && channel.provider === 'deepseek-official', `${channel.provider}/${channel.model}`)
+  check('and its preset', channel.agentPreset === 'standard', String(channel.agentPreset))
+  channel.releaseContributions()
+}
+
 // ── failed open, then /new ────────────────────────────────────────────
 {
   const open = deferred()

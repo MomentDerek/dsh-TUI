@@ -53,4 +53,7 @@ export interface ChannelHost extends ServiceLookup {
   markDecisionDispatchTopology(): () => void
   /** The in-package settings-sections host, used when no row provides one. */
   localSettingsSections(): TuiSettingsSectionsHost
+  /** Hear about named services coming or going after construction (a
+   *  profile composed after the screen mounted); absent = never. */
+  watchServices?(listener: (name: string) => void): () => void
 }

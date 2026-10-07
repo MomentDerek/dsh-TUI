@@ -47,6 +47,12 @@
  *                          supervising, /quit there restores the terminal
  *   dsh-to-claude          a DSH launch, /kernel → Claude restarts into the
  *                          entry and adopts a Claude session
+ *   dsh-in-entry-*         DSH_TUI_HOST_ENTRY_DSH=1: the DSH kernel in the
+ *                          entry — first frame before the profile composes,
+ *                          the dsh-tui row applies in the entry process (one
+ *                          root), the DSH session is adopted and its model
+ *                          named, /quit restores the terminal
+ *   dsh-in-entry-quit-early the same, /quit as soon as the screen is up
  *   live-send              DSH_TUI_CLAUDE_LIVE=1 only: one prompt round-trip
  *   live-initial-prompt    DSH_TUI_CLAUDE_LIVE=1 only: a command-line prompt
  *                          is sent once the session is adopted
@@ -60,7 +66,12 @@
  * and 1049 writes land in <isolated root>/.dsh-tui/mouse-debug.log (with
  * `--keep`).
  *
- * Run: pnpm compile && node scripts/accept-host-entry.mjs [--only a,b] [--keep] [--no-auth]
+ * The isolated DSH_HOME has no `profiles/node_modules` link (a fresh dsh 0.2
+ * install has none, and the entry must start without it — it installs the
+ * host's module resolution itself); `--legacy` links the source home's one
+ * back in for comparison.
+ *
+ * Run: pnpm compile && node scripts/accept-host-entry.mjs [--only a,b] [--keep] [--no-auth] [--legacy]
  * `--keep` keeps the isolated root (credentials link included) and prints it.
  */
 import { randomUUID } from 'node:crypto'
@@ -82,7 +93,7 @@ const live = process.env.DSH_TUI_CLAUDE_LIVE === '1'
 const only = option('--only')?.split(',')
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
-const { root, dshHome, launcher, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-accept-' })
+const { root, dshHome, launcher, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-accept-', profilesNodeModules: flag('--legacy') })
 const realClaude = executable('claude')
 if (!flag('--no-auth')) {
   mkdirSync(join(root, '.claude'), { recursive: true })
@@ -273,6 +284,7 @@ for (const [name, settings, cols] of [['startup-fullscreen', undefined, 100], ['
     check('session adopted', await until(() => run.traced('startup-adopted'), 30000))
     const settingsFile = join(root, '.dsh-tui', 'settings.json')
     check('settings.json present', existsSync(settingsFile))
+    if (!flag('--legacy')) check('no profiles/node_modules link in the isolated home', !existsSync(join(dshHome, 'profiles', 'node_modules')))
     await run.command('/quit')
     await checkExit(run, check, { code: 0 })
   })
@@ -440,6 +452,40 @@ await runCase('dsh-to-claude', async ({ check, launch }) => {
   await checkSupervised(run, check)
   await run.command('/quit')
   await checkExit(run, check, { code: 0 })
+})
+
+// ── 5. the DSH kernel in the entry (DSH_TUI_HOST_ENTRY_DSH=1) ─────────────
+const DSH_IN_ENTRY = { DSH_TUI_HOST_ENTRY_DSH: '1' }
+for (const landing of [false, true]) await runCase(`dsh-in-entry-${landing ? 'landing' : 'chat'}`, async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing, env: DSH_IN_ENTRY })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  check(`first frame (${Date.now() - run.startedAt}ms after spawn)`, true)
+  check('adopts the DSH session', await until(() => run.traced('startup-adopted'), 60000), `${JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark]))}\n--- screen ---\n${lines(await run.screen()).slice(-12).join('\n')}`)
+  const marks = run.marks()
+  const entryPid = marks.find(entry => entry.mark === 'entry-start')?.pid
+  const at = mark => marks.find(entry => entry.mark === mark && entry.pid === entryPid)?.ms
+  check('one process: the dsh-tui row applies in the entry', entryPid !== undefined && marks.filter(entry => entry.mark === 'row-apply').every(entry => entry.pid === entryPid) && at('row-apply') !== undefined, JSON.stringify(marks.map(entry => [entry.pid, entry.mark])))
+  check('one screen: the row does not render a second tree', marks.filter(entry => entry.mark === 'render-start').length === 1, JSON.stringify(marks.map(entry => entry.mark)))
+  check('the screen is up before the profile composes', at('render-done') !== undefined && at('entry-compose-start') !== undefined && at('render-done') <= at('entry-compose-start'))
+  check(`timeline (ms in the entry): hijacked ${at('entry-hijacked')}, render ${at('render-done')}, compose ${at('entry-compose-start')}–${at('entry-compose-end')}, adopted ${at('startup-adopted')}`, true)
+  check('the DSH screen is up (its model on the status line)', await until(async () => (await run.screen()).includes(DSH_SCREEN), 30000), lines(await run.screen()).slice(-6).join('\n'))
+  await run.clear()
+  await run.command('/settings')
+  // The TUI's own section moved to the composition's sections service.
+  check('/settings lists the dsh-tui section', await until(async () => (await run.screen()).includes('dsh-tui (dsh-tui)'), 5000), lines(await run.screen()).slice(0, 6).join('\n'))
+  await run.t.press('Escape')
+  await sleep(300)
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+await runCase('dsh-in-entry-quit-early', async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing: false, env: DSH_IN_ENTRY })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+  check(`left ${run.traced('startup-adopted') ? 'after' : 'before'} the adoption`, true)
 })
 
 // ── live: one prompt round-trip ──────────────────────────────────────────

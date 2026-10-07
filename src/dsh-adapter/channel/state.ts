@@ -17,6 +17,14 @@ import type { ChannelState } from './types.js'
 export const DSH_BACKEND_LABEL = 'DSH'
 
 /** Launch configuration belongs to channel construction, not the composition root. */
+/** The settled startup open (`ChannelLaunchOptions.startup`). */
+export interface ChannelStartup {
+  readonly session: AgentSession
+  readonly history: readonly AgentEvent[]
+  readonly route?: { readonly provider: string; readonly model: string }
+  readonly agentPreset?: string
+}
+
 export interface ChannelLaunchOptions {
   model: string
   cwd: string
@@ -139,8 +147,13 @@ export interface ChannelLaunchOptions {
    * rejection leaves the placeholder bound and says why in the transcript;
    * `/new` then retries through `openSession`. Absent → the session handed
    * to construction is the real one.
+   *
+   * `route` and `agentPreset` are what the adopted session actually runs
+   * with when only the opener knows it (the in-process DSH kernel resolves
+   * its route and preset once DSH has composed); absent → the construction
+   * options stand.
    */
-  startup?: Promise<{ readonly session: AgentSession; readonly history: readonly AgentEvent[] }>
+  startup?: Promise<ChannelStartup>
   /** How a user re-enters a session of this backend from a shell (the
    *  `/fork` notice); absent → the in-TUI `/resume` hint. */
   resumeCommand?: (sessionId: string) => string

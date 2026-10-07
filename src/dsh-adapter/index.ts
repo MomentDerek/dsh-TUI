@@ -18,6 +18,7 @@ import { normalizeBrandSetting, type BrandSetting } from '../branding.js'
 import { editableConfig, type RuntimeConfig } from './compat/settings.js'
 import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 import { markBoot } from '../utils/bootTrace.js'
+import { peekEntrySlot, takeEntryAttach } from './entry-slot.js'
 
 export const name = 'dsh-tui'
 // `tuiWorkspaces` must stay OUT of this code-level inject (issue #183): the
@@ -447,6 +448,15 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
  */
 export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promise<void> {
   markBoot('row-apply')
+  // This package's entry already mounted the screen in this process and
+  // composed the profile into its own root (./entry-slot.ts): the row only
+  // runs the DSH side and hands the session to that screen.
+  const entrySlot = peekEntrySlot()
+  if (entrySlot !== undefined) {
+    entrySlot.rowSeen = true
+    attachToEntry(ctx, config)
+    return
+  }
   // Upstream drift is NO LONGER spammed to stderr here: per-package
   // console.warn lines interleave with the TUI frame redraw and arrive
   // garbled (typewriter animation repaints over them). The merged,
@@ -468,5 +478,29 @@ export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promis
     })
   }).catch(error => {
     if (!disposed) handleStartupError(ctx, error)
+  })
+}
+
+/** The row under the entry's screen: the DSH side in a runtime fiber of its
+ *  own, once the Loader settled (as the usual runtime starts), never a
+ *  second render. A second apply of this row (a recompose) finds the hook
+ *  taken and does nothing. */
+function attachToEntry(ctx: Context, config: RuntimeConfig<Config>): void {
+  const attach = takeEntryAttach()
+  if (attach === undefined) {
+    ctx.logger.warn('dsh-tui: the entry\'s screen already holds a DSH session; this dsh-tui row stays idle')
+    return
+  }
+  let disposed = false
+  ctx.effect(() => () => { disposed = true })
+  const loader = ctx.get('loader') as { await(): Promise<unknown> } | undefined
+  void (loader?.await() ?? ctx.fiber.await()).then(() => {
+    if (disposed) return
+    return ctx.plugin({
+      name: 'dsh-tui-runtime',
+      apply: (runtimeCtx: Context) => attach(runtimeCtx, config, ctx),
+    })
+  }).catch((error: unknown) => {
+    ctx.logger.error(`dsh-tui: the DSH side failed to start under the entry's screen: ${error instanceof Error ? error.message : String(error)}`)
   })
 }

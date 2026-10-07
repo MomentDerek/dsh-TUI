@@ -20,7 +20,12 @@ import type { ChannelHost, ServiceLookup } from '../channel-host.js'
 import type { ChannelOwner } from '../owner.js'
 import type { ChannelState } from '../types.js'
 
-/** The host services a channel composition resolved at construction. */
+/**
+ * The host services a channel composition reads. Each one is looked up per
+ * read, not at construction: with the in-process DSH kernel the screen
+ * mounts first and the profile's `tui*` rows arrive with the composition
+ * afterwards (docs/standalone-host-design.md 5.1, single root).
+ */
 export interface CoreHost {
   readonly adapterRuntime: AdapterRuntimeOptions
   readonly themeHost: ReturnType<typeof getHostThemes>
@@ -42,7 +47,6 @@ export interface CoreHost {
  */
 export function resolveCoreHost(host: ChannelHost, owner: Pick<ChannelOwner, 'own'>): CoreHost {
   const adapterRuntime = host.runtime
-  const themeHost = getHostThemes(host.get('tuiThemes') as TuiThemeRuntime | undefined)
   // Backstop: the extensions row installs the decision-subscription gate,
   // but the channel is the dispatch path. A stale patch without that row (or
   // a bare embed mounting neither) would otherwise leave tui/input and
@@ -60,51 +64,85 @@ export function resolveCoreHost(host: ChannelHost, owner: Pick<ChannelOwner, 'ow
   // topology so the live driver can distinguish "guard installed" (not a
   // live feature) from "events can actually be dispatched here".
   owner.own(host.markDecisionDispatchTopology())
+  // Workspace registry runtime (optional service, issue #183): mounted by
+  // the bundle patch's dsh-tui-workspaces row; absent the row (stale patch
+  // or a bare embedder), degrade to the local-only runtime (one per channel).
+  let localWorkspaces: ReturnType<typeof createLocalWorkspaceRuntime> | undefined
   return {
     adapterRuntime,
-    themeHost,
-    // Workspace registry runtime (optional service, issue #183): mounted by
-    // the bundle patch's dsh-tui-workspaces row; absent the row (stale patch
-    // or a bare embedder), degrade to the local-only runtime.
-    workspaceService: getHostWorkspaceRuntime(host.get('tuiWorkspaces') as TuiWorkspaceRuntime | undefined) ?? createLocalWorkspaceRuntime(),
-    commandTrees: getHostCommandTrees(host.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined),
+    get themeHost() { return getHostThemes(host.get('tuiThemes') as TuiThemeRuntime | undefined) },
+    get workspaceService() {
+      return getHostWorkspaceRuntime(host.get('tuiWorkspaces') as TuiWorkspaceRuntime | undefined)
+        ?? (localWorkspaces ??= createLocalWorkspaceRuntime())
+    },
+    get commandTrees() { return getHostCommandTrees(host.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined) },
     // Plugin scene runtime (optional, dsh-tui-scenes row): absent the row,
     // `pluginScene` simply stays undefined.
-    sceneRuntime: getHostSceneRuntime(host.get('tuiScenes') as TuiSceneRuntime | undefined),
+    get sceneRuntime() { return getHostSceneRuntime(host.get('tuiScenes') as TuiSceneRuntime | undefined) },
     // Falls back to the in-package local host when the composition's
     // service row is unavailable (issue #557).
-    settingsSectionsRuntime: getHostSettingsSections(
-      host.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined,
-    ) ?? host.localSettingsSections(),
+    get settingsSectionsRuntime() {
+      return getHostSettingsSections(host.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined)
+        ?? host.localSettingsSections()
+    },
     // Custom-entry text renderers (optional, dsh-tui-extensions row): absent
     // the row, unknown plugin event types stay invisible in the transcript.
-    rendererRuntime: getHostRenderers(host.get('tuiRenderers') as TuiRendererRuntime | undefined),
+    get rendererRuntime() { return getHostRenderers(host.get('tuiRenderers') as TuiRendererRuntime | undefined) },
     currentGrantStore,
   }
 }
 
-/** Re-render on settings-section and plugin-scene changes (owner-scoped). */
+/**
+ * Re-render on settings-section and plugin-scene changes (owner-scoped).
+ * The subscriptions follow the runtimes: when the host reports a service
+ * change (a row composed after the mount, or reloaded), each one re-binds to
+ * whatever runtime is current.
+ */
 export function startHostSubscriptions(
   host: Pick<CoreHost, 'settingsSectionsRuntime' | 'sceneRuntime'>,
   owner: Pick<ChannelOwner, 'own' | 'current'>,
   state: Pick<ChannelState, 'pluginScene' | 'emit'>,
+  services?: Pick<ChannelHost, 'watchServices'>,
 ): void {
-  owner.own(host.settingsSectionsRuntime?.subscribe(() => { if (owner.current()) state.emit() }) ?? (() => undefined))
-  const sceneRuntime = host.sceneRuntime
-  let unsubscribeScenes: (() => void) | undefined
-  const disposeScenes = sceneRuntime?.subscribe(() => {
-    if (state.pluginScene === sceneRuntime.active) return
-    state.pluginScene = sceneRuntime.active
-    state.emit()
-  })
-  if (disposeScenes !== undefined) {
-    unsubscribeScenes = disposeScenes
-    owner.own(() => {
-      if (unsubscribeScenes !== disposeScenes) return
-      unsubscribeScenes = undefined
-      disposeScenes()
-    })
+  let sections: { runtime: CoreHost['settingsSectionsRuntime']; off: (() => void) | undefined } | undefined
+  let scenes: { runtime: CoreHost['sceneRuntime']; off: (() => void) | undefined } | undefined
+  const bind = (): boolean => {
+    let changed = false
+    const sectionsRuntime = host.settingsSectionsRuntime
+    if (sections === undefined || sections.runtime !== sectionsRuntime) {
+      sections?.off?.()
+      sections = { runtime: sectionsRuntime, off: sectionsRuntime?.subscribe(() => { if (owner.current()) state.emit() }) }
+      changed = true
+    }
+    const sceneRuntime = host.sceneRuntime
+    if (scenes === undefined || scenes.runtime !== sceneRuntime) {
+      scenes?.off?.()
+      scenes = {
+        runtime: sceneRuntime,
+        off: sceneRuntime?.subscribe(() => {
+          if (state.pluginScene === sceneRuntime.active) return
+          state.pluginScene = sceneRuntime.active
+          state.emit()
+        }),
+      }
+      if (state.pluginScene !== sceneRuntime?.active) state.pluginScene = sceneRuntime?.active
+      changed = true
+    }
+    return changed
   }
+  bind()
+  owner.own(() => {
+    sections?.off?.()
+    scenes?.off?.()
+    sections = undefined
+    scenes = undefined
+  })
+  const unwatch = services?.watchServices?.(name => {
+    if (name !== 'tuiSettingsSections' && name !== 'tuiScenes') return
+    if (!owner.current()) return
+    if (bind()) state.emit()
+  })
+  if (unwatch !== undefined) owner.own(unwatch)
 }
 
 /**

@@ -8,7 +8,9 @@
  *  - `restartArgv` relaunches a replacement on the Claude kernel through the
  *    host entry (only the app arguments after dsh's `--` carry over; a
  *    kernel switch drops resume flags), leaves every other relaunch on its
- *    own script, and never re-targets the entry onto itself.
+ *    own script, and never re-targets the entry onto itself; with
+ *    `DSH_TUI_HOST_ENTRY_DSH=1` (`dshInEntry`) a DSH replacement goes to the
+ *    entry too.
  *
  * The launcher half (bin/dsh-tui.js) is covered by verify-launcher.mjs §7.
  *
@@ -70,6 +72,10 @@ check('the entry relaunches itself (it hands a DSH kernel on to dsh)',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
 check('the entry on Claude is not re-targeted',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, hostEntry: entry })) === JSON.stringify(entryArgv.slice(1)))
+check('with DSH in the entry (DSH_TUI_HOST_ENTRY_DSH=1) a DSH relaunch under dsh moves to the entry',
+  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
+check('with DSH in the entry the entry relaunches itself on DSH',
+  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, 'foo']))
 const noSeparator = ['/node', '/dsh/lib/bin.js', '--profile', 'dsh-tui']
 check('a dsh argv without app args gives the entry none',
   JSON.stringify(restartArgv({ execArgv: [], argv: noSeparator, kernel: 'claude', switching: true, hostEntry: entry })) === JSON.stringify([entry]))

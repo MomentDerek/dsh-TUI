@@ -281,6 +281,7 @@ Profile 模式不再使用旧的 `DSH_TUI_COMPACT_RATIO`、`DSH_TUI_COMPACT_RETA
 | `DSH_TUI_RESUME_BACKEND` | `DSH_TUI_RESUME_SESSION` 的来源后端，只在启动器**派生**恢复目标时（裸 `--resume` 读该后端的上次会话、安全模式重试按最后运行记录）设置；boot 若落在别的后端（未装的 id 回落 `dsh`、没给 `DSH_TUI_BACKEND` 时跟随记住的内核）就撤销该目标并告警。裸 `--resume` 请求仍保留，改读最终后端自己的上次会话；用户显式给出的 id 不带此标记、原样透传 |
 | `DSH_TUI_BACKEND` | 会话后端（内置 `dsh` / `claude` / `codex`，或已装的插件后端），通常由 `dsh-tui --backend` 设置；未安装或写错的 id 按 `dsh` 启动并告警 |
 | `DSH_TUI_HOST_ENTRY` | 设为 `0` 时 Claude 内核也经 `dsh --profile` 启动（默认走本包入口、不组合 DSH profile） |
+| `DSH_TUI_HOST_ENTRY_DSH` | 实验性：设为 `1` 时 DSH 内核也走本包入口——先出界面，再在同一进程里组合 DSH profile 并接管其会话（默认 DSH 内核经 `dsh --profile` 启动）。`DSH_TUI_HOST_ENTRY=0` 时不生效 |
 | `DSH_TUI_CLAUDE_PERMISSION_MODE` | Claude 后端的起始权限模式（`default`/`acceptEdits`/`plan`/`dontAsk`/`bypassPermissions`），优先于 `/permission` 记住的选择 |
 | `DSH_TUI_WORKSPACE_TARGET` | 启动时解析的工作区路径或 URI，通常由 `dsh-tui <目标>` 设置 |
 | `DSH_TUI_SESSION_ROOT` | 覆盖 JSONL 会话根目录；profile 默认 `$DSH_HOME/sessions`，裸 `cordis.yml` 默认 `~/.dsh-tui/sessions` |

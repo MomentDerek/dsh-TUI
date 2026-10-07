@@ -50,7 +50,7 @@ import { registerChannelOwner, type ChannelOwner } from '../owner.js'
 import { unavailablePermissionPresetSnapshot } from '../permissions.js'
 import { createPreferences } from '../preferences.js'
 import { createSettingsHosts } from '../settings-host.js'
-import { createInitialChannelView, type ChannelLaunchOptions } from '../state.js'
+import { createInitialChannelView, type ChannelLaunchOptions, type ChannelStartup } from '../state.js'
 import type { ChannelState, SubagentTranscriptView } from '../types.js'
 import { createCapabilityDelegates, installChannelActions } from './actions.js'
 import { createBindingFeed, type BindingFeedHooks } from './binding-feed.js'
@@ -764,7 +764,8 @@ export function createCoreChannel(
       activity: { apply: (event, replaying) => { if (activityOwned()) activity.apply(event, replaying) } },
       trajectory: { observe: (event, replaying) => { if (trajectoryOwned()) agentTrajectory.observe(event, replaying) } },
       checkContextWarning, notify: (...args) => notify(...args),
-      renderer: host.rendererRuntime,
+      // Read per event: the tuiRenderers row can compose after the mount.
+      get renderer() { return host.rendererRuntime },
       selectionAttached: messageId => selectionAttachments.take(messageId),
     },
     resetTrajectory: () => { if (trajectoryOwned()) agentTrajectory.reset() },
@@ -879,7 +880,7 @@ export function createCoreChannel(
     binding,
     state,
     rowIds,
-    workspace: host.workspaceService,
+    get workspace() { return host.workspaceService },
     resetProjection: feed.resetProjection,
     notify,
     unavailable,
@@ -913,10 +914,14 @@ export function createCoreChannel(
   const adoptStartup = (startup: NonNullable<ChannelLaunchOptions['startup']>): void => {
     const adoption = binding.capture()
     let history: readonly AgentEvent[] = []
+    let route: ChannelStartup['route']
+    let agentPreset: string | undefined
     const backend = state.backendCapabilities.backendLabel
     void binding.prepare(adoption, async () => {
       const opened = await startup
       history = opened.history
+      route = opened.route
+      agentPreset = opened.agentPreset
       return opened.session
     }).then(candidate => {
       const previousCwd = state.cwd
@@ -932,6 +937,14 @@ export function createCoreChannel(
         state.cwd = candidate.cwd
         state.displayCwd = host.workspaceService.describe(candidate.cwd).description ?? candidate.cwd
         state.backendCapabilities = snapshotOf(candidate)
+        // What the opener resolved only now (the in-process DSH kernel's
+        // route and preset); written before the extensions attach, so
+        // whatever they set wins.
+        if (route !== undefined) {
+          state.provider = route.provider
+          state.model = route.model
+        }
+        if (agentPreset !== undefined) state.agentPreset = agentPreset
         controls.reset()
         attachOnAdopt(candidate)
         state.ready = true
@@ -960,7 +973,7 @@ export function createCoreChannel(
    *  card, `/workspace`'s handoff): the core `/new` with a target. */
   const workspaces = createWorkspaceActions(state, {
     owner,
-    service: host.workspaceService,
+    get service() { return host.workspaceService },
     newSession: target => sessionSwitch.newSession(target),
     refreshGitBranch: () => refreshGitBranch(),
     notify,
@@ -1093,7 +1106,7 @@ export function createCoreChannel(
       // only after the owner is registered and the complete delegate surface
       // is installed; the outer construction transaction rolls every step back.
       extension.start?.before?.()
-      startHostSubscriptions(host, owner, state)
+      startHostSubscriptions(host, owner, state, channelHost)
       extension.start?.after?.()
       // The startup session's history, read ahead of construction, paints
       // before any live event (an extension owning the facts replays its own).

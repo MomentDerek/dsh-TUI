@@ -1599,8 +1599,11 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // 判定；入口自己会再读 Config 行，钉在 DSH 上时原样交给 dsh。dsh 自己的
   // 一次性开关（--version、--dump-config* 等 hostArgs）始终交给 dsh。
   // DSH_TUI_HOST_ENTRY=0 关闭分流，所有内核都回到 `dsh --profile`。
+  // DSH_TUI_HOST_ENTRY_DSH=1（实验，Phase 2）让 DSH 内核也走本包入口：入口先挂
+  // 界面，再把 profile 组合进同一个 Cordis 根（src/kernelPrefs.ts）。
   const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
   const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
+  const dshInEntry = hostEntryEnabled && process.env.DSH_TUI_HOST_ENTRY_DSH === '1'
   const pickKernel = value => {
     const id = typeof value === 'string' ? value.trim().toLowerCase() : ''
     return KERNEL_IDS.includes(id) ? id : undefined
@@ -1619,8 +1622,9 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   }
   // 必须在首次 spawn 之前：本次启动的 TUI 写的记录都晚于这个时刻。
   noteLaunchChain()
-  if (hostEntryEnabled && hostArgs.length === 0 && launchKernel() === 'claude') {
-    settleFirstResult(await startEntrySession(hostEntry, args), firstArgs)
+  if (hostEntryEnabled && hostArgs.length === 0 && (dshInEntry || launchKernel() === 'claude')) {
+    // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
+    settleFirstResult(await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env), firstArgs)
   } else {
     settleFirstResult(await startDshSession(firstArgs), firstArgs)
   }

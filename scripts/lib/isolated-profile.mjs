@@ -30,7 +30,7 @@
  * sits outside the global install (its `node_modules` still linked) routes
  * correctly. A dsh-installed profile is unaffected.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { delimiter, dirname, join, relative } from 'node:path'
@@ -46,10 +46,12 @@ export function executable(name) {
 
 /**
  * Build the isolated profile.
- * @param {{ repo: string, prefix?: string }} options - `repo`: this checkout.
+ * @param {{ repo: string, prefix?: string, profilesNodeModules?: boolean }} options - `repo`: this checkout;
+ *   `profilesNodeModules: false` leaves out the link to the source home's
+ *   `profiles/node_modules` (a fresh dsh 0.2 install may have none).
  * @returns {{ root: string, dshHome: string, profile: string, launcher: string, dshEntry: string, dshBin: string }}
  */
-export function buildIsolatedProfile({ repo, prefix = 'dsh-tui-isolated-' }) {
+export function buildIsolatedProfile({ repo, prefix = 'dsh-tui-isolated-', profilesNodeModules = true }) {
   if (!existsSync(join(repo, 'lib', 'types', 'index.js'))) throw new Error('run pnpm compile first')
   const dshEntry = executable('dsh')
   const sourceHome = process.env.DSH_HOME ?? join(homedir(), '.dsh')
@@ -91,7 +93,7 @@ export function buildIsolatedProfile({ repo, prefix = 'dsh-tui-isolated-' }) {
   mkdirSync(join(modules, '@anthropic-ai'))
   symlinkSync(realpathSync(join(repo, 'node_modules', '@anthropic-ai', 'claude-agent-sdk')), join(modules, '@anthropic-ai', 'claude-agent-sdk'), 'dir')
   const fallback = join(sourceHome, 'profiles', 'node_modules')
-  if (existsSync(fallback)) symlinkSync(fallback, join(dshHome, 'profiles', 'node_modules'), 'dir')
+  if (profilesNodeModules && existsSync(fallback)) symlinkSync(fallback, join(dshHome, 'profiles', 'node_modules'), 'dir')
   return { root, dshHome, profile, launcher: join(tuiPackage, 'bin', 'dsh-tui.js'), dshEntry, dshBin: relocateDsh(root, dshEntry) }
 }
 
@@ -110,6 +112,9 @@ function relocateDsh(root, dshEntry) {
   const bin = join(root, 'dsh-bin')
   mkdirSync(bin, { recursive: true })
   const entry = join(host, relative(packageDir, dshEntry))
-  writeFileSync(join(bin, 'dsh'), `#!/bin/sh\nexec '${process.execPath}' '${entry}' "$@"\n`, { mode: 0o755 })
+  // A link, as npm installs a bin: the package entry finds the host package
+  // from the realpath of the `dsh` on PATH (src/dsh-adapter/host-dsh.ts).
+  chmodSync(entry, 0o755)
+  symlinkSync(entry, join(bin, 'dsh'))
   return bin
 }

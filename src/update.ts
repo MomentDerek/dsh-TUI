@@ -8,7 +8,7 @@ import { gte, gt, lt, valid } from 'semver'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
 import { stripResumeArgs } from './sessionHistory.js'
-import { HOST_ENTRY_PATH_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, hostEntryDisabled, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
+import { HOST_ENTRY_PATH_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, hostEntryDisabled, hostEntryDshEnabled, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
 import { classifyReplacementOutcome, formatHandoffNotice, handoffEventTag, writeHandoffStage } from './handoffEvents.js'
 import { HANDOFF_ACK_FD_ENV, HANDOFF_ATTEMPT_ENV, HANDOFF_SCREEN_ENV, parseHandoffAckLine } from './handoffAck.js'
 import { DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from './ink/termio/csi.js'
@@ -2187,7 +2187,9 @@ export function restartChildEnv(
  * process is not already it: a DSH-hosted process would otherwise relaunch
  * `dsh --profile` and boot Claude through the whole DSH composition. The
  * entry hands a DSH launch back to dsh itself, so the other direction needs
- * no change. Exported for scripts/verify-host-entry.
+ * no change — unless the DSH kernel runs in the entry too
+ * (`DSH_TUI_HOST_ENTRY_DSH=1`, `dshInEntry`): then a DSH replacement goes to
+ * the entry as well. Exported for scripts/verify-host-entry.
  */
 export function restartArgv(input: {
   readonly execArgv: readonly string[]
@@ -2197,6 +2199,8 @@ export function restartArgv(input: {
   /** Whether this is a kernel switch (resume flags are dropped). */
   readonly switching: boolean
   readonly hostEntry: string | undefined
+  /** The DSH kernel runs in the entry as well (`DSH_TUI_HOST_ENTRY_DSH=1`). */
+  readonly dshInEntry?: boolean
 }): string[] {
   // A kernel switch must not hand the replacement THIS kernel's resume
   // flags: an inherited `--resume <id>` in argv would send the new kernel
@@ -2204,7 +2208,8 @@ export function restartArgv(input: {
   // same reason DSH_TUI_RESUME_SESSION is deleted below.
   const strip = (args: readonly string[]): string[] => input.switching ? stripResumeArgs(args) : [...args]
   const script = input.argv[1]
-  if (input.kernel === 'claude' && input.hostEntry !== undefined && script !== input.hostEntry) {
+  const viaEntry = input.kernel === 'claude' || (input.kernel === 'dsh' && input.dshInEntry === true)
+  if (viaEntry && input.hostEntry !== undefined && script !== input.hostEntry) {
     // The app arguments: everything after dsh's own `--`.
     const separator = input.argv.indexOf('--', 2)
     const appArgs = separator === -1 ? [] : input.argv.slice(separator + 1)
@@ -2223,6 +2228,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
     kernel: options.backend ?? options.kernel,
     switching: options.backend !== undefined,
     hostEntry: hostEntry === undefined || hostEntry === '' || hostEntryDisabled() ? undefined : hostEntry,
+    dshInEntry: hostEntryDshEnabled(),
   })
   logRestartEvent(`${tag}: spawning replacement`, {
     node: process.execPath,

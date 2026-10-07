@@ -2,7 +2,7 @@
  * Opt-in startup timing probe (docs/standalone-host-design.md, Phase 0
  * baseline), not a CI check.
  *
- * Run: pnpm compile && node scripts/probe-startup-baseline.mjs [--backend dsh|claude] [--entry host|profile] [--runs 5]
+ * Run: pnpm compile && node scripts/probe-startup-baseline.mjs [--backend dsh|claude] [--entry host|host-dsh|profile] [--runs 5]
  *
  * Requires the installed dsh and dsh-tui profile (like
  * verify-installed-startup.mjs) and the host's node-pty. Copies the profile
@@ -45,9 +45,12 @@ const backend = option('--backend', 'dsh')
 // `--entry host` (default): the launcher routes as shipped, so the Claude
 // kernel runs in the package's own entry (lib/types/dsh-adapter/host-entry.js).
 // `--entry profile`: DSH_TUI_HOST_ENTRY=0, every kernel inside `dsh --profile`
-// (the Phase 0 baseline path). Both count from spawning the launcher.
+// (the Phase 0 baseline path). `--entry host-dsh`: as `host`, plus
+// DSH_TUI_HOST_ENTRY_DSH=1, so the DSH kernel runs in the entry too (Phase 2
+// single root: the screen first, then the profile composes into the same
+// root). All count from spawning the launcher.
 const entryMode = option('--entry', 'host')
-if (entryMode !== 'host' && entryMode !== 'profile') throw new Error(`--entry host|profile, got ${entryMode}`)
+if (entryMode !== 'host' && entryMode !== 'host-dsh' && entryMode !== 'profile') throw new Error(`--entry host|host-dsh|profile, got ${entryMode}`)
 const runs = Number(option('--runs', '5'))
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const { root, dshHome: targetHome, launcher, dshEntry, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-baseline-' })
@@ -71,13 +74,14 @@ async function run(index) {
     DSH_TUI_WORKSPACE_TARGET: process.cwd(),
     DSH_TUI_BACKEND: backend,
     ...(entryMode === 'profile' ? { DSH_TUI_HOST_ENTRY: '0' } : {}),
+    ...(entryMode === 'host-dsh' ? { DSH_TUI_HOST_ENTRY_DSH: '1' } : {}),
     DSH_TUI_BOOT_TRACE: trace,
     DSH_TUI_LANG: 'en',
     DSH_TELEMETRY_MODE: 'DISABLED',
     NODE_ENV: 'production',
     TERM: 'xterm-256color',
   }
-  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HOST_ENTRY_PATH', 'DSH_TUI_PROFILE', ...(entryMode === 'host' ? ['DSH_TUI_HOST_ENTRY'] : [])]) delete env[key]
+  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HOST_ENTRY_PATH', 'DSH_TUI_PROFILE', ...(entryMode === 'profile' ? [] : ['DSH_TUI_HOST_ENTRY']), ...(entryMode === 'host-dsh' ? [] : ['DSH_TUI_HOST_ENTRY_DSH'])]) delete env[key]
   const terminal = new xterm.Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
   const startedAt = Date.now()
   const child = pty.spawn(process.execPath, [launcher], { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd: process.cwd(), env })
@@ -124,7 +128,7 @@ async function run(index) {
   return result
 }
 
-const COLUMNS = ['dsh-process', 'entry-start', 'entry-modules', 'entry-config', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'settings-wait-start', 'settings-wait-end', 'render-start', 'render-done', 'inject', 'prompt', 'startup-adopted']
+const COLUMNS = ['dsh-process', 'entry-start', 'entry-hijacked', 'entry-modules', 'entry-config', 'entry-compose-start', 'entry-compose-end', 'entry-dsh-attach', 'row-apply', 'runtime-apply', 'session-open-start', 'session-open-end', 'settings-wait-start', 'settings-wait-end', 'render-start', 'render-done', 'inject', 'prompt', 'startup-adopted']
 const results = []
 try {
   for (let index = 0; index < runs; index += 1) {
