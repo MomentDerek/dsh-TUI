@@ -1851,17 +1851,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           // never CLEARS a marker, so a session the user still has cannot be
           // dropped by a failure that happened before the first message landed.
           writeResumeMarkers: () => {
-            if (isExitResumable({
-              pendingCount: channel.pending.length,
-              liveAgent: ctx.agents.get(SessionId(channel.agentId)),
+            writeCrashResumeMarkers({
+              ctx,
+              backendStart,
+              channel,
               startupAgent: agent,
-            })) {
-              writeResumeTarget(channel.agentId)
-            }
-            // Non-DSH sessions use their backend preference as the launcher marker.
-            if (backendStart !== undefined && backendStart.persisted(channel.agentId, channel.rows)) backendStart.sessionPrefs.setLastSession(channel.agentId)
-            // So the launcher's retry reopens this session, not the boot-time one.
-            refreshLastRunRecord()
+              writeResumeTarget,
+              refreshLastRunRecord,
+            })
           },
           finish: crashLine => {
             void finishExit(
@@ -2656,6 +2653,48 @@ export function runCrashExit(deps: CrashExitDeps): void {
     // Resume persistence is best effort and must never block the exit.
   }
   deps.finish(`dsh-tui crashed: ${detail.message}`)
+}
+
+/**
+ * The crash tail's resume markers (runCrashExit's writeResumeMarkers), separate
+ * so scripts/verify-shutdown-fallback can drive it on a bare Context. A crash
+ * leaves the marker a clean exit would leave, but never CLEARS one: a DSH
+ * session writes `resume.txt` when it is resumable, a non-DSH session its
+ * backend preference when the backend has persisted it. Then the last-run
+ * record, so the launcher's retry reopens this session, not the boot-time one.
+ */
+export function writeCrashResumeMarkers(deps: {
+  readonly ctx: Context
+  /** The non-DSH backend startup; undefined on the DSH kernel. */
+  readonly backendStart: {
+    persisted(sessionId: string, rows: readonly { readonly kind: string }[]): boolean
+    readonly sessionPrefs: { setLastSession(sessionId: string): void }
+  } | undefined
+  readonly channel: {
+    readonly agentId: string
+    readonly pending: readonly unknown[]
+    readonly rows: readonly { readonly kind: string }[]
+  }
+  readonly startupAgent: Agent | undefined
+  readonly writeResumeTarget: (sessionId: string) => void
+  readonly refreshLastRunRecord: () => void
+}): void {
+  const { ctx, backendStart, channel } = deps
+  // The DSH registry exists only on a DSH composition: the standalone entry
+  // runs a non-DSH kernel on a bare root without `ctx.agents`.
+  if (backendStart === undefined) {
+    if (isExitResumable({
+      pendingCount: channel.pending.length,
+      liveAgent: ctx.agents.get(SessionId(channel.agentId)),
+      startupAgent: deps.startupAgent,
+    })) {
+      deps.writeResumeTarget(channel.agentId)
+    }
+  } else if (backendStart.persisted(channel.agentId, channel.rows)) {
+    // Non-DSH sessions use their backend preference as the launcher marker.
+    backendStart.sessionPrefs.setLastSession(channel.agentId)
+  }
+  deps.refreshLastRunRecord()
 }
 
 /**
