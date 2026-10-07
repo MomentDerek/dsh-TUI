@@ -412,7 +412,7 @@ TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设
 5. PR #1216 先合入还是关闭（第 8 节）。
 6. 是否接受 Claude 内核在 Phase 1 之后失去第三方 Cordis 插件扩展（5.7、6.2），或要求轻量
    profile 先行。
-7. `@deepseek-ai/dsh/profile-boot` 加入 blessed 包与 peer 依赖。
+7. `@deepseek-ai/dsh/profile-boot` 加入 blessed 包与 peer 依赖。（2026-10-07：已与维护者沟通，`@deepseek-ai/dsh` 成为依赖，2.6 落地。）
 
 ## 实施记录
 
