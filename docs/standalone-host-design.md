@@ -1205,9 +1205,122 @@ crash-detail、exit-resume-marker 通过。
   `excludeNetwork` 一并登记。
 - 2.7：守卫放宽（上面第 1 条）；第三方插件三样例；真实模型请求下 working line 与审批未验证。
 
+### 2026-10-07 · Phase 2 第 2.4 块：入口 DSH 路径收尾
+
+（写于交接一节之后。）**结论：DSH 内核默认走入口进程内。**`DSH_TUI_HOST_ENTRY_DSH=0` 关回
+`delegateToDsh`；`DSH_TUI_HOST_ENTRY=0` 两个内核都回 `dsh --profile`；宿主探测失败自动回退。
+
+- **宿主定位**：`findHostDsh()` 返回 `{packageDir, launcher, via: link|shim|beside|volta}` 或
+  `{reason}`（`locateHostDsh` 保留为包装）。link 按 realpath；启动脚本（pnpm cmd-shim、手写 wrapper、
+  npm 的 `.cmd` / `.ps1`）只读 ≤ 64 KiB 文本，抽出 `.js/.mjs/.cjs` 路径并展开 `$basedir`、`%~dp0`、
+  `%dp0%`、`$PSScriptRoot`、`$(dirname "$0")`；volta 查 `$VOLTA_HOME/tools/image/packages/…`，不调 CLI。
+  能力探测读宿主版本（只报告不拦截），import 失败或缺导出抛带原因的错误（清单新增 `StartupError`、
+  `getDshRuntimeVersion`）。
+- **回退可见**（`noteHostUnavailable`）：渲染前一行 stderr（交接与 restart 子进程不写）、
+  `DSH_TUI_DEBUG` 日志、界面 10 秒 warning notice「Not using the installed dsh: …」。同进程 Claude 回退经
+  `RuntimeApplyOptions.hostNotice`；交给 `dsh --profile` 的子进程经内部环境变量 `DSH_TUI_HOST_NOTICE`
+  （plugin 读一次后删除）。`delegateToDsh` 无应用参数时不再传 `--`。
+- **占位期**：home 与首启引导在 `channel.ready === false` 时初值为 false，接管后由 effect 打开一次
+  （已进 settings / tree 不开，启动失败不开；profile 路径挂载即 ready，首帧不变）。**代价：入口 DSH
+  路径先出界面、接管后约 1–2s 才弹 home，待确认。**落地页 preset 预热也等 ready（消掉 HEAD 上就有的
+  「Not supported by this kernel: preset」噪声）。provider URI 工作区目标在本地 runtime 解析不了时延后
+  （`deferredWorkspace`），在 `attachDsh` 经组合出的 `tuiWorkspaces` 解析，失败落失败行。
+- **失败后 `/new`**：组合成功、会话打开失败 → `attachDsh` 装好 `openDshSession`（`resolveAgent`：preset、
+  路由校验、mount 预留、`agents.create`，加工作区归属），经 `options.openSession` 接管、由 2.1 的窗口挂
+  扩展；组合失败 → 提示只给 `/kernel`、`/quit`（核心新增后端中立的 `StartupOpenError` 带 `hint`）。
+  组合期间会话打开也失败时以组合结果为准（slot 钩子 `composeSucceeded`），组合失败后才打开的会话被
+  关掉。`refreshHostServices()` 提前到 seams 之后、`resolveAgent` 之前。
+- **组合失败日志**：`compose()` 照 `boot()` 用一次性 Context 挂 logger exporter 收 warn/error；
+  `writeStartupReport` 复刻 `reportStartupFailure` 的写文件半边（`$DSH_HOME/logs/startup-<iso>-<uuid>.log`，
+  目录 0700、文件 `wx` 0600），抛 `HostComposeError(original, logPath)`；失败行写日志路径（已接管时用持久
+  行）。**偏差**：bin.js 只对 StartupError 写报告，入口对所有组合失败都写。
+- **「Starting DSH…」**：占位期（未就绪且未失败）StatusLine 前缀 `Starting {{backend}}…`，落地页无 notice
+  时 Tips 行同文（**Claude 占位期也显示，新增可见行为**）。入口 DSH 下挂 `onFrame`，
+  `slot.firstFrameFlushed()` 等首帧（最多 1s）并排空 stdout，compose 前 await，新打点
+  `entry-first-frame-flushed`（与 `entry-compose-start` 同毫秒，几乎不花时间）。
+- 文档：configuration*、guide 副本、README / README_ZH、claude-backend*；`probe-startup-baseline` 加
+  `--entry host-delegate`，默认 `host` 即 `host-dsh`。`verify-safe-mode` 的回退矩阵钉
+  `DSH_TUI_HOST_ENTRY_DSH=0`（默认翻转后 stub dsh 会走入口回退）。
+
+**验证**：`pnpm build`（89 项）、`verify:package` 通过；host-entry 31（+12：开关、npm link、pnpm shim、
+wrapper、`.cmd` 抽取、不认识的脚本、二进制、volta、PATH 无 dsh、第一个 dsh 说了算）、launcher +4、
+launchpad 210（LR4 计数 6 → 7）、startup-adoption 46、backend-channel 191、tui-settings 20、startup-argv
+183 等通过；channel-ui 4 项既有失败。验收 30/30（新增 12：`dsh-default-starting`(-landing)、两个关闭开关、
+`dsh-shim-host`、`dsh-host-fallback`、`dsh-home-held`、`dsh-onboarding-held`、`dsh-provider-workspace`、
+`dsh-unknown-workspace`、`dsh-compose-failed`、`dsh-open-failed-new`；去掉修复各自变红）。
+
+**环境事故**：本块跑 `scripts/verify-installed-startup.mjs` 时（它复制真实 profile 未排除 dsh-purge），
+dsh-purge 于 09:17 改写了全局 dsh 的 `lib/bin.js`（import 不存在的 `profile-boot-BP_C0vpU.js`），本机所有
+`dsh --profile` 启动失败，待用户修复。经 dsh 的验收用例在隔离副本里临时改回 import 后跑过、已还原。
+脚本已修：复制时从 `package.json` 的依赖与 bundles、`cordis.patch.yml` 的 `dsh-purge*` 行都去掉
+（`!!js` 标签按 `tag:yaml.org,2002:js` 往返，已对仓库补丁核对 24/24）。
+
+**数字**（3 轮中位数，ms，从 spawn 启动器起算；空循环 2.1–2.5s，另有 agent 并行验收，只同轮可比）：入口
+DSH 劫持 359、首帧 1388 / prompt 1549、组合 1423–2783（约 1360）、可发送 3135；profile DSH 首帧 2605 /
+prompt 2757、首帧即可发送。首帧提前约 47%，可发送晚约 380ms；组合区间比 2.3 的约 810ms 宽，原因未查。
+
+**交给后续**：2.6——探测清单、`writeStartupReport` 与 exporter 进对照表、`HostComposeError`、shim 的
+win32 `resolve` 未在 win32 验证；2.7——`StartupOpenError`、`status-starting`、`host-dsh-unavailable`、
+`DSH_TUI_HOST_NOTICE` 的可见面，home 两步切换，Claude 占位期的 Starting。
+
+### 2026-10-07 · Phase 2 第 2.5 块：单根下的信号与退出所有权
+
+（写于交接一节之后。）在独立 worktree 做完，以补丁合入（与 2.4 在 `host-entry.ts`、`host-dsh.ts`、
+`plugin.ts`、`accept-host-entry.mjs` 有并排新增的冲突，均为两边都保留）。
+
+- **退出码语义**：SIGTERM / SIGHUP / SIGINT 都走 TUI 退出漏斗，最后**以同一信号结束**。理由：启动器只把
+  信号死亡当正常结局，任何非零数值都弹安全模式——`runProfile` 的 SIGINT → 130 与启动器不兼容（今天的
+  `dsh --profile` 路径潜在存在），SIGTERM → 0 兼容但对 `timeout`、tmux、服务管理器隐藏了被终止；修复 G
+  已对 TERM/HUP 这样做，这次纳入 INT。
+- **实现**：新 `src/dsh-adapter/process-exit.ts`（`installEntrySignals`、`dieBySignal`、`ProcessExitSeam`）。
+  运行时挂载后把漏斗填进 seam、拆除时清空；漏斗照 `/quit` 走（marker、last-run、恢复终端、释放根）后
+  `dieBySignal`；释放根卡住 5s 后同样以信号结束；入口自身 7s 兜底；第二次信号立即强退；无漏斗（挂载前、
+  拆除中）时入口自己释放根（限 5s）。`dieBySignal` 只摘入口自己的监听器（渲染器的 signal-exit 清理照常），
+  若外来监听器留住进程，0.5s 后清掉全部监听器再发一次。`createProcessShutdown` 的 `interrupt` 半边
+  **刻意不复刻**，文件头写明由 `process-exit.ts` 取代及与 0.2.0-rc.2 的差异。
+- **`appExit`**：`provideCmdline` 的 exit 先交给漏斗（按 `/quit` 走完后以该码结束），漏斗拒绝（拆除中）才
+  回退到复刻的 `shutdown`。
+- **failLoud 与 TUI 崩溃漏斗**：DSH 的 failLoud 装得早、监听器排在 TUI 进程守卫前，实测它先以 1 退出、TUI
+  崩溃行丢失、修复 I 的吸收器被挡住。做法：`apply` 返回且 TUI 进程守卫在位（新 `processGuardActive()`）
+  时入口 `uninstallFailLoud()`，之后致命错误只有一个出口（守卫 → `runCrashExit`：崩溃行、crash.log、
+  `writeCrashResumeMarkers`、恢复终端、退出码 1）。`DSH_TUI_NO_185_PROCESS_GUARD=1` 时保留 failLoud。
+  卸载点选 apply 之后：用例 `dsh-entry-row-activation-fails`（插一行激活即抛的插件）证明此时点不需要
+  failLoud 对审计期激活失败的过滤。
+- **20s 收尾的结论**：不是释放根。关掉 `excludeNetwork` 复测，`entry-dsh-opened` → `entry-dsh-owned` 间出现
+  10s 同步阻塞（flock 的 `getReport` 反向 DNS），收尾时长不变——spike 那次的退出是在等这段阻塞结束。
+  2.3 的 `excludeNetwork` 已修掉。restart.log 每次退出多一行 `dispose: root disposed {ms}`。
+- **`/kernel`、`/restart`、`/update`**：两向 `/kernel` 与 `/restart` 的替身都是入口进程，fd 3 首帧 ACK 由替身
+  发，alt screen 不掉，旧进程监督 15s 不崩。监督期（新 `superviseReplacement`，`/update` 也接上）：发给旧
+  进程的 SIGTERM 转给替身；SIGINT / SIGHUP 不转（进程组已发给替身）；替身以终止信号结束时监督者以同一
+  信号结束。只在非交接或交接已收到首帧后这样处理；交接已发起、根未释放完时收到信号返回 `supervising`
+  （不设兜底），二次信号仍可强退。**行为变化**：非交接 `/restart` 的替身在挂载前死于 SIGINT 时，监督者与
+  启动器都以 SIGINT 结束（以前打印「会话保留、可 resume」后以 1 退出并弹安全模式）。`/update` 无专门用例。
+- **`delegateToDsh` 吞信号（既有 bug，2.4 默认翻转后暴露在回退路径）**：转发器与 SIGINT 空处理器接住了
+  入口重现子进程死因的 `process.kill(self, sig)`，入口以 0 退出。修：重现前摘掉转发器。无头回归用假
+  `dsh` 分别死于 INT/TERM/HUP、数值退出码透传、SIGTERM 转发（去掉修复变红）。
+- 其他改动：`src/dsh-adapter/test-faults.ts`（仅测试用 `DSH_TUI_TEST_FAULT=render|runtime|rejection|app-exit:<code>[@ms]`）；
+  `update.ts` 的 `TuiRestartOptions.onSpawn` / `onTerminationSignal`、`updateTuiAndRestart` 第 5 参；
+  `src/ink/update-overflow-guard.ts` 的 `processGuardActive`；`scripts/verify-entry-process-exit.ts`（24 项，
+  进 input-terminal 组）；`verify-handoff-atomic` 正则放宽。
+
+**验收**：`accept-host-entry.mjs` 第 7 节 18 个用例（显式 `DSH_TUI_HOST_ENTRY_DSH=1`）：TERM / HUP / INT 各分
+启动期与接管后、二次信号、`/quit`、Ctrl+C、`app-exit`、崩溃 render / runtime / rejection、`/restart`、
+`/restart` 后 SIGTERM、两向 `/kernel`、row-activation-fails。断言退出码或信号、收尾时长、无释放根超时、
+终端恢复、无遗留进程、安全模式提示有无（崩溃要求出现）、会话落盘（`/rename` 写 title 事件，逐帧解
+zstd 检查）、last-run 刷新；崩溃另查只有一行崩溃行、无 `dsh: fatal`、crash.log 已写。数字：释放根
+54–119ms；接管后信号 / 命令到进程消失 0.26–0.39s；组合期间信号 1.0–1.5s（等约 0.8s 冻结）；二次信号约
+110ms；崩溃到退出约 300ms；`appExit` 约 305ms。
+
+**遗留**：启动期信号偶发释放根卡满 5s（约 1/25，只在组合期间；结果仍正确），下次在 `signal: received`
+带上最后一个 `entry-*` 打点定位；5.5 的 `process.on('exit')` 兜底判断不需要；Windows 未测
+（`process.kill(self, sig)` 语义不同）；`DSH_TUI_TEST_FAULT` 是产品代码里的测试开关，登记方式归 2.6。
+交给 2.6：`uninstallFailLoud` 时点、`processGuardActive`、`exitSeam`、restart 选项与参数、「不复刻
+`interrupt`、退出码语义不同」进契约；交给 2.7：第三方插件自挂 `process.on(sig)` 的退出行为、守卫放宽期间
+第三方插件的崩溃路径。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
-> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.3 已完成（2.1 已提交，2.0 / 2.3 未提交）；下一步 2.4 / 2.5。**
+> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.5 已完成（2.4 / 2.5 未提交）；下一步 2.6 / 2.7。**
 >
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
