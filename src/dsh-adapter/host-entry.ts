@@ -25,8 +25,9 @@
  *     dsh-tui row finds the mounted screen (./entry-slot.ts), opens the DSH
  *     session and hands it to the channel, which adopts it.
  * The Claude kernel stops after 2 (no profile, no `tui*` services).
- * Signals dispose the root (the exit funnel restores the terminal) before
- * the process exits.
+ * This process owns its signals and its exit (./process-exit.ts): SIGTERM,
+ * SIGHUP and SIGINT go through the TUI's exit funnel (terminal restored,
+ * root and DSH session disposed) and end the process by the signal.
  */
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
@@ -36,6 +37,7 @@ import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
 import { loadHostDsh, prepareHostRoot, type HostRoot } from './host-dsh.js'
+import { installEntrySignals, type ProcessExitSeam } from './process-exit.js'
 
 markBoot('entry-start')
 // Diagnostic reports without the network section: DSH's native flock loader
@@ -63,18 +65,27 @@ function delegateToDsh(): void {
     ...(windows ? { shell: true } : {}),
   })
   // The terminal's own signals reach dsh through the process group; one sent
-  // to this pid alone is passed on.
-  for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
-    process.on(signal, () => { child.kill(signal) })
-  }
-  process.on('SIGINT', () => undefined)
+  // to this pid alone is passed on (SIGINT only by the group: Ctrl+C would
+  // otherwise reach dsh twice).
+  const forwarders = new Map<NodeJS.Signals, () => void>([
+    ['SIGTERM', () => { child.kill('SIGTERM') }],
+    ['SIGHUP', () => { child.kill('SIGHUP') }],
+    ['SIGINT', () => undefined],
+  ])
+  for (const [signal, forward] of forwarders) process.on(signal, forward)
   child.on('error', error => {
     process.stderr.write(`dsh-tui: cannot start dsh (${error.message})\n`)
     process.exit(1)
   })
   child.on('exit', (code, signal) => {
-    if (signal !== null) process.kill(process.pid, signal)
-    else process.exit(code ?? 0)
+    if (signal === null) {
+      process.exit(code ?? 0)
+      return
+    }
+    // Mirror a signal death: the forwarders above would catch (and swallow)
+    // the re-raised signal, ending this process with 0 instead.
+    for (const [name, forward] of forwarders) process.removeListener(name, forward)
+    process.kill(process.pid, signal)
   })
 }
 
@@ -91,8 +102,10 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // DSH kernel goes back to `dsh --profile`, and the Claude kernel to the
   // Phase 1 entry: this package's own cordis, no host resolution.
   let root: HostRoot | undefined
+  // The runtime's exit funnel fills it once mounted (signals, `ctx.appExit`).
+  const exitSeam: ProcessExitSeam = {}
   try {
-    root = await prepareHostRoot(await loadHostDsh(), { profile, args: process.argv.slice(2), dsh: kernel === 'dsh' })
+    root = await prepareHostRoot(await loadHostDsh(), { profile, args: process.argv.slice(2), dsh: kernel === 'dsh', exitSeam })
     markBoot('entry-hijacked')
   } catch (error) {
     markBoot('entry-host-unavailable')
@@ -102,11 +115,14 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
       return
     }
   }
-  const [{ Config }, { apply, handleStartupError }, { publishEntrySlot }, { deferRootCapabilityGuard }] = await Promise.all([
+  const [{ Config }, { apply, handleStartupError }, { publishEntrySlot }, { deferRootCapabilityGuard }, { processGuardActive }, { armProcessTestFault, readTestFault }, { logRestartEvent }] = await Promise.all([
     import('./index.js'),
     import('./plugin.js'),
     import('./entry-slot.js'),
     import('./host-access.js'),
+    import('../ink/update-overflow-guard.js'),
+    import('./test-faults.js'),
+    import('../update.js'),
   ])
   markBoot('entry-modules')
   const ctx: Context = root?.ctx ?? new (await import('@deepseek-ai/cordis')).Context()
@@ -124,30 +140,15 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
     ...(env.DSH_TUI_RESUME_SESSION === undefined ? {} : { sessionId: env.DSH_TUI_RESUME_SESSION }),
     ...(env.DSH_TUI_BACKEND === undefined ? {} : { backend: env.DSH_TUI_BACKEND as TuiConfig['backend'] }),
   })
-  // Signals: dispose the tree (the TUI's exit funnel restores the terminal
-  // and closes the backend session), bounded, then die by the signal itself.
-  // A numeric 143/129 reads as a crash to the launcher (the safe-mode
-  // prompt); a signal death is passed on.
-  // Only this handler comes off: the renderer's own signal cleanup stays and
-  // re-raises the signal once it is the last listener.
-  let leaving = false
-  const handlers = {
-    SIGTERM: () => { leave('SIGTERM') },
-    SIGHUP: () => { leave('SIGHUP') },
-  }
-  const leave = (signal: keyof typeof handlers): void => {
-    if (leaving) return
-    leaving = true
-    const die = (): void => {
-      process.removeListener(signal, handlers[signal])
-      process.kill(process.pid, signal)
-    }
-    const timer = setTimeout(die, 3000)
-    timer.unref()
-    void ctx.root.fiber.dispose().finally(die)
-  }
-  process.on('SIGTERM', handlers.SIGTERM)
-  process.on('SIGHUP', handlers.SIGHUP)
+  // Signals (./process-exit.ts): through the TUI's exit funnel once it is up,
+  // else a bounded dispose of the root; either way the process then dies by
+  // the signal (a numeric 143/129/130 reads as a crash to the launcher). A
+  // second signal forces the exit.
+  installEntrySignals({
+    seam: exitSeam,
+    disposeRoot: () => ctx.root.fiber.dispose(),
+    log: logRestartEvent,
+  })
   // 2. Mount the screen. On DSH the slot tells the profile's dsh-tui row
   // that this screen exists (and receives the DSH side from the runtime).
   const slot = kernel === 'dsh' && root !== undefined ? publishEntrySlot() : undefined
@@ -155,11 +156,18 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // on them arrives once the profile has composed, as on the profile path.
   const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)
   try {
-    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, ...(slot === undefined ? {} : { entrySlot: slot }) })
+    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }) })
   } catch (error) {
     handleStartupError(ctx, error)
     return
   }
+  // One owner of a fatal error from here on: the TUI's process guard routes
+  // it into the exit funnel (terminal restored, crash line, resume markers,
+  // exit 1). DSH's fail-loud, installed first, would otherwise exit 1 before
+  // the funnel ran and shadow the guard's absorbers (Phase 1 fix I). Without
+  // the guard (DSH_TUI_NO_185_PROCESS_GUARD=1) fail-loud stays.
+  if (root !== undefined && processGuardActive()) root.uninstallFailLoud()
+  armProcessTestFault(readTestFault(), () => ctx.get('appExit' as never) as ((code: number) => void) | undefined)
   if (slot === undefined || root === undefined) return
   // 3. Compose the profile into this root. Past the mount nothing may write
   // to the terminal: host warnings go to the debug log, and a failure lands

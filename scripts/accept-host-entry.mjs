@@ -56,6 +56,19 @@
  *   live-send              DSH_TUI_CLAUDE_LIVE=1 only: one prompt round-trip
  *   live-initial-prompt    DSH_TUI_CLAUDE_LIVE=1 only: a command-line prompt
  *                          is sent once the session is adopted
+ *   dsh-entry-*            block 2.5, the DSH kernel in the entry
+ *                          (DSH_TUI_HOST_ENTRY_DSH=1 set per case): SIGTERM /
+ *                          SIGHUP / SIGINT while starting and after the
+ *                          adoption (ends by the signal), a second signal,
+ *                          /quit, Ctrl+C, `ctx.appExit`, render / runtime /
+ *                          rejection crashes, /restart (and SIGTERM after
+ *                          it), /kernel both ways, a DSH row failing to
+ *                          activate. Each checks the exit status, terminal,
+ *                          no process left, the safe-mode prompt, the DSH
+ *                          session log (a /rename title event) and the
+ *                          teardown time. Faults and appExit come from the
+ *                          test-only DSH_TUI_TEST_FAULT
+ *                          (src/dsh-adapter/test-faults.ts).
  *
  * Every case checks the terminal state after exit (alt screen left, cursor
  * shown, bracketed paste, focus reporting and mouse tracking off) and, on
@@ -78,6 +91,7 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { zstdDecompressSync } from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { TuiTest } from '@microsoft/tui-test'
 import { buildIsolatedProfile, executable } from './lib/isolated-profile.mjs'
@@ -521,6 +535,302 @@ if (live) {
     await checkExit(run, check, { code: 0 })
   })
 }
+
+// ── 6. process ownership with the DSH kernel in the entry (block 2.5) ────
+// docs/standalone-host-design.md 2.5 and src/dsh-adapter/process-exit.ts:
+// signals, `ctx.appExit` and fatal errors go through the TUI's exit funnel;
+// a termination signal ends the process by that signal. Every case sets
+// DSH_TUI_HOST_ENTRY_DSH=1 itself (replacements inherit it) and checks the
+// exit status, the terminal, no process left, no safe-mode prompt where none
+// belongs, the DSH session log on disk and the teardown time (quit/signal →
+// process gone; `dispose: root disposed` in restart.log is the root alone).
+// Faults come from the test-only DSH_TUI_TEST_FAULT (src/dsh-adapter/test-faults.ts).
+const ENTRY_DSH = { DSH_TUI_HOST_ENTRY_DSH: '1' }
+const SAFE_MODE = 'safe mode'
+const entryPidOf = (run, after) => run.marks().find(mark => mark.mark === 'entry-start' && mark.pid !== after)?.pid
+/** The DSH session event logs (DSH_TUI_SESSION_ROOT: <root>/sessions/<cwd>/<id>/session.v4.jsonl.zstd). */
+const dshSessionLogs = () => {
+  const dir = join(root, 'sessions')
+  if (!existsSync(dir)) return []
+  const found = []
+  const walk = path => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const full = join(path, entry.name)
+      if (entry.isDirectory()) walk(full)
+      else if (entry.name.startsWith('session.') && entry.name.endsWith('.zstd')) found.push(full)
+    }
+  }
+  walk(dir)
+  return found
+}
+/** Rename the session: writes a title event into the DSH log without a model request. */
+const titleSession = async (run, title) => {
+  await run.clear()
+  await run.command(`/rename ${title}`)
+  await sleep(800)
+  await run.t.press('Escape')
+  await sleep(200)
+}
+/** The log's text: one zstd frame per append, decoded frame by frame. */
+const sessionLogText = path => {
+  const bytes = readFileSync(path)
+  const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+  const starts = []
+  for (let at = bytes.indexOf(magic); at !== -1; at = bytes.indexOf(magic, at + 1)) starts.push(at)
+  return starts.map((start, index) => {
+    try { return zstdDecompressSync(bytes.subarray(start, starts[index + 1] ?? bytes.length)).toString('utf8') } catch { return '' }
+  }).join('')
+}
+const sessionLogHas = text => dshSessionLogs().some(path => sessionLogText(path).includes(`"title":"${text}"`))
+/** tui-test reports a signal death by its description. */
+const SIGNAL_TEXT = { SIGTERM: 'Terminated', SIGHUP: 'Hangup', SIGINT: 'Interrupt' }
+const lastRunAt = () => {
+  try { return JSON.parse(readFileSync(join(root, '.dsh-tui', 'last-run.json'), 'utf8')).updatedAt } catch { return undefined }
+}
+/** Wait for the PTY child (the launcher) to end; ms from `sentAt`. */
+const waitGone = async (run, sentAt, timeoutMs = 20000) => {
+  await until(async () => { const state = await run.t.state(); return state.exited !== null || state.exit_signal !== null }, timeoutMs, 25)
+  return Date.now() - sentAt
+}
+/**
+ * The block-2.5 exit checks. `signal` or `code` is the expected status;
+ * `title` a session title that must be in the DSH log; `lastRunSince` the
+ * time after which the funnel must have refreshed last-run.json.
+ */
+async function checkOwnedExit(run, check, { signal, code, sentAt, title, lastRunSince, safeMode = false, maxMs = 8000, fromLog, timed = true }) {
+  let ms = await waitGone(run, sentAt)
+  // An exit the TUI itself started (appExit, a fault): from its restart.log line.
+  const startLine = fromLog === undefined ? undefined : run.restartLog().find(line => line.includes(fromLog))
+  if (startLine !== undefined) ms = Date.now() - Date.parse(startLine.split(' ')[0])
+  const state = await run.t.state()
+  const status = `exited=${state.exited} signal=${state.exit_signal}`
+  if (signal !== undefined) check(`ends by ${signal} (${status})`, state.exit_signal === SIGNAL_TEXT[signal], status)
+  if (code !== undefined) check(`exit code ${code}`, state.exited === code && state.exit_signal === null, status)
+  if (timed) check(`teardown ${ms}ms (signal/command → process gone, ≤ ${maxMs})`, ms <= maxMs)
+  const log = run.restartLog()
+  const disposed = log.filter(line => line.includes('dispose: root disposed')).map(line => JSON.parse(line.slice(line.indexOf('{'))).ms)
+  check(`root dispose ${disposed.length === 0 ? 'not logged' : `${disposed.join(', ')}ms`}; no dispose timeout`, !log.some(line => line.includes('dispose: timeout')), log.filter(line => line.includes('dispose')).join('\n'))
+  if (!safeMode) check('no crash in restart.log', !run.restartLog().some(line => / pid=\d+ crash /.test(line)), run.restartLog().filter(line => line.includes('crash')).join('\n'))
+  check(`safe-mode prompt ${safeMode ? 'offered' : 'absent'}`, (await run.screen()).includes(SAFE_MODE) === safeMode, lines(await run.screen()).slice(-6).join('\n'))
+  if (title !== undefined) check('the DSH session log is on disk with its title', sessionLogHas(title), dshSessionLogs().join('\n'))
+  if (lastRunSince !== undefined) check('last-run.json refreshed by the funnel', (lastRunAt() ?? 0) >= lastRunSince, `updatedAt=${lastRunAt()} since=${lastRunSince}`)
+  await checkExit(run, check)
+}
+const launchEntryDsh = async (launch, options = {}) => {
+  const run = await launch({ backend: 'dsh', landing: false, ...options, env: { ...ENTRY_DSH, ...options.env } })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  return run
+}
+const adopted = async (run, check) => {
+  check('DSH session adopted in the entry', await until(() => run.traced('startup-adopted'), 60000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
+}
+const quitNow = async run => {
+  await run.clear()
+  await run.t.type('/quit')
+  await sleep(400)
+  const sentAt = Date.now()
+  await run.t.press('Enter')
+  return sentAt
+}
+
+// Signals, during the startup (the profile composing, the session opening)
+// and after the adoption. The startup ones go out as soon as the screen is up.
+for (const signal of ['SIGTERM', 'SIGHUP', 'SIGINT']) {
+  for (const phase of ['starting', 'adopted']) {
+    await runCase(`dsh-entry-${signal.toLowerCase()}-${phase}`, async ({ check, launch }) => {
+      const run = await launchEntryDsh(launch)
+      const pid = entryPidOf(run)
+      if (pid === undefined) throw new Error('no entry-start mark')
+      const title = `accept-${signal.toLowerCase()}-${Date.now().toString(36)}`
+      if (phase === 'adopted') {
+        await adopted(run, check)
+        await titleSession(run, title)
+      }
+      const sentAt = Date.now()
+      const before = run.traced('startup-adopted')
+      process.kill(pid, signal)
+      check(`signal sent ${before ? 'after' : 'before'} the adoption`, phase === 'adopted' ? before : true)
+      await checkOwnedExit(run, check, { signal, sentAt, ...(phase === 'adopted' ? { title, lastRunSince: sentAt } : {}) })
+      check('the entry took the signal', run.restartLog().some(line => line.includes('signal: received') && line.includes(signal)), run.restartLog().filter(line => line.includes('signal: ') || line.includes('funnel: ')).join('\n'))
+    })
+  }
+}
+
+await runCase('dsh-entry-second-signal', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch)
+  await adopted(run, check)
+  const pid = entryPidOf(run)
+  const sentAt = Date.now()
+  process.kill(pid, 'SIGTERM')
+  await sleep(30)
+  process.kill(pid, 'SIGTERM')
+  await checkOwnedExit(run, check, { signal: 'SIGTERM', sentAt, maxMs: 2000 })
+  check('the second signal forced the exit', run.restartLog().some(line => line.includes('signal: second signal')), run.restartLog().filter(line => line.includes('signal: ')).join('\n'))
+})
+
+await runCase('dsh-entry-quit', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch)
+  await adopted(run, check)
+  const title = `accept-quit-${Date.now().toString(36)}`
+  await titleSession(run, title)
+  const sentAt = await quitNow(run)
+  await checkOwnedExit(run, check, { code: 0, sentAt, title, lastRunSince: sentAt })
+})
+
+await runCase('dsh-entry-ctrlc', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch)
+  await adopted(run, check)
+  const title = `accept-ctrlc-${Date.now().toString(36)}`
+  await titleSession(run, title)
+  await run.t.press('Ctrl+C')
+  await sleep(300)
+  const sentAt = Date.now()
+  await run.t.press('Ctrl+C')
+  await checkOwnedExit(run, check, { code: 0, sentAt, title, lastRunSince: sentAt })
+})
+
+// `ctx.appExit(0)` on the composed root, as a DSH plugin would call it
+// (dsh-cmdline's exit request); DSH_TUI_TEST_FAULT=app-exit:0 makes the call.
+await runCase('dsh-entry-app-exit', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch, { env: { DSH_TUI_TEST_FAULT: 'app-exit:0@6000' } })
+  await adopted(run, check)
+  const title = `accept-appexit-${Date.now().toString(36)}`
+  await titleSession(run, title)
+  const sentAt = Date.now()
+  await checkOwnedExit(run, check, { code: 0, sentAt, title, lastRunSince: sentAt - 3000, fromLog: 'funnel: process exit requested' })
+  check('appExit went through the funnel', run.restartLog().some(line => line.includes('funnel: process exit requested') && line.includes('"code":0')), run.restartLog().slice(-8).join('\n'))
+})
+
+// Fatal errors: one exit — the TUI's crash funnel (terminal restored, one
+// crash line, crash.log, resume markers, exit 1). DSH's fail-loud line must
+// not appear. The launcher then offers safe mode (exit 1 is a crash); the
+// terminal is checked before its prompt restores anything itself.
+for (const fault of ['render', 'runtime', 'rejection']) {
+  await runCase(`dsh-entry-crash-${fault}`, async ({ check, launch }) => {
+    const run = await launchEntryDsh(launch, { env: { DSH_TUI_TEST_FAULT: `${fault}@6000` } })
+    await adopted(run, check)
+    const title = `accept-crash-${fault}-${Date.now().toString(36)}`
+    await titleSession(run, title)
+    const sinceAt = Date.now()
+    check('the crash line is on screen', await until(async () => (await run.screen()).includes('dsh-tui crashed'), 15000), lines(await run.screen()).slice(-8).join('\n'))
+    const crashLine = run.restartLog().find(line => / pid=\d+ crash /.test(line))
+    const state = await run.t.state()
+    const modes = state.modes
+    check('terminal restored by the TUI (before the launcher prompt)',
+      modes.alternate_screen === false && modes.cursor_visible === true && modes.bracketed_paste === false && modes.focus_events === false && state.mouse_mode === 'none',
+      JSON.stringify({ ...modes, mouse_mode: state.mouse_mode }))
+    const screen = await run.screen()
+    check('one crash line, no DSH fail-loud line', screen.split('dsh-tui crashed').length === 2 && !screen.includes('dsh: fatal'), lines(screen).slice(-8).join('\n'))
+    check('crash.log written', existsSync(join(root, '.dsh-tui', 'crash.log')) && readFileSync(join(root, '.dsh-tui', 'crash.log'), 'utf8').includes('test fault'))
+    check('the safe-mode prompt follows', await until(async () => (await run.screen()).includes(SAFE_MODE), 10000, 25), lines(await run.screen()).slice(-4).join('\n'))
+    // The launcher asks once the entry is gone: crash → prompt is the teardown.
+    if (crashLine !== undefined) check(`teardown ${Date.now() - Date.parse(crashLine.split(' ')[0])}ms (crash → entry gone, launcher prompt)`, true)
+    await run.t.type('n')
+    await run.t.press('Enter')
+    await checkOwnedExit(run, check, { code: 1, sentAt: sinceAt, title, lastRunSince: sinceAt - 7000, safeMode: true, timed: false })
+  })
+}
+
+// /restart: the replacement is the entry again, with DSH in it.
+await runCase('dsh-entry-restart', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch)
+  await adopted(run, check)
+  const firstPid = entryPidOf(run)
+  await run.clear()
+  await run.command('/restart')
+  check('a new entry process starts', await until(() => entryPidOf(run, firstPid) !== undefined, 30000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
+  const secondPid = entryPidOf(run, firstPid)
+  check('its dsh-tui row applies in it (DSH in the entry, not dsh)', await until(() => run.traced('row-apply', entry => entry.pid === secondPid), 30000))
+  check('and adopts its DSH session', await until(() => run.traced('startup-adopted', entry => entry.pid === secondPid), 30000))
+  await checkSupervised(run, check)
+  check('no crash in the supervisor', !run.restartLog().some(line => / pid=\d+ crash /.test(line)), run.restartLog().filter(line => line.includes('supervisor') || line.includes('crash')).join('\n'))
+  const sentAt = await quitNow(run)
+  await checkOwnedExit(run, check, { code: 0, sentAt })
+})
+
+// SIGTERM to the replacement after a /restart: it leaves by its funnel and
+// the supervisor follows by the same signal (the launcher: no safe mode).
+await runCase('dsh-entry-sigterm-after-restart', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch)
+  await adopted(run, check)
+  const firstPid = entryPidOf(run)
+  await run.clear()
+  await run.command('/restart')
+  check('a new entry adopts', await until(() => run.traced('startup-adopted', entry => entry.pid !== firstPid), 40000))
+  const secondPid = entryPidOf(run, firstPid)
+  const sentAt = Date.now()
+  process.kill(secondPid, 'SIGTERM')
+  await checkOwnedExit(run, check, { signal: 'SIGTERM', sentAt })
+})
+
+// /kernel both ways with DSH in the entry: the replacement is an entry,
+// it sends the fd-3 ACK, the alternate screen is held across, the old
+// process supervises without crashing.
+const checkHandoff = async (run, check) => {
+  check('the replacement ACKed its first frame on fd 3', await until(() => run.restartLog().some(line => line.includes('handoff/first-frame')), 30000), run.restartLog().filter(line => line.includes('handoff/')).join('\n'))
+  check('still on the alternate screen after the handoff', (await run.t.state()).modes.alternate_screen === true)
+}
+await runCase('dsh-entry-kernel-to-claude', async ({ check, launch }) => {
+  const run = await launchEntryDsh(launch)
+  await adopted(run, check)
+  const firstPid = entryPidOf(run)
+  await run.clear()
+  await pickKernel(run, false)
+  check('switch accepted', await until(() => run.restartLog().some(line => line.includes('backend switch accepted')), 10000), run.restartLog().slice(-5).join('\n'))
+  check('the replacement is an entry', await until(() => entryPidOf(run, firstPid) !== undefined, 30000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
+  const secondPid = entryPidOf(run, firstPid)
+  check('and adopts a Claude session (no dsh-tui row there)', await until(() => run.traced('startup-adopted', entry => entry.pid === secondPid), 30000) && !run.traced('row-apply', entry => entry.pid === secondPid))
+  await checkHandoff(run, check)
+  await checkSupervised(run, check)
+  check('no crash in the supervisor', !run.restartLog().some(line => / pid=\d+ crash /.test(line)), run.restartLog().filter(line => line.includes('supervisor') || line.includes('crash')).join('\n'))
+  const sentAt = await quitNow(run)
+  await checkOwnedExit(run, check, { code: 0, sentAt })
+})
+
+await runCase('dsh-entry-kernel-to-dsh', async ({ check, launch }) => {
+  const run = await launch({ backend: 'claude', landing: false, env: ENTRY_DSH })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  check('Claude adopted', await until(() => run.traced('startup-adopted'), 30000))
+  const firstPid = entryPidOf(run)
+  await run.clear()
+  await pickKernel(run, true)
+  check('switch accepted', await until(() => run.restartLog().some(line => line.includes('backend switch accepted')), 10000), run.restartLog().slice(-5).join('\n'))
+  check('the replacement is an entry', await until(() => entryPidOf(run, firstPid) !== undefined, 30000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
+  const secondPid = entryPidOf(run, firstPid)
+  check('DSH runs in it (its dsh-tui row applies there)', await until(() => run.traced('row-apply', entry => entry.pid === secondPid), 60000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
+  check('and adopts the DSH session', await until(() => run.traced('startup-adopted', entry => entry.pid === secondPid), 60000))
+  check('the DSH screen is up', await until(async () => (await run.screen()).includes(DSH_SCREEN), 30000), lines(await run.screen()).slice(-6).join('\n'))
+  await checkHandoff(run, check)
+  await checkSupervised(run, check)
+  check('no crash in the supervisor', !run.restartLog().some(line => / pid=\d+ crash /.test(line)), run.restartLog().filter(line => line.includes('supervisor') || line.includes('crash')).join('\n'))
+  const sentAt = await quitNow(run)
+  await checkOwnedExit(run, check, { code: 0, sentAt })
+})
+
+// A DSH row that fails to activate while the profile composes: DSH's audit
+// reports it (fail-loud skips such rejections during its checkpoint); the
+// TUI must not crash on it either, and the session still opens.
+await runCase('dsh-entry-row-activation-fails', async ({ check, launch }) => {
+  const patch = join(dshHome, 'profiles', 'dsh-tui', 'cordis.patch.yml')
+  const plugin = join(root, 'accept-fail-plugin.mjs')
+  const ran = join(root, 'accept-fail-plugin.ran')
+  rmSync(ran, { force: true })
+  writeFileSync(plugin, `import { writeFileSync } from 'node:fs'\nexport const name = 'accept-fail-plugin'\nexport async function apply() { writeFileSync(${JSON.stringify(ran)}, ''); throw new Error('accept: row failed to activate') }\n`)
+  const original = readFileSync(patch, 'utf8')
+  writeFileSync(patch, `- insert:\n    - id: accept-fail\n      name: ${JSON.stringify(new URL(`file://${plugin}`).href)}\n`)
+  try {
+    const run = await launchEntryDsh(launch)
+    await adopted(run, check)
+    await sleep(2000)
+    check('the failing row was activated', existsSync(ran))
+    const state = await run.t.state()
+    check('still running, no crash', state.exited === null && !run.restartLog().some(line => / pid=\d+ crash /.test(line)), `${lines(await run.screen()).slice(-6).join('\n')}\n${run.restartLog().join('\n')}`)
+    const sentAt = await quitNow(run)
+    await checkOwnedExit(run, check, { code: 0, sentAt })
+  } finally {
+    writeFileSync(patch, original)
+  }
+})
 
 const failed = results.filter(result => result.status === 'fail').length
 console.log(`\naccept-host-entry: ${results.length} cases, ${results.filter(result => result.status === 'pass').length} pass, ${failed} fail`)

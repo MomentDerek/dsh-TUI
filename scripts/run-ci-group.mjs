@@ -349,6 +349,9 @@ const GROUPS = {
     ["verify-migrate-hint-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-hint-lifecycle.tsx']],
 // 退出收尾运行时未命中回退：找不到 Ink runtime 时必须走完整 unmount 恢复终端。
     ["verify-shutdown-fallback", ['node', '--import', 'tsx/esm', 'scripts/verify-shutdown-fallback.tsx']],
+// 独立入口的进程所有权（设计 2.5）：信号经退出漏斗、以同一信号结束；无主时
+// 先释放根；第二次信号立即结束；监督替身时不设兜底；外来监听器留不住进程。
+    ["verify-entry-process-exit", ['node', '--import', 'tsx/esm', 'scripts/verify-entry-process-exit.ts']],
 // 退出鼠标残留回归（issue #522）：detach 闩锁后自愈探针不再重写
 // ENABLE_MOUSE_TRACKING；unmount 在末帧渲染抛错时仍同步写完整清理
 // （帧在 EXIT_ALT_SCREEN 前、DISABLE 后 SHOW_CURSOR），handle 暴露

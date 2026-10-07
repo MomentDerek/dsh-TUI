@@ -257,6 +257,15 @@ export function addProcessErrorAbsorber(absorb: (error: unknown) => boolean): ()
   return () => { processErrorAbsorbers.delete(absorb) }
 }
 const absorbedByCaller = (error: unknown): boolean => [...processErrorAbsorbers].some(absorb => absorb(error))
+/**
+ * Whether the guard's process listeners are installed (the first render
+ * installs them unless DSH_TUI_NO_185_PROCESS_GUARD=1). The standalone entry
+ * removes DSH's fail-loud handlers only when it is: the guard and the exit
+ * funnel's sink then own every fatal error (src/dsh-adapter/process-exit.ts).
+ */
+export function processGuardActive(): boolean {
+  return processGuardInstalled
+}
 export function installNestedUpdateOverflowProcessGuard(): void {
   if (processGuardInstalled) return
   if (process.env.DSH_TUI_NO_185_PROCESS_GUARD === '1') return

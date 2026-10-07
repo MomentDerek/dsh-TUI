@@ -98,6 +98,8 @@ import { addProcessErrorAbsorber, fatalReasonForExit, registerProcessGuardFatalS
 import { CHANNEL_UI_LIFETIME_ENDED } from '../adapter/channel/ui.js'
 import { markBoot } from '../utils/bootTrace.js'
 import type { EntrySlot } from './entry-slot.js'
+import { TERMINATION_SIGNALS, dieBySignal, type ExitRequest, type ExitRequestAnswer, type ProcessExitSeam, type TerminationSignal } from './process-exit.js'
+import { RenderTestFault, readTestFault } from './test-faults.js'
 import type { ChannelStartup } from './channel/state.js'
 
 /**
@@ -206,6 +208,15 @@ export interface RuntimeApplyOptions {
    * workspace ownership). Only the standalone entry sets it.
    */
   readonly entrySlot?: EntrySlot
+  /**
+   * The entry's process-exit seam (./process-exit.ts): this runtime fills it
+   * with its exit funnel once mounted, so the entry's signals and DSH's
+   * `ctx.appExit` restore the terminal and dispose the root through the same
+   * path `/quit` takes, then end the process by the signal / with the code.
+   * Cleared on teardown; a `/restart` supervisor fills it again to follow its
+   * replacement. Only the standalone entry sets it.
+   */
+  readonly exitSeam?: ProcessExitSeam
 }
 
 export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx, runtimeOptions: RuntimeApplyOptions = {}): Promise<void> {
@@ -1901,6 +1912,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // accepted; the exit funnel then respawns onto that kernel (a NEW session —
   // no resume markers at all).
   let backendSwitchRequested: KernelBackendId | undefined
+  // A signal or `ctx.appExit` reached the funnel through the entry's exit
+  // seam: the clean-exit branch runs as for `/quit` (resume markers, terminal
+  // restore, dispose), then ends the process by the signal / with the code.
+  let processExitRequest: ExitRequest | undefined
   // The profile this process was booted with (`dsh --profile <name>`); dsh
   // exposes it nowhere else, and /update must update the installation the
   // user is actually running, not a hard-coded one.
@@ -1982,7 +1997,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           bootedFullscreen,
           hintText,
           undefined,
-          () => runUpdate(ctx, profile, handoffSessionId(), updateTargetVersion, backendChoice, handoffHint),
+          () => runUpdate(ctx, profile, handoffSessionId(), updateTargetVersion, backendChoice, handoffHint, exitSeam),
         )
         return
       }
@@ -2014,7 +2029,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
             // put on screen (update.ts has no registry to look it up in).
             backendName: backendLabel(switchingTo),
             ...(keepAlt ? { handoffScreen: 'alt' } : {}),
-          }),
+          }, exitSeam),
           { keepAltScreen: keepAlt },
         )
         return
@@ -2045,7 +2060,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           bootedFullscreen,
           t('restart-starting'),
           undefined,
-          () => runRestart(ctx, profile, handoffSessionId(), handoffHint, { kernel: backendChoice }),
+          () => runRestart(ctx, profile, handoffSessionId(), handoffHint, { kernel: backendChoice }, exitSeam),
         )
         return
       }
@@ -2083,17 +2098,43 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       }
       // Same resumability as the markers above.
       refreshLastRunRecord()
+      const request = processExitRequest
       void finishExit(
         ctx,
         instance,
         bootedFullscreen,
         hint,
         undefined,
-        () => disposeRootAndExit(ctx, 0),
+        () => {
+          if (request === undefined) disposeRootAndExit(ctx, 0)
+          else if (request.kind === 'code') disposeRootAndExit(ctx, request.code)
+          // A signal: the process dies by it once the root is down (bounded
+          // as any dispose; the stalled case dies by it too).
+          else disposeRootAndThen(ctx, () => { dieBySignal(request.signal) }, () => { dieBySignal(request.signal) })
+        },
       )
     },
   })
   const handleExit = funnel.handleExit
+  const exitSeam = runtimeOptions.exitSeam
+  /** The entry's signals and DSH's `appExit`, into this funnel. */
+  const requestProcessExit = (request: ExitRequest): ExitRequestAnswer => {
+    // A handoff (/restart, /update, a kernel switch) is under way: this
+    // process is about to follow its replacement — no backstop, which could
+    // kill the supervisor of a replacement that is already up (a second
+    // signal still forces). superviseReplacement takes the seam over once the
+    // root is down.
+    if (updateRequested || restartRequested || backendSwitchRequested !== undefined) return 'supervising'
+    // A `/quit` or a crash is already ending this process.
+    if (exited) return 'pending'
+    processExitRequest = request
+    logRestartEvent('funnel: process exit requested', request.kind === 'signal' ? { signal: request.signal } : { code: request.code })
+    if (handleExit()) return 'exiting'
+    // The tree is being torn down: the funnel cannot own the process.
+    processExitRequest = undefined
+    return 'refused'
+  }
+  if (exitSeam !== undefined) exitSeam.request = requestProcessExit
 
   /** The launchpad kernel selector's accept path (the Chat side passes the
    *  chosen kernel through onSwitchBackend — the prop wiring lands together
@@ -2342,8 +2383,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // the screen border). It must sit INSIDE AlternateScreen: the alt-screen
   // box sizes itself to the real terminal rows, while PageMargin reports
   // content-box dimensions to everything below it.
+  const renderFault = readTestFault()
   const buildTree = (): React.ReactElement => {
-    const chat = buildChat()
+    const chat = renderFault?.kind === 'render'
+      ? React.createElement(React.Fragment, null, buildChat(), React.createElement(RenderTestFault, { delayMs: renderFault.delayMs }))
+      : buildChat()
     const marginChildren = bootedFullscreen
       ? React.createElement(AlternateScreen, null, React.createElement(PageMargin, null, chat))
       : React.createElement(PageMargin, null, chat)
@@ -2436,6 +2480,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // the process, so a later fatal error falls back to Node's default crash
     // instead of reaching a disposed ctx.
     registerProcessGuardFatalSink(undefined)
+    if (exitSeam?.request === requestProcessExit) exitSeam.request = undefined
     rawChannel.releaseContributions()
     instance?.unmount()
   })
@@ -3103,10 +3148,41 @@ function preservedSessionTail(sessionId: string, hint: (sessionId: string) => st
   return sessionId === '' ? '\n\n' : ` Your session is preserved — resume with:\n${hint(sessionId)}\n\n`
 }
 
-function runRestart(ctx: Context, profile: string | undefined, sessionId: string, hint: (sessionId: string) => string = id => resumeCommand(profile, id), options: TuiRestartOptions = {}): void {
+/**
+ * The standalone entry's signals while this process follows a replacement
+ * (/restart, /update, a kernel switch; ./process-exit.ts): SIGTERM sent to
+ * this pid alone goes on to the replacement, which restores the terminal and
+ * ends by the signal; SIGINT and SIGHUP from the terminal reach it through
+ * the process group already and are not sent twice. A replacement that ends
+ * by a termination signal ends this process the same way (the launcher passes
+ * a signal death on; the numeric code it would get otherwise reads as a
+ * crash). Before the replacement exists (an /update still installing) the
+ * entry's own fallback applies: this process ends by the signal.
+ */
+function superviseReplacement<T extends TuiRestartOptions>(exitSeam: ProcessExitSeam | undefined, options: T): T {
+  if (exitSeam === undefined) return options
+  let replacement: { kill(signal: NodeJS.Signals): boolean } | undefined
+  exitSeam.request = request => {
+    if (replacement === undefined) return 'refused'
+    const forwarded = request.kind === 'signal' && request.signal === 'SIGTERM'
+    if (forwarded) replacement.kill('SIGTERM')
+    logRestartEvent('supervisor: exit request while following the replacement', request.kind === 'signal' ? { signal: request.signal, forwarded } : { code: request.code })
+    return 'supervising'
+  }
+  return {
+    ...options,
+    onSpawn: child => { replacement = child },
+    onTerminationSignal: signal => {
+      if ((TERMINATION_SIGNALS as readonly string[]).includes(signal)) dieBySignal(signal as TerminationSignal)
+    },
+  }
+}
+
+function runRestart(ctx: Context, profile: string | undefined, sessionId: string, hint: (sessionId: string) => string = id => resumeCommand(profile, id), options: TuiRestartOptions = {}, exitSeam?: ProcessExitSeam): void {
   logRestartEvent('runRestart: entered, disposing cordis root')
   disposeRootAndThen(ctx, () => {
     logRestartEvent('runRestart: root disposed, starting restartTui')
+    const supervision = superviseReplacement(exitSeam, options)
     // From here this process only supervises the replacement. Its React tree
     // is not unmounted (a kernel switch keeps the alt screen up for the
     // replacement), so a late timer in it can still read the channel, whose
@@ -3118,7 +3194,7 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
       logRestartEvent('supervisor: late UI read after dispose ignored', { at: error.stack?.split('\n').slice(1, 4).map(line => line.trim()).join(' | ') })
       return true
     })
-    void restartTui(sessionId, options).then(
+    void restartTui(sessionId, supervision).then(
       restartCode => {
         logRestartEvent('runRestart: restartTui resolved', { restartCode })
         if (restartCode !== 0) {
@@ -3147,13 +3223,14 @@ function runUpdate(
   targetVersion: string | undefined,
   kernel: KernelBackendId,
   hint: (sessionId: string) => string = id => resumeCommand(profile, id),
+  exitSeam?: ProcessExitSeam,
 ): void {
   disposeRootAndThen(ctx, () => {
     if (profile === undefined) {
       process.stderr.write(`\n${t('update-aborted-no-profile')}\n`)
       process.exit(1)
     }
-    void updateTuiAndRestart(sessionId, profile, targetVersion, kernel).then(
+    void updateTuiAndRestart(sessionId, profile, targetVersion, kernel, superviseReplacement(exitSeam, {})).then(
       ({ updateCode, restartCode }) => {
         if (updateCode !== 0) {
           process.stderr.write(
@@ -3209,12 +3286,14 @@ function resumeCommand(profile: string | undefined, sessionId: string): string {
  * handoff (update/restart) may legitimately take longer than the bound, and
  * reporting failure on a clean exit would mislead wrapper scripts.
  */
-function disposeRootAndThen(ctx: Context, done: () => void, fallbackCode = 1): void {
+function disposeRootAndThen(ctx: Context, done: () => void, fallback: number | (() => void) = 1): void {
+  const startedAt = Date.now()
   const timer = setTimeout(() => {
     // Diagnosis for a stalled disposal: without this line the fallback exit
     // is indistinguishable from a successful handoff in the field.
-    logRestartEvent('dispose: timeout, taking fallback exit', { fallbackCode })
-    process.exit(fallbackCode)
+    logRestartEvent('dispose: timeout, taking fallback exit', typeof fallback === 'number' ? { fallbackCode: fallback } : { fallback: 'signal' })
+    if (typeof fallback === 'number') process.exit(fallback)
+    else fallback()
   }, 5000)
   timer.unref()
   // The pooled, process-wide resources of every backend this process actually
@@ -3222,6 +3301,9 @@ function disposeRootAndThen(ctx: Context, done: () => void, fallbackCode = 1): v
   void withHostRootCapability(() => ctx.root.fiber.dispose()).finally(() => unloadBackends()).then(
     () => {
       clearTimeout(timer)
+      // The root teardown's length (design 2.5: one 20s teardown seen in the
+      // 2.2 spike); restart.log only, never the terminal.
+      logRestartEvent('dispose: root disposed', { ms: Date.now() - startedAt })
       done()
     },
     () => {

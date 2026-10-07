@@ -33,8 +33,10 @@
  * |                              | loader.await, auditStartupEntries) + runProfile  |       |
  * |                              | appReady.commit                                  |       |
  *
- * Deliberately not reproduced: `runProfile`'s SIGTERM/SIGINT handlers (the
- * entry owns signals), `boot()`'s startup-log capture for `StartupError`
+ * Deliberately not reproduced: `runProfile`'s SIGTERM/SIGINT handlers and
+ * `createProcessShutdown().interrupt` (the entry owns signals and ends by the
+ * signal through the TUI's exit funnel: ./process-exit.ts says why its exit
+ * status differs from `interrupt`'s 0 / 130), `boot()`'s startup-log capture for `StartupError`
  * reports (a composition failure lands in the mounted screen instead),
  * `--patch` overlays and `--from-default-profile` (the launcher passes
  * neither), and the `dsh-purge` `DSH_HOME` shim of `bin.js` (the launcher
@@ -49,6 +51,7 @@ import { createRequire } from 'node:module'
 import { delimiter, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ProcessExitSeam } from './process-exit.js'
 
 /** The host package name whose installation the entry loads. */
 const HOST_PACKAGE = '@deepseek-ai/dsh'
@@ -211,7 +214,13 @@ export interface HostRoot {
    * the tree stays up (the caller decides what the screen shows).
    */
   compose(warn: Warn): Promise<void>
-  /** Remove the fail-loud handlers (DSH kernel; a no-op otherwise). */
+  /**
+   * Remove the fail-loud handlers (DSH kernel; a no-op otherwise). The entry
+   * calls it once the TUI's process guard and crash funnel are up: from then
+   * on they are the single owner of a fatal error (./process-exit.ts, design
+   * block 2.5), and fail-loud listening first would exit before the funnel
+   * restored the terminal.
+   */
   readonly uninstallFailLoud: () => void
   /** The bounded process shutdown `appExit` requests (dsh createProcessShutdown). */
   readonly shutdown: (code: number) => Promise<void>
@@ -224,6 +233,12 @@ export interface PrepareHostRootOptions {
   readonly args: readonly string[]
   /** Compose the profile later (the DSH kernel); else only the resolution. */
   readonly dsh: boolean
+  /**
+   * The entry's process-exit seam: `ctx.appExit(code)` goes to the TUI's exit
+   * funnel through it once the runtime filled it, and to the bounded
+   * `shutdown` before that (or when the funnel refuses).
+   */
+  readonly exitSeam?: ProcessExitSeam
 }
 
 /**
@@ -288,7 +303,14 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     await ctx.plugin(appBoot.PluginPackages as never, { resolution } as never)
     // 7. runProfile: the app arguments and the exit / readiness seams.
     if (options.dsh) {
-      host.cmdline.provideCmdline(ctx, { args: options.args, exit: code => { void shutdown(code) }, ready: appReady.service })
+      host.cmdline.provideCmdline(ctx, {
+        args: options.args,
+        exit: code => {
+          const answer = options.exitSeam?.request?.({ kind: 'code', code }) ?? 'refused'
+          if (answer === 'refused') void shutdown(code)
+        },
+        ready: appReady.service,
+      })
     }
   } catch (error) {
     // The caller falls back to another launch path in this same process:
@@ -346,7 +368,10 @@ function createAppReady(): { readonly service: AppReadyService; commit(): void }
 /**
  * dsh `profile-boot` createProcessShutdown (0.2.0-rc.2), the `shutdown` half:
  * dispose, then set the exit code; a stalled dispose exits after the bound.
- * (`interrupt`, the signal half, stays with the entry's own signal handling.)
+ * It serves `appExit` only before the TUI's funnel can take it. The
+ * `interrupt` half (the signal path: dispose then force-exit 0 / 130, a
+ * second signal at once) is replaced by ./process-exit.ts, which ends by the
+ * signal itself after the funnel restored the terminal.
  */
 function createProcessShutdown(dispose: () => Promise<unknown>, timeoutMs = PROCESS_SHUTDOWN_TIMEOUT_MS): (code: number) => Promise<void> {
   let pending: Promise<void> | undefined

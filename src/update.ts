@@ -1922,6 +1922,8 @@ export async function updateTuiAndRestart(
   profile: string,
   targetVersion?: string,
   kernel?: KernelBackendId,
+  /** The standalone entry's supervision hooks (TuiRestartOptions.onSpawn / onTerminationSignal). */
+  supervision: Pick<TuiRestartOptions, 'onSpawn' | 'onTerminationSignal'> = {},
 ): Promise<TuiUpdateResult> {
   const outcome = await updateTui(profile, targetVersion)
   const { updatedFrom } = outcome
@@ -1938,6 +1940,7 @@ export async function updateTuiAndRestart(
     env: { [UPDATED_FROM_ENV]: updatedFrom },
     kind: 'update',
     ...(kernel === undefined ? {} : { kernel }),
+    ...supervision,
   })
   return { updateCode: 0, restartCode }
 }
@@ -2121,6 +2124,14 @@ export interface TuiRestartOptions {
    * (as it does after a kernel switch). Ignored when `backend` is set.
    */
   kernel?: KernelBackendId
+  /** The replacement was spawned (the standalone entry forwards SIGTERM to it). */
+  onSpawn?: (child: { kill(signal: NodeJS.Signals): boolean }) => void
+  /**
+   * The replacement ended by a signal: called before any outcome notice, so a
+   * standalone-entry supervisor can end by the same signal (a termination it
+   * asked for is not a crash). Returning normally continues as before.
+   */
+  onTerminationSignal?: (signal: NodeJS.Signals) => void
 }
 
 /**
@@ -2319,6 +2330,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
       ackWatch.unref()
     }
     logRestartEvent(`${tag}: replacement spawned`, { childPid: child.pid, ...(options.backend === undefined ? {} : { backend: options.backend }) })
+    options.onSpawn?.(child)
     // Handoff watchdog (field evidence 2026-08-24: restarted TUI mounts but
     // takes no input). Two jobs, both diagnosis-grade:
     // 1. SAMPLE this process's stdin state every second — if anything
@@ -2403,6 +2415,14 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
         signal: signal ?? null,
         elapsedMs,
       })
+      // A replacement that took the screen over and then died by a signal
+      // (its own exit funnel restored the terminal): the hook ends this
+      // process by that signal, or returns for the usual outcome handling.
+      // Before a handoff's first frame this process still holds the screen,
+      // so the failure path below restores it first.
+      if (signal !== null && options.onTerminationSignal !== undefined && (!handoff || ackReadyAt !== undefined)) {
+        options.onTerminationSignal(signal)
+      }
       if (options.backend !== undefined) {
         // Kernel switch outcome: success is quiet (restart.log only), a
         // replacement that never came up is a yellow failure with the session
