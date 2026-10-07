@@ -1086,9 +1086,128 @@ dsh-launch-environment、dsh-cmdline、dsh-http-proxy、`dsh/profile-boot`。用
 挂载的 channel」；入口顺序改为「劫持 → 挂界面 → 组合」，Claude 内核也走劫持（顺带修掉 profiles
 链接目录依赖）。
 
+### 2026-10-07 · Phase 2 第 2.0 块：入口崩溃收尾的 `ctx.agents` 读取
+
+（写于交接一节之后。）**核实：问题存在，但比预想轻。**裸根上 `ctx.agents` 不存在，崩溃分支的
+`writeResumeMarkers` 第一句 `ctx.agents.get(...)` 抛 TypeError，于是 Claude 的 resume marker
+（`setLastSession`）与 `refreshLastRunRecord()` 都被跳过：用户发过消息后崩溃，启动器的崩溃重试会
+打开旧会话或空会话。`runCrashExit` 把它包在 try/catch 里并无条件 `finish(crashLine)`，所以崩溃行、
+终端恢复、退出码 1 都不受影响（规划时「吞掉崩溃行、打乱终端恢复」的推测不成立）。
+
+- 修：闭包抽成导出函数 `writeCrashResumeMarkers(deps)`（plugin.ts），按 `backendStart` 分支，与
+  update / restart 分支同构：DSH 仍 `ctx.agents.get` + `isExitResumable` 写 `resume.txt`；非 DSH 在
+  `persisted` 时 `setLastSession`；两者最后都 `refreshLastRunRecord()`。崩溃仍从不清除 marker。
+- 回归：`scripts/verify-shutdown-fallback.tsx`（已在 CI 组）加 Case E（入口形态：裸 cordis 根 + 真实
+  `runCrashExit`）、Case F（DSH 形态不变）与一项源码检查，共 24 项；修前 E 组 3 项红。
+- 其余无守卫读取逐项核过（`refreshLastRunRecord`、干净退出分支、`resolveAgent`、心跳、审批监听、
+  `userQuestions` / `tui*` 可空读取、`ctx.root.fiber`），崩溃分支是非 DSH 路径唯一可达的一处。
+- 在独立 worktree 做完后以补丁合入，与 2.3 无冲突。
+
+### 2026-10-07 · Phase 2 第 2.3 块：单根接线
+
+（写于交接一节之后。）**结论：单根接通，无根本障碍。**`DSH_TUI_HOST_ENTRY_DSH=1`（实验开关，
+`DSH_TUI_HOST_ENTRY=0` 时不生效）下入口按「劫持 → 挂界面 → 组合」跑 DSH 内核：首帧先出，profile
+组合进同一个根，`dsh-tui` 行见到入口槽不再渲染、只做 DSH 侧，channel 接管它交来的 DSH 会话。开关
+未设时 DSH 照旧 `delegateToDsh`；Claude 内核只多了劫持前置，**`~/.dsh/profiles/node_modules` 依赖随之
+消失**（验收在去掉该链接的隔离 home 里全过）。
+
+**结构**
+
+- 新 `src/dsh-adapter/host-dsh.ts`（366 行）：`locateHostDsh`（PATH 上第一个 `dsh` 的 realpath，向上找
+  `@deepseek-ai/dsh`）；`loadHostDsh`（8 个宿主包按 realpath 以 file URL 动态导入，本地结构类型 +
+  导出逐个检查，无静态 import）；`prepareHostRoot`（`loadLayeredEnv` → `prepareProfile` →
+  `createRuntimeResolution` → 宿主 cordis `new Context()` → `PluginPackages`；DSH 内核再加代理、
+  `boot()` 前置四步、`installFailLoud`（保留卸载函数）、profileContext、launch environment、
+  `provideCmdline`（args = 应用参数，exit 接复刻的 `createProcessShutdown`））；`compose()`
+  （`mountRootInclude` → `loader.await` → `auditStartupEntries` → `appReady.commit`）。复刻的上游逻辑约
+  105 行（`createAppReady` 22、`createProcessShutdown` 只复刻 `shutdown` 半边 24、其余约 58），文件头有
+  逐段对照 0.2.0-rc.2 的表。**刻意未复刻**：`runProfile` 的 SIGTERM/SIGINT 与 `interrupt`；`boot()` 的
+  StartupError 启动日志捕获；`--patch` overlays 与 `--from-default-profile`；bin.js 的 `DSH_HOME` shim。
+- 新 `src/dsh-adapter/entry-slot.ts`：`Symbol.for('@deepseek-harness-tui/dsh-tui:host-entry')` 槽
+  （`rowSeen`、`attachDsh`、`composeWarning`、`composeFailed`）。
+- `host-entry.ts`：路由判定（只依赖 node 内置与 yaml）留在劫持之前，`delegateToDsh` 不付劫持代价。
+  `runInEntry(kernel)`：宿主根 → `entry-hijacked` → 动态 import TUI → 发布槽、推迟守卫 →
+  `apply(..., entrySlot)` → `entry-compose-start` → `compose()` → `entry-compose-end` → 无行则
+  `composeFailed`。宿主不可用时 DSH 回 `delegateToDsh`、Claude 回 Phase 1 形态（静默，只有
+  `DSH_TUI_DEBUG` 才提示）。SIGTERM/SIGHUP 处理照旧。
+- `index.ts`（行 apply）：有槽时标 `rowSeen`，`loader.await` 之后起 `dsh-tui-runtime` 子 fiber 调
+  `attachDsh`，不渲染；无槽完全走旧路径（第 10 节第 4 条：直启路径保留，代价是这一分支）。
+- 启动器、`restartArgv`（`dshInEntry`）认新开关；`docs/configuration*.md` 与 guide 副本加一行。
+
+**两处单根特有问题（已修，需重点关注）**
+
+1. **根能力守卫与 DSH 插件冲突。**TUI 的 host-access 守卫挂载时就装，DSH 插件激活时要用根能力
+   （`UserQuestionService` → `TypertRemoteService` → `ctx.accessor` → 根 fiber `effect`），报
+   `root.effect is unavailable from a plugin activation`。修：`deferRootCapabilityGuard(root)`，入口挂载前
+   推迟守卫、`compose()` 的 finally 里放开；fiber 追踪照常立即开始。**注意这是一处放宽**：profile 路径
+   下守卫在 TUI 行加载时（组合中途）装上，之后激活的第三方行受守卫；单根下整个组合期间都不受守卫，
+   第三方插件在 apply 期间可用根能力（组合结束后的调用照常受守卫）。2.7 的守卫验收要覆盖，必要时改为
+   「只对 DSH 官方行放行」。
+2. **事件循环同步卡住约 10s。**DSH 的 `node-addon-system/flock` 用 `process.report.getReport()` 判 libc；
+   单根下界面先挂、进程里已有 socket（更新检查等），报告对 socket 端点做反向 DNS，同步卡住
+   （cpuprofile：`getReport` 自身 10019ms）。修：入口设 `process.report.excludeNetwork = true`（两个内核
+   都设，进程级）。修后接管约 300ms。profile 路径不受影响，但「先开 socket、再首次 flock」都会触发，
+   可报上游。
+
+**plugin.ts 的 DSH 相延后**（`RuntimeApplyOptions.entrySlot`；profile 路径各段原位调用、顺序不变）：
+预设抽成 `installPresets(ctx)`；问卷接缝里 `QuestionStore` 与 bind 留入口（Chat 与 Claude 也用），其余
+（`userQuestions ?? new UserQuestionService`、`toolAskUser`、`system-prompt/assemble`、
+`registerPromptDebug`、`prepareQuestionAnswerer`）抽成 `mountDshQuestionSeams(dshCtx)`，消掉 spike 的
+`userQuestions` 重复注册；审批抽成 `mountDshApprovals`；工作区归属抽成 `attachWorkspaceOwnership`；
+`resolveAgent` → 归属 → `createDshSession` 在 attach 里用行的 Config 做，完成后 resolve 入口创建的
+startup Promise（带 `route`、`agentPreset`），失败 reject → 「打不开 + /new」两行；activity /
+occupancy store 靠根上 `inject(['sessionProjections'])` 自然延后（实测组合期间触发）；心跳每拍读
+`agents`，不用改；`refreshLastRunRecord` 与干净退出分支改用守卫过的 `liveDshAgent()`。占位会话
+`createStartingSession('dsh')`、`backendLabel: 'DSH'`（2.1 遗留 2 的前半）。channel 侧：`ChannelStartup`
+带可选 `route` / `agentPreset`，`adoptStartup` 挂扩展前写 provider / model / preset。
+
+**晚到服务的实时解析**：Chat 的 dialogs / status / shortcuts / bonusNotices / themeHost 与 ThemeProvider
+改为 `buildChat()` / `buildTree()`，attach 时 `instance.rerender()` 一次（React 保留状态）；toast 重新
+`setSink`；TUI 的 `/settings` 分区 `rehomeSettingsSection` 搬到组合出的 sections 服务；`tuiPluginHost`
+每次探测读；`resolveCoreHost` 六项改 getter，订阅随 `internal/service` 重绑（新可选
+`ChannelHost.watchServices`）；renderer / workspace service 按事件 / 调用读。**遗留**：ThemeProvider 只在
+挂载时判断 forced theme，持久化选了组合后才注册的运行时主题会落回 auto；占位期状态栏显示入口算的
+路由，接管后才换成行的路由。
+
+**验证**：`pnpm build`（89 项门禁）、`verify:package`、`verify-guide` 通过；input-terminal 31/31；
+channel-ui 147 项失败 4 项、render-scroll 79 项失败 2 项，均为既有；session-workspace 56 项失败
+`verify-update-checksum`（HEAD 上同样失败，计时断言）。聚焦：startup-adoption 46、backend-channel 191、
+host-entry 19、launcher、tui-settings 20、adapter-channel、claude-channels、handoff-*、shutdown-fallback
+通过。途中因源码文本契约变红又修好：settings-namespace、launchpad LR4（计数 5→6，attach 多调一次
+`refreshLastRunRecord`）、workspace-attachment。**`accept-host-entry` 18/18**：原 15 个在无链接 home 里
+全过（`startup-fullscreen` 显式断言链接不存在，`--legacy` 可加回）；新增 `dsh-in-entry-chat` /
+`-landing`（首帧、`render-start` 只一次、`row-apply` 与入口同 pid、首帧早于组合、接管 DSH、`/settings`
+有 dsh-tui 分区、`/quit` 0、终端恢复、无遗留进程）与 `dsh-in-entry-quit-early`。spike 的约 20s 收尾
+未复现（三个用例全程 2–6s）。2.0 补丁合入后复跑 `pnpm build` 与 shutdown-fallback、startup-adoption、
+crash-detail、exit-resume-marker 通过。
+
+**数字**（3 轮中位数，ms，从 spawn 启动器起算；本轮空循环写法不同，与此前环境速度不可比，同轮内可比）：
+
+| 场景 | 劫持完成 | 首帧 render-done / prompt | 组合区间 | 可发送 |
+| --- | --- | --- | --- | --- |
+| 入口 DSH | 291 | 1048 / 1154 | 1074–1887（同步冻结约 810） | 2275 |
+| profile DSH（今天） | — | 2140 / 2268 | — | 2140（首帧即可发送） |
+| 入口 Claude | 285 | 1056 / 1206 | — | 1622 |
+
+读法：DSH 内核首帧提前约 51%（2140 → 1048），可发送晚约 135ms（2275 vs 2140），即「先画后冻」的代价；
+劫持前置约 140ms。
+
+**交给后续块**
+
+- 2.4：宿主定位要可见并能解析 pnpm / volta 等脚本 shim（现在静默回退）；占位期定死的
+  `openHomeOnBoot` / `onboardingOnBoot` 门（home 屏会在 DSH 数据到位前打开）；`DSH_TUI_WORKSPACE_TARGET`
+  为 provider URI 时组合前经本地 runtime 解析会抛；失败后 `/new` 的 DSH `openSession`；组合失败只进
+  调试日志 + 失败行，未复刻启动日志捕获；「正在启动 DSH」静态态（冻结约 0.8s）；开关转默认。
+- 2.5：只复刻了 `shutdown` 半边，无 `interrupt` / SIGINT；`installFailLoud` 与 TUI 的
+  `registerProcessGuardFatalSink` 并存（profile 路径同样）；DSH 进程内的 `/kernel` 两向、`/restart`、
+  SIGTERM 无验收用例。
+- 2.6：8 个宿主包、约 105 行复刻进 `verify:contract` 版本线与能力探测；`deferRootCapabilityGuard`、
+  `excludeNetwork` 一并登记。
+- 2.7：守卫放宽（上面第 1 条）；第三方插件三样例；真实模型请求下 working line 与审批未验证。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
-> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.1（D1）已提交；2.2 spike 后用户选定单根，下一步 2.0 / 2.3。**
+> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.3 已完成（2.1 已提交，2.0 / 2.3 未提交）；下一步 2.4 / 2.5。**
 >
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
