@@ -50,7 +50,7 @@ import { registerChannelOwner, type ChannelOwner } from '../owner.js'
 import { unavailablePermissionPresetSnapshot } from '../permissions.js'
 import { createPreferences } from '../preferences.js'
 import { createSettingsHosts } from '../settings-host.js'
-import { createInitialChannelView, type ChannelLaunchOptions, type ChannelStartup } from '../state.js'
+import { StartupOpenError, createInitialChannelView, type ChannelLaunchOptions, type ChannelStartup } from '../state.js'
 import type { ChannelState, SubagentTranscriptView } from '../types.js'
 import { createCapabilityDelegates, installChannelActions } from './actions.js'
 import { createBindingFeed, type BindingFeedHooks } from './binding-feed.js'
@@ -909,7 +909,8 @@ export function createCoreChannel(
    * have printed while the backend opened). The binding's prepare/adopt pair
    * owns the candidate: a channel released mid-open closes it on arrival.
    * A failed open leaves the placeholder bound and `ready` false; the notice
-   * row points at `/new`, which opens through `options.openSession`.
+   * row points at `/new`, which opens through `options.openSession` (or, for
+   * a `StartupOpenError`, says what to do instead).
    */
   const adoptStartup = (startup: NonNullable<ChannelLaunchOptions['startup']>): void => {
     const adoption = binding.capture()
@@ -965,7 +966,7 @@ export function createCoreChannel(
       const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0]
       state.startupFailure = reason
       state.rows.push({ id: rowIds.value++, kind: 'notice', text: t('startup-open-failed', { backend, err: reason }) })
-      state.rows.push({ id: rowIds.value++, kind: 'notice', text: t('startup-open-failed-hint') })
+      state.rows.push({ id: rowIds.value++, kind: 'notice', text: error instanceof StartupOpenError ? error.hint : t('startup-open-failed-hint') })
       state.emit()
     })
   }

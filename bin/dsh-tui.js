@@ -1599,11 +1599,12 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // 判定；入口自己会再读 Config 行，钉在 DSH 上时原样交给 dsh。dsh 自己的
   // 一次性开关（--version、--dump-config* 等 hostArgs）始终交给 dsh。
   // DSH_TUI_HOST_ENTRY=0 关闭分流，所有内核都回到 `dsh --profile`。
-  // DSH_TUI_HOST_ENTRY_DSH=1（实验，Phase 2）让 DSH 内核也走本包入口：入口先挂
-  // 界面，再把 profile 组合进同一个 Cordis 根（src/kernelPrefs.ts）。
+  // DSH 内核默认也走本包入口（Phase 2）：入口先挂界面，再把 profile 组合进同一个
+  // Cordis 根；DSH_TUI_HOST_ENTRY_DSH=0 让 DSH 内核回到 `dsh --profile`
+  // （src/kernelPrefs.ts）。入口用不了已安装的 dsh 时自己回退到 `dsh --profile`。
   const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
   const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
-  const dshInEntry = hostEntryEnabled && process.env.DSH_TUI_HOST_ENTRY_DSH === '1'
+  const dshInEntry = hostEntryEnabled && process.env.DSH_TUI_HOST_ENTRY_DSH !== '0'
   const pickKernel = value => {
     const id = typeof value === 'string' ? value.trim().toLowerCase() : ''
     return KERNEL_IDS.includes(id) ? id : undefined

@@ -25,6 +25,18 @@ export interface ChannelStartup {
   readonly agentPreset?: string
 }
 
+/**
+ * A startup open that failed for a reason `/new` cannot fix (the in-process
+ * DSH kernel's composition failed: there is no DSH to open a session on).
+ * Its `hint` replaces the failure row's `/new` hint (`startup-open-failed-hint`).
+ */
+export class StartupOpenError extends Error {
+  constructor(message: string, readonly hint: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'StartupOpenError'
+  }
+}
+
 export interface ChannelLaunchOptions {
   model: string
   cwd: string

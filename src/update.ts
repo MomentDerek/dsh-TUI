@@ -2198,9 +2198,9 @@ export function restartChildEnv(
  * process is not already it: a DSH-hosted process would otherwise relaunch
  * `dsh --profile` and boot Claude through the whole DSH composition. The
  * entry hands a DSH launch back to dsh itself, so the other direction needs
- * no change — unless the DSH kernel runs in the entry too
- * (`DSH_TUI_HOST_ENTRY_DSH=1`, `dshInEntry`): then a DSH replacement goes to
- * the entry as well. Exported for scripts/verify-host-entry.
+ * no change — unless the DSH kernel runs in the entry too (the default;
+ * `dshInEntry`, off with `DSH_TUI_HOST_ENTRY_DSH=0`): then a DSH replacement
+ * goes to the entry as well. Exported for scripts/verify-host-entry.
  */
 export function restartArgv(input: {
   readonly execArgv: readonly string[]
@@ -2210,7 +2210,7 @@ export function restartArgv(input: {
   /** Whether this is a kernel switch (resume flags are dropped). */
   readonly switching: boolean
   readonly hostEntry: string | undefined
-  /** The DSH kernel runs in the entry as well (`DSH_TUI_HOST_ENTRY_DSH=1`). */
+  /** The DSH kernel runs in the entry as well (unless `DSH_TUI_HOST_ENTRY_DSH=0`). */
   readonly dshInEntry?: boolean
 }): string[] {
   // A kernel switch must not hand the replacement THIS kernel's resume

@@ -42,15 +42,17 @@ const option = (name, fallback) => {
   return index === -1 ? fallback : args[index + 1]
 }
 const backend = option('--backend', 'dsh')
-// `--entry host` (default): the launcher routes as shipped, so the Claude
-// kernel runs in the package's own entry (lib/types/dsh-adapter/host-entry.js).
-// `--entry profile`: DSH_TUI_HOST_ENTRY=0, every kernel inside `dsh --profile`
-// (the Phase 0 baseline path). `--entry host-dsh`: as `host`, plus
-// DSH_TUI_HOST_ENTRY_DSH=1, so the DSH kernel runs in the entry too (Phase 2
-// single root: the screen first, then the profile composes into the same
-// root). All count from spawning the launcher.
+// `--entry host` (default): the launcher routes as shipped, so both kernels
+// run in the package's own entry (lib/types/dsh-adapter/host-entry.js; the
+// DSH kernel composes its profile into the entry's root after the screen).
+// `--entry host-dsh`: the same, the DSH switch spelled out
+// (DSH_TUI_HOST_ENTRY_DSH=1). `--entry host-delegate`: DSH_TUI_HOST_ENTRY_DSH=0,
+// the DSH kernel back inside `dsh --profile` (the Claude kernel stays in the
+// entry). `--entry profile`: DSH_TUI_HOST_ENTRY=0, every kernel inside
+// `dsh --profile` (the Phase 0 baseline path). All count from spawning the
+// launcher.
 const entryMode = option('--entry', 'host')
-if (entryMode !== 'host' && entryMode !== 'host-dsh' && entryMode !== 'profile') throw new Error(`--entry host|host-dsh|profile, got ${entryMode}`)
+if (!['host', 'host-dsh', 'host-delegate', 'profile'].includes(entryMode)) throw new Error(`--entry host|host-dsh|host-delegate|profile, got ${entryMode}`)
 const runs = Number(option('--runs', '5'))
 const repo = fileURLToPath(new URL('..', import.meta.url))
 const { root, dshHome: targetHome, launcher, dshEntry, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-baseline-' })
@@ -75,13 +77,14 @@ async function run(index) {
     DSH_TUI_BACKEND: backend,
     ...(entryMode === 'profile' ? { DSH_TUI_HOST_ENTRY: '0' } : {}),
     ...(entryMode === 'host-dsh' ? { DSH_TUI_HOST_ENTRY_DSH: '1' } : {}),
+    ...(entryMode === 'host-delegate' ? { DSH_TUI_HOST_ENTRY_DSH: '0' } : {}),
     DSH_TUI_BOOT_TRACE: trace,
     DSH_TUI_LANG: 'en',
     DSH_TELEMETRY_MODE: 'DISABLED',
     NODE_ENV: 'production',
     TERM: 'xterm-256color',
   }
-  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HOST_ENTRY_PATH', 'DSH_TUI_PROFILE', ...(entryMode === 'profile' ? [] : ['DSH_TUI_HOST_ENTRY']), ...(entryMode === 'host-dsh' ? [] : ['DSH_TUI_HOST_ENTRY_DSH'])]) delete env[key]
+  for (const key of ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_RESTART_SESSION', 'DSH_TUI_PREBOOT', 'DSH_TUI_DEBUG', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HOST_ENTRY_PATH', 'DSH_TUI_PROFILE', ...(entryMode === 'profile' ? [] : ['DSH_TUI_HOST_ENTRY']), ...(entryMode === 'host-dsh' || entryMode === 'host-delegate' ? [] : ['DSH_TUI_HOST_ENTRY_DSH'])]) delete env[key]
   const terminal = new xterm.Terminal({ cols: COLS, rows: ROWS, scrollback: 1000, allowProposedApi: true })
   const startedAt = Date.now()
   const child = pty.spawn(process.execPath, [launcher], { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd: process.cwd(), env })

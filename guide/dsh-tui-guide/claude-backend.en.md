@@ -207,7 +207,9 @@ their prompts carried.
   retries. Third-party
   DSH/Cordis plugins (themes, panels, decision hooks) are not loaded on this
   kernel. `DSH_TUI_HOST_ENTRY=0` goes back to starting through
-  `dsh --profile dsh-tui`, where they load.
+  `dsh --profile dsh-tui`, where they load. (The DSH kernel starts from the
+  package's entry by default too, but composes the DSH profile into that
+  process, so its plugins load.)
 - In a Claude session the side panel's workspace panel reports it is unsupported
   and the trajectory panel stays empty.
 - No `/add-dir`; the refusal dialog offers only *Retry* and *Cancel*; an MCP

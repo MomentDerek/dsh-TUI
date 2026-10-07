@@ -53,7 +53,7 @@ import { initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
-import { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
+import { HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
@@ -100,7 +100,7 @@ import { markBoot } from '../utils/bootTrace.js'
 import type { EntrySlot } from './entry-slot.js'
 import { TERMINATION_SIGNALS, dieBySignal, type ExitRequest, type ExitRequestAnswer, type ProcessExitSeam, type TerminationSignal } from './process-exit.js'
 import { RenderTestFault, readTestFault } from './test-faults.js'
-import type { ChannelStartup } from './channel/state.js'
+import { StartupOpenError, type ChannelStartup } from './channel/state.js'
 
 /**
  * Interactive TUI front door for DeepSeek Harness agents.
@@ -199,7 +199,8 @@ export interface RuntimeApplyOptions {
    */
   readonly profile?: string
   /**
-   * The entry runs the DSH kernel in this process (`DSH_TUI_HOST_ENTRY_DSH=1`;
+   * The entry runs the DSH kernel in this process (the default; not with
+   * `DSH_TUI_HOST_ENTRY_DSH=0`;
    * docs/standalone-host-design.md Phase 2, single root): mount the screen on
    * a DSH placeholder session now, and leave everything that needs DSH's
    * services to the profile's dsh-tui row, which the entry composes into the
@@ -208,6 +209,12 @@ export interface RuntimeApplyOptions {
    * workspace ownership). Only the standalone entry sets it.
    */
   readonly entrySlot?: EntrySlot
+  /**
+   * Why the entry is not using the installed dsh (host-entry.ts
+   * noteHostUnavailable): shown once as a warning notice. A delegated
+   * `dsh --profile` process gets it through `DSH_TUI_HOST_NOTICE` instead.
+   */
+  readonly hostNotice?: string
   /**
    * The entry's process-exit seam (./process-exit.ts): this runtime fills it
    * with its exit funnel once mounted, so the entry's signals and DSH's
@@ -563,11 +570,19 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       'The bundle patch is older than the installed dsh-tui package — update the globally installed dsh-tui launcher to match the profile (issue #183).',
     )
   }
+  // The in-process DSH kernel mounts before the profile's workspace
+  // providers exist: a target the local runtime cannot resolve (a provider
+  // URI) is resolved through the composed tuiWorkspaces in `attachDsh`, and
+  // an unresolvable one fails the startup session there (a row in the
+  // screen) instead of the mount.
   const initialWorkspace = requestedWorkspace === undefined
     ? undefined
     : await workspaceService.resolve(requestedWorkspace)
-  if (requestedWorkspace !== undefined && initialWorkspace === undefined) {
-    throw new Error(`dsh-tui: unsupported or unavailable workspace target: ${requestedWorkspace}`)
+  const deferredWorkspace = dshInEntry && requestedWorkspace !== undefined && initialWorkspace === undefined
+    ? requestedWorkspace
+    : undefined
+  if (requestedWorkspace !== undefined && initialWorkspace === undefined && deferredWorkspace === undefined) {
+    throw new Error(unsupportedWorkspaceTarget(requestedWorkspace))
   }
   const sessionCwd = initialWorkspace?.cwd ?? resolveSessionCwd(config.cwd)
   const meta = { cwd: sessionCwd }
@@ -855,6 +870,23 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     route?: { readonly provider: string; readonly model: string }
     config?: Pick<Config, 'provider' | 'model' | 'preset'>
   } = {}
+  /**
+   * The in-process DSH kernel's `/new` while no DSH session was adopted (its
+   * startup open failed): DSH's own create path — `resolveAgent` (preset,
+   * validated route, mount reservation, `agents.create`) and workspace
+   * ownership — on the row's context. Installed by `attachDsh` once DSH has
+   * composed; until then, and after a failed composition, there is nothing
+   * to open on. The adopted session gets the DSH extensions (the core's
+   * adoption window), whose own `/new` takes over from then on.
+   */
+  let openDshSession: ((cwd: string) => Promise<AgentSession>) | undefined
+  /** The in-process DSH kernel's composition failed (`composeFailed`). */
+  let compositionFailed = false
+  /** How the in-process DSH kernel's composition ended: a startup open that
+   *  fails while it runs waits for this, so a failed composition (the root
+   *  cause, with its startup report) is the one reported. */
+  let settleComposition: (ok: boolean) => void = () => undefined
+  const compositionSettled = new Promise<boolean>(resolve => { settleComposition = resolve })
   const rawChannel = createChannel(ctx, startupSession, {
     // The namespace this boot actually registered the settings section under
     // (the Config owner's Loader id; custom ids are supported). Chat and the
@@ -876,7 +908,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       ...(backendStartup === undefined ? {} : { startup: backendStartup }),
     }),
     // The in-process DSH kernel: a DSH placeholder until the row's session.
-    ...(dshStartup === undefined ? {} : { backendLabel: kernelDisplayName('dsh'), startup: dshStartup }),
+    ...(dshStartup === undefined ? {} : {
+      backendLabel: backendLabel('dsh'),
+      startup: dshStartup,
+      openSession: async target => {
+        if (target.kind !== 'create' || openDshSession === undefined) throw new Error(t('new-session-unavailable'))
+        return await openDshSession(target.cwd)
+      },
+    }),
     // The activity projection only pushes on change; read the current value as
     // soon as this session binds so a resumed or reattached session renders its
     // line immediately instead of waiting for the next event.
@@ -1003,6 +1042,13 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // The remembered-kernel fallback notice (set during backend startup above)
   // lands once the channel can actually show it.
   if (backendFallbackNotice !== undefined) notifyChannel(backendFallbackNotice, { color: 'warning' })
+  // The entry could not use the installed dsh and fell back (this process,
+  // or the `dsh --profile` it handed the launch to): say why, once.
+  const hostNotice = runtimeOptions.hostNotice ?? process.env[HOST_NOTICE_ENV]
+  delete process.env[HOST_NOTICE_ENV]
+  if (hostNotice !== undefined && hostNotice !== '') {
+    notifyChannel(t('host-dsh-unavailable', { reason: hostNotice }), { color: 'warning', timeoutMs: 10000 })
+  }
   const submitChannel: typeof channel.submit = text => {
     if (!shadow) channel.submit(text)
   }
@@ -2401,7 +2447,17 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // adoption is flushed. Does nothing on an ordinary boot.
   armFirstFrameAck(process.stdout)
   markBoot('render-start')
-  instance = await render(tree, { exitOnCtrlC: false, terminalImages: bootedTerminalImages })
+  // The in-process DSH kernel composes right after the mount, and that
+  // freezes the event loop for a while (design 6.1): the entry waits for the
+  // first frame — which says DSH is starting — to reach the terminal first.
+  // (Only there: an ordinary boot waits for nothing and writes nothing.)
+  let frameFlushed = (): void => undefined
+  const firstFrame = entrySlot === undefined ? undefined : new Promise<void>(resolve => { frameFlushed = resolve })
+  instance = await render(tree, {
+    exitOnCtrlC: false,
+    terminalImages: bootedTerminalImages,
+    ...(entrySlot === undefined ? {} : { onFrame: () => { frameFlushed() } }),
+  })
   markBoot('render-done')
   const isRecompose = lastBootedFullscreen !== undefined
   lastBootedFullscreen = bootedFullscreen
@@ -2500,41 +2556,51 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       if (!exited) instance?.rerender(buildTree())
     }
     entrySlot.composeWarning = line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }
-    entrySlot.composeFailed = error => {
+    // The first frame's write, then stdout drained (bounded: a renderer that
+    // never draws must not hold the composition back).
+    entrySlot.firstFrameFlushed = async () => {
+      await Promise.race([firstFrame, new Promise<void>(resolve => { setTimeout(resolve, 1000).unref() })])
+      await new Promise<void>(resolve => { process.stdout.write('', () => { resolve() }) })
+    }
+    entrySlot.composeSucceeded = () => { settleComposition(true) }
+    entrySlot.composeFailed = (error, logPath) => {
+      settleComposition(false)
       const reason = error instanceof Error ? error.message : String(error)
-      logForDebugging(`dsh-tui: host composition failed (${reason})`)
+      logForDebugging(`dsh-tui: host composition failed (${reason})${logPath === undefined ? '' : ` — startup report: ${logPath}`}`)
+      compositionFailed = true
+      openDshSession = undefined
+      // No DSH to open a session on: the failure row names the report and
+      // the ways out that still work (not `/new`).
+      const hint = logPath === undefined ? t('startup-compose-failed-hint') : t('startup-compose-failed-hint-log', { path: logPath })
       if (!dshStartupSettled) {
-        settleDshStartup?.reject(error)
+        settleDshStartup?.reject(new StartupOpenError(reason.split('\n')[0] ?? reason, hint, { cause: error }))
         return
       }
       // Leaving already (a quit during the composition disposes the tree it
       // was composing): nothing to tell.
       if (exited) return
+      // The session may already be adopted (the audit runs after the tree
+      // settled): a row that stays, not a toast, so the report's path does.
       try {
-        notifyChannel(reason.split('\n')[0] ?? reason, { color: 'warning' })
+        channel.pushLocal(t('startup-open-failed', { backend: backendLabel('dsh'), err: reason.split('\n')[0] ?? reason }), [hint])
       } catch {
         // The screen is gone; the debug log above has it.
       }
     }
-    /**
-     * The DSH side, from the profile's dsh-tui row (its runtime fiber, after
-     * the Loader settled, so DSH's services are there): what `apply` does
-     * for DSH on the profile path, in the same order — presets, the ask-user
-     * seams, the approval answerer, the agent, workspace ownership, the DSH
-     * session — then the channel adopts the session. The row's Config is
-     * the one to honor (its route and preset pins). Never throws: a failure
-     * becomes the startup notice in the screen.
-     */
     entrySlot.attachDsh = async (rowCtx, rowRuntimeConfig) => {
       const dshCtx = rowCtx as Context
       markBoot('entry-dsh-attach')
+      // The composition already failed (its row is on screen): no session.
+      if (compositionFailed) return
       try {
         const rowConfig = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>)
+        rowFacts.config = rowConfig
         await installPresets(dshCtx)
         const seams = mountDshQuestionSeams(dshCtx)
         if (seams.notice !== undefined) notifyChannel(seams.notice, { color: 'error' })
         if (seams.registration.kind === 'waterfall') seams.registration.register(channel)
         mountDshApprovals(dshCtx)
+        refreshHostServices()
         const rowRoute = { provider: rowConfig.provider, model: rowConfig.model }
         const rowDefault = (dshCtx.get('agentDefaultModel') as {
           currentSelection?(): { provider?: unknown; model?: unknown }
@@ -2544,27 +2610,50 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
             && typeof rowDefault.model === 'string' && rowDefault.model.length > 0
             ? { provider: rowDefault.provider, model: rowDefault.model }
             : undefined)
+        // `/new` after a failed startup open: DSH's create path on this row.
+        openDshSession = async cwd => {
+          const created = await resolveAgent(dshCtx, undefined, rowRoute, rowStartupRoute, { cwd }, rowConfig.preset)
+          agent = created.agent
+          await attachWorkspaceOwnership(dshCtx, created.agent)
+          rowFacts.route = created.route ?? rowStartupRoute
+          refreshLastRunRecord()
+          return createDshSession(dshCtx, { agent: created.agent, handle: created.handle })
+        }
         const rowCmdline = (dshCtx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
         const rowArgs = rowCmdline?.get?.() ?? rowCmdline?.args ?? process.argv.slice(2)
+        // A workspace target only the profile's providers know (a provider
+        // URI): resolved now that they are composed.
+        let startupMeta = meta
+        if (deferredWorkspace !== undefined) {
+          const workspaces = getHostWorkspaceRuntime(dshCtx.get('tuiWorkspaces'))
+          const target = workspaces === undefined ? undefined : await workspaces.resolve(deferredWorkspace)
+          if (target === undefined) throw new Error(unsupportedWorkspaceTarget(deferredWorkspace))
+          startupMeta = { cwd: target.cwd }
+        }
         markBoot('entry-dsh-open')
         const opened = await resolveAgent(
           dshCtx,
           rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs),
           rowRoute,
           rowStartupRoute,
-          meta,
+          startupMeta,
           rowConfig.preset,
         )
         markBoot('entry-dsh-opened')
+        const session = createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle })
+        // The composition failed while this opened: its row stands, and
+        // the session it will never adopt is closed.
+        if (compositionFailed) {
+          await session.dispose().catch(() => undefined)
+          return
+        }
         agent = opened.agent
         await attachWorkspaceOwnership(dshCtx, opened.agent)
         markBoot('entry-dsh-owned')
-        refreshHostServices()
         const route = opened.route ?? rowStartupRoute
         rowFacts.route = route
-        rowFacts.config = rowConfig
         settleDshStartup?.resolve({
-          session: createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle }),
+          session,
           history: [],
           route,
           ...(opened.agentPreset === undefined ? {} : { agentPreset: opened.agentPreset }),
@@ -2573,6 +2662,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       } catch (error) {
         markBoot('entry-dsh-failed')
         logForDebugging(`dsh-tui: DSH session failed to open (${error instanceof Error ? error.message : String(error)})`)
+        // A composition that fails reports itself (its row names the report).
+        if (!await compositionSettled) return
         settleDshStartup?.reject(error)
       }
     }
@@ -2584,6 +2675,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // unhandled rejection instead of a clean exit. A teardown-driven settle
   // is swallowed by the funnel (issue #12).
   void instance.waitUntilExit().then(handleExit, handleExit)
+}
+
+function unsupportedWorkspaceTarget(target: string): string {
+  return `dsh-tui: unsupported or unavailable workspace target: ${target}`
 }
 
 /**

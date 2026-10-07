@@ -738,8 +738,19 @@ export function Chat({
   // 整屏」，浏览器必须提前藏在下面；现在整屏（会话/设置/任务面板）盖在
   // 落地页**之上**、Esc 退回落地页，按需打开即可——boot 时同时为真反而会
   // 让浏览器盖住落地页（渲染顺序见各 early-return）。恢复重挂同样不开它。
+  // A channel still starting its session (the in-process DSH kernel: the
+  // screen mounts before DSH has composed) holds the two DSH boot screens —
+  // the home lists DSH sessions, the guide configures DSH — until the
+  // session is adopted (`ready`), and opens them then (see the effect after
+  // `settingsOpen`). Every other launch is ready on its first frame, so its
+  // seeds below are unchanged.
+  const heldBootScreensRef = React.useRef(
+    channel.ready === false && !recoveryRemountOnBoot
+      ? { home: openHomeOnBoot === true && launchpadOnBoot !== true, onboarding: onboardingOnBoot === true }
+      : undefined,
+  )
   const [supervisorOpen, setSupervisorOpen] = React.useState(
-    openHomeOnBoot === true && launchpadOnBoot !== true && !recoveryRemountOnBoot,
+    openHomeOnBoot === true && launchpadOnBoot !== true && !recoveryRemountOnBoot && channel.ready !== false,
   )
   /**
    * The launchpad: the landing page every ordinary launch starts on.
@@ -926,7 +937,7 @@ export function Chat({
    * The first-run guide. Renders above the launchpad (see the prop docs): a
    * launch that needs setup has not answered the launchpad's question yet.
    */
-  const [onboardingOpen, setOnboardingOpen] = React.useState(onboardingOnBoot === true && !recoveryRemountOnBoot)
+  const [onboardingOpen, setOnboardingOpen] = React.useState(onboardingOnBoot === true && !recoveryRemountOnBoot && channel.ready !== false)
   /**
    * 落地页那条"第一次用？跑一遍引导"的横幅认的是**还欠一次引导**，而不是启动快照：
    * 完成（写进 onboarding.json）之后立刻收掉；跳过刻意保留——没记账，下次启动还会问，
@@ -990,6 +1001,18 @@ export function Chat({
    *  browser, a screen rather than a panel: it owns its own focus, staged
    *  drafts and keyboard; Chat only opens it. */
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  // The held boot screens (see `heldBootScreensRef`) open once, when the
+  // session is adopted — unless the user already went to another screen.
+  // A startup that fails never opens them: there is no DSH behind them.
+  const channelReady = channel.ready
+  React.useEffect(() => {
+    const held = heldBootScreensRef.current
+    if (held === undefined || channelReady === false) return
+    heldBootScreensRef.current = undefined
+    if (settingsOpen || treeOpen) return
+    if (held.onboarding) setOnboardingOpen(true)
+    if (held.home) setSupervisorOpen(true)
+  }, [channelReady, settingsOpen, treeOpen])
   /** 99h / 999 次的"求 star"开屏弹窗（`usageStats` 记账，一档只弹一次）：
    * 只在启动时判定一次——回合进行中、或已有整屏界面在开（如开机首页），
    * 这一轮不弹也**不记账**，留给下一次启动。`starPrompt` 是测试缝：传
@@ -1150,14 +1173,17 @@ export function Chat({
    * （Standard/PTC/极简…），名册是异步的——落地页出来时顺手预热一次
    * （空名册不写；失败静默，段缺省不画）。/preset 自己的加载路径不动。
    */
+  // A placeholder still starting has no roster to ask (it would answer
+  // "not supported" into the Tips row): wait for the adopted session.
+  const presetsReady = channel.ready !== false
   React.useEffect(() => {
-    if (!launchpadShown || presetOptions.length > 0) return
+    if (!launchpadShown || presetOptions.length > 0 || !presetsReady) return
     let cancelled = false
     channel.listPresets()
       .then(list => { if (!cancelled && list.length > 0) setPresetOptions(list) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [launchpadShown, presetOptions.length, channel])
+  }, [launchpadShown, presetOptions.length, channel, presetsReady])
   /** `/effort` adapter levels: load async before the slider opens. */
   const [effortOptions, setEffortOptions] = React.useState<readonly EffortOption[]>([])
   /** True when those levels are the CLI-standard compatibility ladder (the
@@ -6156,8 +6182,12 @@ export function Chat({
       backendLabel: kernelCurrentOption?.shortLabel,
     })
     const lastNotification = channel.notifications.at(-1)
+    // While the session's backend is still starting (the status line's
+    // `status-starting` segment), the Tips row says so — below any notice.
     const launchpadNotice = lastNotification === undefined
-      ? undefined
+      ? channel.ready === false && channel.startupFailure === undefined
+        ? { text: t('status-starting', { backend: channel.backendCapabilities?.backendLabel ?? 'DSH' }), color: 'warning' as const }
+        : undefined
       : { text: lastNotification.text, ...(lastNotification.color === undefined ? {} : { color: lastNotification.color }) }
     const launchpad = (
       <Launchpad

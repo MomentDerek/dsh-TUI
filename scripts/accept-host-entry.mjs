@@ -53,6 +53,29 @@
  *                          root), the DSH session is adopted and its model
  *                          named, /quit restores the terminal
  *   dsh-in-entry-quit-early the same, /quit as soon as the screen is up
+ *   (Phase 2.4, the DSH kernel in the entry by default:)
+ *   dsh-default-starting   no switch set: DSH runs in the entry; the first
+ *                          frame says "Starting DSH…" and reached the
+ *                          terminal before the composition froze the loop
+ *   dsh-entry-dsh-off      DSH_TUI_HOST_ENTRY_DSH=0: DSH through dsh --profile
+ *   dsh-entry-off          DSH_TUI_HOST_ENTRY=0: the same
+ *   dsh-shim-host          the first dsh on PATH is a launcher script: the
+ *                          entry follows it and hosts DSH in process
+ *   dsh-host-fallback      a dsh launcher the entry cannot follow: it falls
+ *                          back to dsh --profile and the screen says why
+ *   dsh-home-held          the one-shot sessions home waits for the DSH
+ *                          session instead of opening on the first frame
+ *   dsh-onboarding-held    the first-run guide the same
+ *   dsh-provider-workspace a provider-URI workspace target (a test plugin's
+ *                          `accept://` provider) resolves after composition
+ *   dsh-unknown-workspace  an unresolvable target fails the startup session
+ *                          in the screen instead of the mount
+ *   dsh-compose-failed     a broken agent-loop row: the failure row names the
+ *                          startup report under $DSH_HOME/logs and offers no
+ *                          /new; /quit still exits cleanly
+ *   dsh-open-failed-new    the session open fails (a --resume of an unknown
+ *                          id): /new opens a DSH session through DSH's own
+ *                          create path
  *   live-send              DSH_TUI_CLAUDE_LIVE=1 only: one prompt round-trip
  *   live-initial-prompt    DSH_TUI_CLAUDE_LIVE=1 only: a command-line prompt
  *                          is sent once the session is adopted
@@ -88,7 +111,7 @@
  * `--keep` keeps the isolated root (credentials link included) and prints it.
  */
 import { randomUUID } from 'node:crypto'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { zstdDecompressSync } from 'node:zlib'
@@ -107,7 +130,7 @@ const live = process.env.DSH_TUI_CLAUDE_LIVE === '1'
 const only = option('--only')?.split(',')
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
-const { root, dshHome, launcher, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-accept-', profilesNodeModules: flag('--legacy') })
+const { root, dshHome, profile: profileDir, launcher, dshBin } = buildIsolatedProfile({ repo, prefix: 'dsh-tui-accept-', profilesNodeModules: flag('--legacy') })
 const realClaude = executable('claude')
 if (!flag('--no-auth')) {
   mkdirSync(join(root, '.claude'), { recursive: true })
@@ -151,12 +174,12 @@ function markedProcesses(marker) {
 }
 
 /** One TUI run: a fresh ~/.dsh-tui and session store, its own trace and marker. */
-async function launch(name, { env = {}, cols = 100, rows = 30, settings, landing = true, args = [], backend = 'claude' } = {}) {
+async function launch(name, { env = {}, cols = 100, rows = 30, settings, landing = true, args = [], backend = 'claude', onboarded = true } = {}) {
   rmSync(join(root, '.dsh-tui'), { recursive: true, force: true })
   rmSync(join(root, 'sessions'), { recursive: true, force: true })
   // Past the first-run guide (the DSH kernel opens on it otherwise).
   mkdirSync(join(root, '.dsh-tui'), { recursive: true })
-  writeFileSync(join(root, '.dsh-tui', 'onboarding.json'), JSON.stringify({ completed: true, version: 1 }))
+  if (onboarded) writeFileSync(join(root, '.dsh-tui', 'onboarding.json'), JSON.stringify({ completed: true, version: 1 }))
   if (settings !== undefined) {
     mkdirSync(join(root, '.dsh-tui'), { recursive: true })
     writeFileSync(join(root, '.dsh-tui', 'settings.json'), JSON.stringify({ version: 1, values: settings, imported: { from: 'none', at: 0 } }))
@@ -191,7 +214,8 @@ async function launch(name, { env = {}, cols = 100, rows = 30, settings, landing
   }
   const t = TuiTest.ephemeral(`accept-${name}`)
   const startedAt = Date.now()
-  await t.run('/usr/bin/env', ['-i', ...Object.entries(full).map(([key, value]) => `${key}=${value}`), process.execPath, launcher, ...args], { cols, rows, cwd: repo })
+  // A key set to undefined in `env` is left out (e.g. no workspace target).
+  await t.run('/usr/bin/env', ['-i', ...Object.entries(full).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}=${value}`), process.execPath, launcher, ...args], { cols, rows, cwd: repo })
   const marks = () => readLines(trace).map(line => JSON.parse(line))
   return {
     t,
@@ -453,7 +477,9 @@ for (const landing of [true, false]) await runCase(`kernel-to-dsh-${landing ? 'l
 await runCase('dsh-to-claude', async ({ check, launch }) => {
   const run = await launch({ backend: 'dsh' })
   check('the DSH screen is up', await until(async () => (await run.screen()).includes(DSH_SCREEN), 60000), lines(await run.screen()).slice(-6).join('\n'))
-  check('through dsh (a dsh-tui row applies)', run.traced('row-apply'))
+  // (With the DSH kernel in the entry by default the placeholder already
+  // names the DeepSeek model before the row applies: wait for the row.)
+  check('through dsh (a dsh-tui row applies)', await until(() => run.traced('row-apply'), 30000))
   await pickKernel(run, false)
   check('switch accepted', await until(() => run.restartLog().some(line => line.includes('backend switch accepted')), 10000), run.restartLog().slice(-5).join('\n'))
   check('the replacement is the package entry', await until(() => run.traced('entry-start'), 30000), JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark])))
@@ -536,7 +562,207 @@ if (live) {
   })
 }
 
-// ── 6. process ownership with the DSH kernel in the entry (block 2.5) ────
+// ── 6. Phase 2.4: the DSH kernel in the entry by default ─────────────────
+// No DSH_TUI_HOST_ENTRY_DSH in these runs unless a case sets one.
+const STARTING = 'Starting DSH'
+const pidOf = (run, mark) => run.marks().find(entry => entry.mark === mark)?.pid
+const atOf = (run, mark) => run.marks().find(entry => entry.mark === mark)?.at
+/** The DSH session adopted in the entry process itself (one root). */
+const adoptedInEntry = run => {
+  const entry = pidOf(run, 'entry-start')
+  return entry !== undefined && run.traced('row-apply', mark => mark.pid === entry) && run.traced('startup-adopted', mark => mark.pid === entry)
+}
+const timeline = run => JSON.stringify(run.marks().map(entry => [entry.pid, entry.mark]))
+const profilePatchFile = join(profileDir, 'cordis.patch.yml')
+/** Run `body` with the isolated profile's patch layer set to `yaml`. */
+async function withProfilePatch(yaml, body) {
+  writeFileSync(profilePatchFile, yaml)
+  try {
+    await body()
+  } finally {
+    writeFileSync(profilePatchFile, '[]\n')
+  }
+}
+
+for (const landing of [false, true]) await runCase(`dsh-default-starting${landing ? '-landing' : ''}`, async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  // Watch the screen while the composition runs: the entry cannot draw
+  // then, so whatever is visible was written before it started.
+  let seenWhileComposing = false
+  await until(async () => {
+    if (run.traced('entry-compose-start') && !run.traced('entry-compose-end') && (await run.screen()).includes(STARTING)) seenWhileComposing = true
+    return seenWhileComposing || run.traced('entry-compose-end')
+  }, 30000, 50)
+  check('"Starting DSH…" is on screen while DSH composes', seenWhileComposing || (await run.screen()).includes(STARTING), lines(await run.screen()).slice(-6).join('\n'))
+  const flushed = run.marks().find(entry => entry.mark === 'entry-first-frame-flushed')
+  const composeStart = run.marks().find(entry => entry.mark === 'entry-compose-start')
+  check(`the first frame reached the terminal before the composition (flushed ${flushed?.ms}ms, compose ${composeStart?.ms}ms)`, flushed !== undefined && composeStart !== undefined && flushed.ms <= composeStart.ms && run.traced('render-done'), timeline(run))
+  check('default: DSH runs in the entry (row and adoption in the entry process)', await until(() => adoptedInEntry(run), 60000), timeline(run))
+  check('"Starting DSH…" is gone once adopted', await until(async () => !(await run.screen()).includes(STARTING), 5000), lines(await run.screen()).slice(-6).join('\n'))
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+for (const [name, env] of [['dsh-entry-dsh-off', { DSH_TUI_HOST_ENTRY_DSH: '0' }], ['dsh-entry-off', { DSH_TUI_HOST_ENTRY: '0' }]]) await runCase(name, async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing: false, env })
+  check('the DSH screen is up', await until(async () => (await run.screen()).includes(DSH_SCREEN), 60000), lines(await run.screen()).slice(-6).join('\n'))
+  check(`${Object.keys(env)[0]}=0: through dsh --profile, never the entry`, run.traced('row-apply') && !run.traced('entry-start'), timeline(run))
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+const relocatedDshEntry = realpathSync(join(dshBin, 'dsh'))
+await runCase('dsh-shim-host', async ({ check, launch }) => {
+  // A launcher script, as pnpm / a wrapper installs one: not a link.
+  const shimBin = join(root, 'shim-bin')
+  mkdirSync(shimBin, { recursive: true })
+  writeFileSync(join(shimBin, 'dsh'), `#!/bin/sh\nexec '${process.execPath}' "${relocatedDshEntry}" "$@"\n`)
+  chmodSync(join(shimBin, 'dsh'), 0o755)
+  const run = await launch({ backend: 'dsh', landing: false, env: { PATH: `${shimBin}:${dshBin}:${process.env.PATH ?? ''}` } })
+  check('the entry follows the script to the host and runs DSH in process', await until(() => adoptedInEntry(run), 60000), timeline(run))
+  check('no fallback', !run.traced('entry-host-unavailable'))
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+await runCase('dsh-host-fallback', async ({ check, launch }) => {
+  // A launcher whose target lives in a variable: the entry cannot follow it.
+  const opaqueBin = join(root, 'opaque-bin')
+  mkdirSync(opaqueBin, { recursive: true })
+  writeFileSync(join(opaqueBin, 'dsh'), `#!/bin/sh\nexec '${process.execPath}' "$ACCEPT_DSH_ENTRY" "$@"\n`)
+  chmodSync(join(opaqueBin, 'dsh'), 0o755)
+  const run = await launch({ backend: 'dsh', landing: false, env: { PATH: `${opaqueBin}:${dshBin}:${process.env.PATH ?? ''}`, ACCEPT_DSH_ENTRY: relocatedDshEntry } })
+  // (Not the status line's model: the stderr line before dsh's screen names
+  // @deepseek-ai/dsh too.)
+  const entry = pidOf(run, 'entry-start')
+  check('the entry fell back: dsh --profile hosts the row in another process', await until(() => run.traced('entry-host-unavailable') && run.traced('render-done', mark => mark.pid !== entry), 60000), timeline(run))
+  check('the screen says why', await until(async () => (await run.screen()).includes('Not using the installed dsh'), 10000), lines(await run.screen()).slice(-8).join('\n'))
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+await runCase('dsh-home-held', async ({ check, launch }) => {
+  // An ordinary first launch: no workspace target, no resume, chat page.
+  const run = await launch({ backend: 'dsh', landing: false, env: { DSH_TUI_WORKSPACE_TARGET: undefined } })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  const early = await run.screen()
+  check('the first frame is the chat page, not the sessions home', !early.includes('This terminal hosts several sessions') || run.traced('startup-adopted'), lines(early).slice(0, 4).join('\n'))
+  check('adopted', await until(() => run.traced('startup-adopted'), 60000), timeline(run))
+  check('the sessions home opens once the DSH session is there', await until(async () => (await run.screen()).includes('This terminal hosts several sessions'), 10000), lines(await run.screen()).slice(0, 6).join('\n'))
+  await run.t.press('Escape')
+  await sleep(500)
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+await runCase('dsh-onboarding-held', async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing: false, onboarded: false })
+  // Before 2.4 the guide covered the first frame: no prompt at all.
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  check('the first frame is the chat page, not the first-run guide', !(await run.screen()).includes('Welcome to dsh-TUI') || run.traced('startup-adopted'))
+  check('adopted', await until(() => run.traced('startup-adopted'), 60000), timeline(run))
+  check('the first-run guide opens once the DSH session is there', await until(async () => (await run.screen()).includes('Welcome to dsh-TUI'), 10000), lines(await run.screen()).slice(0, 6).join('\n'))
+  await run.t.press('Escape')
+  await sleep(800)
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, {})
+})
+
+const providerDir = join(root, 'provider-workspace')
+mkdirSync(providerDir, { recursive: true })
+writeFileSync(join(profileDir, 'accept-workspace.mjs'), `// accept-host-entry: a workspace provider for accept:// URIs.
+export const name = 'accept-workspace'
+export const inject = ['tuiWorkspaces']
+const dir = ${JSON.stringify(providerDir)}
+const target = uri => ({ uri, cwd: dir, label: 'accept', kind: 'provider', badge: 'ACC' })
+export function apply(ctx) {
+  ctx.tuiWorkspaces.register({
+    schemes: ['accept'],
+    list: () => [target('accept://ws')],
+    resolve: uri => uri.startsWith('accept://') ? target(uri) : undefined,
+    describe: cwd => cwd === dir ? target('accept://ws') : undefined,
+  })
+}
+`)
+await runCase('dsh-provider-workspace', async ({ check, launch }) => {
+  await withProfilePatch(`- insert:\n    - id: accept-workspace\n      name: './accept-workspace.mjs'\n`, async () => {
+    const run = await launch({ backend: 'dsh', landing: false, env: { DSH_TUI_WORKSPACE_TARGET: 'accept://ws' } })
+    await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+    check('mounted before DSH composed (the target did not fail the mount)', run.traced('render-done'))
+    check('adopted in the entry', await until(() => adoptedInEntry(run), 60000), `${timeline(run)}\n--- screen ---\n${lines(await run.screen()).slice(-8).join('\n')}`)
+    check('no workspace failure on screen', !(await run.screen()).includes('unsupported or unavailable workspace target'))
+    // The adopted session runs in the provider's directory: the session
+    // store files it under a directory named after its cwd.
+    const storeDirs = existsSync(join(root, 'sessions')) ? readdirSync(join(root, 'sessions')) : []
+    check('the session was created in the provider workspace', storeDirs.some(dir => dir.includes('provider-workspace')), storeDirs.join(', '))
+    await run.clear()
+    await run.command('/quit')
+    await checkExit(run, check, { code: 0 })
+  })
+})
+
+await runCase('dsh-unknown-workspace', async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing: false, env: { DSH_TUI_WORKSPACE_TARGET: 'nowhere://x' } })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  check('the failure is a row in the screen, naming the target', await until(async () => (await run.screen()).includes('unsupported or unavailable workspace target'), 30000), lines(await run.screen()).slice(-8).join('\n'))
+  check('not adopted', !run.traced('startup-adopted'))
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+await runCase('dsh-compose-failed', async ({ check, launch }) => {
+  const logs = join(dshHome, 'logs')
+  rmSync(logs, { recursive: true, force: true })
+  await withProfilePatch(`- id: agent-loop\n  disabled: !!js "(() => { throw new Error('accept: broken agent-loop row') })()"\n`, async () => {
+    const run = await launch({ backend: 'dsh', landing: false, cols: 160 })
+    await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+    check('the failure row names the startup log', await until(async () => (await run.screen()).includes('Startup log:'), 30000), `${timeline(run)}\n--- screen ---\n${lines(await run.screen()).slice(-10).join('\n')}`)
+    const reports = existsSync(logs) ? readdirSync(logs).filter(file => file.startsWith('startup-')) : []
+    check('a startup report under $DSH_HOME/logs', reports.length === 1, reports.join(', '))
+    const report = reports.length === 1 ? readFileSync(join(logs, reports[0]), 'utf8') : ''
+    check('the report holds the failure and the startup logs', report.startsWith('WARNING: Raw diagnostics') && report.includes('accept: broken agent-loop row') && report.includes('configurationPath'), report.slice(0, 400))
+    const screen = await run.screen()
+    check('the row names the report file', reports.length === 1 && screen.replace(/\s+/gu, '').includes(reports[0].slice(0, 30)), lines(screen).slice(-6).join('\n'))
+    check('no /new offered (only /kernel and /quit)', !screen.includes('/new to retry') && screen.includes('/kernel to switch kernel'), lines(screen).slice(-6).join('\n'))
+    check('not adopted', !run.traced('startup-adopted'))
+    await run.clear()
+    await run.command('/quit')
+    await checkExit(run, check, { code: 0 })
+  })
+})
+
+await runCase('dsh-open-failed-new', async ({ check, launch }) => {
+  const run = await launch({ backend: 'dsh', landing: false, args: ['--resume', '00000000-0000-4000-8000-000000000000'] })
+  await run.t.getByText(PROMPT).expect({ timeout: 30000 })
+  check('the open fails in the screen, offering /new', await until(async () => (await run.screen()).includes('failed to open') && (await run.screen()).includes('/new to retry'), 60000), `${timeline(run)}\n--- screen ---\n${lines(await run.screen()).slice(-8).join('\n')}`)
+  check('not adopted', !run.traced('startup-adopted'))
+  await run.clear()
+  await run.command('/new')
+  let refused = true
+  await until(async () => {
+    await run.clear()
+    await run.command('/status')
+    await sleep(800)
+    refused = (await run.screen()).includes(NOT_READY)
+    await run.t.press('Escape')
+    return !refused
+  }, 30000, 1500)
+  check('/new opens a DSH session (a session command runs)', !refused, lines(await run.screen()).slice(-10).join('\n'))
+  check('the DSH screen is up (its model on the status line)', await until(async () => (await run.screen()).includes(DSH_SCREEN), 10000), lines(await run.screen()).slice(-6).join('\n'))
+  await run.clear()
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+// ── 7. process ownership with the DSH kernel in the entry (block 2.5) ────
 // docs/standalone-host-design.md 2.5 and src/dsh-adapter/process-exit.ts:
 // signals, `ctx.appExit` and fatal errors go through the TUI's exit funnel;
 // a termination signal ends the process by that signal. Every case sets

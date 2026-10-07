@@ -124,6 +124,9 @@ function runBin(args, extraEnv = {}, { delegating = false } = {}) {
       // 0.8.7 双态启动器：默认强制完整逻辑（本套回归覆盖的全量路径）；
       // 委托角色的专门用例按需放开（见第 4 节）。
       ...(delegating ? {} : { DSH_TUI_NO_DELEGATE: '1' }),
+      // The stub dsh is no host the entry could load: keep DSH launches on
+      // `dsh --profile` directly (§7 covers the in-entry default).
+      DSH_TUI_HOST_ENTRY_DSH: '0',
       ...extraEnv,
     },
     encoding: 'utf8',
@@ -385,6 +388,22 @@ resetStubLog()
 r = runBin(['--backend', 'claude', 'foo'])
 check('host entry: a Config row pinning dsh is handed on to dsh with the app args', launchCalls().at(-1) === '<--profile><dsh-tui><--><foo>' && !entryRan(r))
 rmSync(profilePatch, { force: true })
+// The DSH kernel runs in the entry by default; the stub dsh is no installed
+// host the entry can load, so the entry says so on stderr and hands the
+// launch to `dsh --profile` itself (same args as the launcher would pass).
+const hostFallback = result => /cannot host this launch/u.test(result.stderr)
+resetStubLog()
+r = runBin(['foo'], { DSH_TUI_HOST_ENTRY_DSH: undefined })
+check('host entry: DSH goes to the entry by default; an unusable dsh falls back to dsh --profile, said on stderr', launchCalls().at(-1) === '<--profile><dsh-tui><--><foo>' && hostFallback(r) && !entryRan(r), r.stderr)
+resetStubLog()
+r = runBin([], { DSH_TUI_HOST_ENTRY_DSH: undefined })
+check('host entry: the fallback passes no dsh -- without app args', launchCalls().at(-1) === '<--profile><dsh-tui>' && hostFallback(r))
+resetStubLog()
+r = runBin([], { DSH_TUI_HOST_ENTRY_DSH: '0' })
+check('host entry: DSH_TUI_HOST_ENTRY_DSH=0 keeps DSH on dsh --profile (no entry)', launchCalls().length === 1 && !hostFallback(r))
+resetStubLog()
+r = runBin([], { DSH_TUI_HOST_ENTRY_DSH: undefined, DSH_TUI_HOST_ENTRY: '0' })
+check('host entry: DSH_TUI_HOST_ENTRY=0 keeps DSH on dsh --profile too', launchCalls().length === 1 && !hostFallback(r))
 
 // --- 6. shellQuote 单元（win32 shell:true 路径的转义规则）---------------------
 check('shellQuote: plain tokens pass through', shellQuote(['plugin', '--profile', 'dsh-tui']).join(' ') === 'plugin --profile dsh-tui')

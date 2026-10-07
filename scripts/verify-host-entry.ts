@@ -8,9 +8,15 @@
  *  - `restartArgv` relaunches a replacement on the Claude kernel through the
  *    host entry (only the app arguments after dsh's `--` carry over; a
  *    kernel switch drops resume flags), leaves every other relaunch on its
- *    own script, and never re-targets the entry onto itself; with
- *    `DSH_TUI_HOST_ENTRY_DSH=1` (`dshInEntry`) a DSH replacement goes to the
- *    entry too.
+ *    own script, and never re-targets the entry onto itself; with the DSH
+ *    kernel in the entry (`dshInEntry`, the default) a DSH replacement goes
+ *    to the entry too;
+ *  - the DSH kernel runs in the entry unless `DSH_TUI_HOST_ENTRY_DSH=0` or
+ *    `DSH_TUI_HOST_ENTRY=0`;
+ *  - `findHostDsh` follows the first `dsh` on PATH to the installed host
+ *    through an npm link, a pnpm cmd-shim script, a wrapper script, an npm
+ *    `.cmd` shim's script path and a volta shim, and gives a reason when it
+ *    cannot (a script starting something else, a binary, no dsh).
  *
  * The launcher half (bin/dsh-tui.js) is covered by verify-launcher.mjs §7.
  *
@@ -18,10 +24,11 @@
  */
 import './lib/fake-home.mjs'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { configuredBackend, entryKernel } from '../src/hostEntryRoute.js'
+import { delimiter, join } from 'node:path'
+import { configuredBackend, entryKernel, hostEntryDshEnabled } from '../src/hostEntryRoute.js'
+import { findHostDsh, launcherScriptPaths } from '../src/dsh-adapter/host-dsh.js'
 import { stripResumeArgs } from '../src/sessionHistory.js'
 import { restartArgv } from '../src/update.js'
 
@@ -72,12 +79,89 @@ check('the entry relaunches itself (it hands a DSH kernel on to dsh)',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
 check('the entry on Claude is not re-targeted',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, hostEntry: entry })) === JSON.stringify(entryArgv.slice(1)))
-check('with DSH in the entry (DSH_TUI_HOST_ENTRY_DSH=1) a DSH relaunch under dsh moves to the entry',
+check('with DSH in the entry (the default) a DSH relaunch under dsh moves to the entry',
   JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
 check('with DSH in the entry the entry relaunches itself on DSH',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, 'foo']))
 const noSeparator = ['/node', '/dsh/lib/bin.js', '--profile', 'dsh-tui']
 check('a dsh argv without app args gives the entry none',
   JSON.stringify(restartArgv({ execArgv: [], argv: noSeparator, kernel: 'claude', switching: true, hostEntry: entry })) === JSON.stringify([entry]))
+
+// ── the default and its switches (kernelPrefs) ───────────────────────
+check('the DSH kernel runs in the entry by default', hostEntryDshEnabled({}))
+check('DSH_TUI_HOST_ENTRY_DSH=0 hands DSH to dsh --profile', !hostEntryDshEnabled({ DSH_TUI_HOST_ENTRY_DSH: '0' }))
+check('DSH_TUI_HOST_ENTRY=0 wins over everything', !hostEntryDshEnabled({ DSH_TUI_HOST_ENTRY: '0', DSH_TUI_HOST_ENTRY_DSH: '1' }))
+
+// ── findHostDsh: the first dsh on PATH, followed through launchers ───
+// A fake installed host: <prefix>/lib/node_modules/@deepseek-ai/dsh.
+const prefix = join(root, 'prefix')
+const hostDir = join(prefix, 'lib', 'node_modules', '@deepseek-ai', 'dsh')
+mkdirSync(join(hostDir, 'lib'), { recursive: true })
+writeFileSync(join(hostDir, 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.2.0-rc.2' }))
+writeFileSync(join(hostDir, 'lib', 'bin.js'), '#!/usr/bin/env node\n')
+const binDir = (name: string): string => {
+  const dir = join(root, name)
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+const located = (dir: string, env: NodeJS.ProcessEnv = {}, platform: NodeJS.Platform = 'linux') => findHostDsh({ PATH: dir, ...env }, platform)
+// npm on Unix: a link into the package.
+const npmBin = binDir('npm-bin')
+symlinkSync(join(hostDir, 'lib', 'bin.js'), join(npmBin, 'dsh'))
+check('an npm link resolves by realpath', JSON.stringify(located(npmBin)) === JSON.stringify({ packageDir: hostDir, launcher: join(npmBin, 'dsh'), via: 'link' }), located(npmBin))
+// pnpm's global bin: a cmd-shim sh script relative to its own directory.
+const pnpmHome = binDir('pnpm-home')
+const pnpmGlobal = join(pnpmHome, 'global', '5', 'node_modules', '@deepseek-ai')
+mkdirSync(pnpmGlobal, { recursive: true })
+symlinkSync(hostDir, join(pnpmGlobal, 'dsh'))
+writeFileSync(join(pnpmHome, 'dsh'), `#!/bin/sh
+basedir=$(dirname "$(echo "$0" | sed -e 's,\\\\,/,g')")
+
+case \`uname\` in
+    *CYGWIN*) basedir=\`cygpath -w "$basedir"\`;;
+esac
+
+if [ -z "$NODE_PATH" ]; then
+  export NODE_PATH="${pnpmHome}/global/5/.pnpm/node_modules"
+fi
+if [ -x "$basedir/node" ]; then
+  exec "$basedir/node"  "$basedir/global/5/node_modules/@deepseek-ai/dsh/lib/bin.js" "$@"
+else
+  exec node  "$basedir/global/5/node_modules/@deepseek-ai/dsh/lib/bin.js" "$@"
+fi
+`)
+chmodSync(join(pnpmHome, 'dsh'), 0o755)
+check('a pnpm cmd-shim script resolves through the script it starts', 'packageDir' in located(pnpmHome) && (located(pnpmHome) as { packageDir: string; via: string }).packageDir === realpathSync(hostDir) && (located(pnpmHome) as { via: string }).via === 'shim', located(pnpmHome))
+// A hand-written wrapper with an absolute path.
+const wrapperBin = binDir('wrapper-bin')
+writeFileSync(join(wrapperBin, 'dsh'), `#!/bin/sh\nexec /usr/bin/node '${join(hostDir, 'lib', 'bin.js')}' "$@"\n`)
+check('a wrapper script with an absolute path resolves', (located(wrapperBin) as { via?: string }).via === 'shim', located(wrapperBin))
+// npm's Windows .cmd shim, parsed (not beside a node_modules here).
+const cmdBin = binDir('cmd-bin')
+const cmdModules = join(cmdBin, 'node_modules', '@deepseek-ai')
+mkdirSync(cmdModules, { recursive: true })
+symlinkSync(hostDir, join(cmdModules, 'dsh'))
+writeFileSync(join(cmdBin, 'dsh.cmd'), '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\r\n')
+check('script paths in an npm .cmd shim are found', launcherScriptPaths(readFileSync(join(cmdBin, 'dsh.cmd'), 'utf8')).includes('%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js'))
+// A script that starts something else, a binary, an empty PATH: no host, and why.
+const otherBin = binDir('other-bin')
+writeFileSync(join(otherBin, 'dsh'), '#!/bin/sh\nexec node "$basedir/../somewhere/else/cli.js" "$@"\n')
+const other = located(otherBin)
+check('a launcher that starts no dsh script: no host, with the reason', 'reason' in other && other.reason.includes('launcher script'), other)
+const binaryBin = binDir('binary-bin')
+writeFileSync(join(binaryBin, 'dsh'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 0, 0]))
+const binary = located(binaryBin)
+check('a binary that is not volta: no host, with the reason', 'reason' in binary && binary.reason.includes('neither a link'), binary)
+const voltaHome = join(root, 'volta')
+const voltaBin = binDir('volta/bin')
+writeFileSync(join(root, 'volta-shim'), Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0]))
+symlinkSync(join(root, 'volta-shim'), join(voltaBin, 'dsh'))
+const voltaImage = join(voltaHome, 'tools', 'image', 'packages', '@deepseek-ai', 'dsh', 'lib', 'node_modules', '@deepseek-ai')
+mkdirSync(voltaImage, { recursive: true })
+symlinkSync(hostDir, join(voltaImage, 'dsh'))
+check('a volta shim resolves through volta\'s package image', (located(voltaBin, { VOLTA_HOME: voltaHome }) as { via?: string }).via === 'volta', located(voltaBin, { VOLTA_HOME: voltaHome }))
+const nothing = located(binDir('empty-bin'))
+check('no dsh on PATH: no host, with the reason', 'reason' in nothing && nothing.reason === 'no dsh on PATH', nothing)
+check('the first dsh on PATH decides (a non-host first hides a host later)', 'reason' in findHostDsh({ PATH: [otherBin, npmBin].join(delimiter) }, 'linux'))
 
 console.log(`\nverify-host-entry: ${passed} checks passed`)

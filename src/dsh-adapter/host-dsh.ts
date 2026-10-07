@@ -6,8 +6,9 @@
  * profile composed into it after the screen mounted. No `runProfile`, no
  * second root.
  *
- * Module identity. Everything comes from the `dsh` on PATH, by realpath (a
- * Windows `dsh.cmd` shim: the package beside it), never from this package's
+ * Module identity. Everything comes from the `dsh` on PATH — by realpath, or
+ * through the launcher script it is (npm / pnpm shims, Windows `.cmd` /
+ * `.ps1`, a volta shim; `findHostDsh`) — never from this package's
  * own dependencies: the host's `cordis` is a nested copy, and the Loader
  * must be the one `dsh-app-boot` itself uses (resolved through app-boot's own
  * `createRequire`). These modules are imported by file URL only — none of
@@ -29,16 +30,22 @@
  * |                              | PluginPackages, provideCmdline                   |       |
  * | `createAppReady`             | dsh `profile-boot` createAppReady                | ~20   |
  * | `createProcessShutdown`      | dsh `profile-boot` createProcessShutdown         | ~45   |
- * | `HostRoot.compose`           | dsh-app-boot `boot()` tail (mountRootInclude,    | ~6    |
- * |                              | loader.await, auditStartupEntries) + runProfile  |       |
- * |                              | appReady.commit                                  |       |
+ * | `HostRoot.compose`           | dsh-app-boot `boot()` tail (mountRootInclude,    | ~25   |
+ * |                              | loader.await, auditStartupEntries, the startup   |       |
+ * |                              | log exporter and `StartupError.startup`) +       |       |
+ * |                              | runProfile appReady.commit                       |       |
+ * | `writeStartupReport`         | dsh `bin.js` reportStartupFailure (file half)    | ~25   |
+ *
+ * One deviation: `bin.js` saves a report for a `StartupError` only and lets
+ * any other startup error crash the process; the entry saves one for every
+ * composition failure, because the screen stays up and shows its path.
  *
  * Deliberately not reproduced: `runProfile`'s SIGTERM/SIGINT handlers and
  * `createProcessShutdown().interrupt` (the entry owns signals and ends by the
  * signal through the TUI's exit funnel: ./process-exit.ts says why its exit
- * status differs from `interrupt`'s 0 / 130), `boot()`'s startup-log capture for `StartupError`
- * reports (a composition failure lands in the mounted screen instead),
- * `--patch` overlays and `--from-default-profile` (the launcher passes
+ * status differs from `interrupt`'s 0 / 130), the terminal half of
+ * `reportStartupFailure` (the screen is up: the failure row names the report
+ * instead), `--patch` overlays and `--from-default-profile` (the launcher passes
  * neither), and the `dsh-purge` `DSH_HOME` shim of `bin.js` (the launcher
  * resolves `DSH_HOME` itself).
  *
@@ -46,10 +53,13 @@
  * stderr as `dsh` prints them; the composition runs after the mount and
  * takes the caller's sink.
  */
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { delimiter, dirname, join } from 'node:path'
+import { basename, delimiter, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { inspect } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ProcessExitSeam } from './process-exit.js'
 
@@ -79,6 +89,9 @@ interface AppBootModule {
   readProfilePatches(binName: string, profileContext: unknown, profile: HostProfile): unknown[]
   mountRootInclude(ctx: Context, absoluteConfigPath: string, patches: unknown[], bareModuleBaseUrl: undefined, binName: string): Promise<unknown>
   auditStartupEntries(ctx: Context, binName: string, warn: Warn): Promise<void>
+  /** The audit's failure class (boot() attaches `startup` to it). */
+  readonly StartupError: abstract new (...args: never[]) => Error
+  getDshRuntimeVersion(): string
 }
 
 interface ProfileBootModule {
@@ -108,6 +121,8 @@ interface AppReadyService {
 export interface HostDsh {
   /** The host package directory (`@deepseek-ai/dsh`). */
   readonly packageDir: string
+  /** Its `package.json` version (reported, not gated on: the exports are). */
+  readonly version: string
   readonly Context: new () => Context
   readonly appBoot: AppBootModule
   readonly Loader: unknown
@@ -121,9 +136,26 @@ export interface HostDsh {
 /**
  * Find the installed host package from the first `dsh` on PATH.
  * @returns the package directory, or undefined when that `dsh` does not
- *   resolve into it.
+ *   resolve into it ({@link findHostDsh} says why).
  */
 export function locateHostDsh(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const found = findHostDsh(env, platform)
+  return 'packageDir' in found ? found.packageDir : undefined
+}
+
+/** Where the host came from, or why there is none (shown to the user). */
+export type HostDshLocation =
+  | { readonly packageDir: string; readonly launcher: string; readonly via: 'link' | 'shim' | 'beside' | 'volta' }
+  | { readonly reason: string }
+
+/**
+ * Find the installed host package from the first `dsh` on PATH, following
+ * what a launch would run: a link (npm on Unix) by its realpath, an npm /
+ * pnpm / yarn launcher script (sh, `.cmd`, `.ps1`) by the script path it
+ * starts, a volta shim through volta's package image. A launcher that
+ * cannot be followed is no host: the reason says what was found.
+ */
+export function findHostDsh(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): HostDshLocation {
   const names = platform === 'win32' ? ['dsh.cmd', 'dsh.ps1', 'dsh'] : ['dsh']
   for (const dir of (env.PATH ?? env.Path ?? '').split(delimiter)) {
     if (dir === '') continue
@@ -133,24 +165,101 @@ export function locateHostDsh(env: NodeJS.ProcessEnv = process.env, platform: No
       // npm's Windows shims sit beside the global node_modules.
       if (platform === 'win32') {
         const beside = join(dir, 'node_modules', '@deepseek-ai', 'dsh')
-        if (isHostPackage(beside)) return beside
+        if (isHostPackage(beside)) return { packageDir: beside, launcher: candidate, via: 'beside' }
       }
       // The first `dsh` on PATH is the one a launch would run: it is the host
-      // or there is none (a wrapper script that is not the package).
+      // or there is none.
       let real: string
       try {
         real = realpathSync(candidate)
-      } catch {
-        return undefined
+      } catch (error) {
+        return { reason: `${candidate} cannot be resolved (${error instanceof Error ? error.message : String(error)})` }
       }
-      for (let up = dirname(real); ; up = dirname(up)) {
-        if (isHostPackage(up)) return up
-        if (dirname(up) === up) break
-      }
-      return undefined
+      const linked = hostPackageAbove(real)
+      if (linked !== undefined) return { packageDir: linked, launcher: candidate, via: 'link' }
+      return followLauncher(candidate, real, env, platform)
     }
   }
-  return undefined
+  return { reason: 'no dsh on PATH' }
+}
+
+/** The host package containing `path`, walking up. */
+function hostPackageAbove(path: string): string | undefined {
+  for (let up = dirname(path); ; up = dirname(up)) {
+    if (isHostPackage(up)) return up
+    if (dirname(up) === up) return undefined
+  }
+}
+
+/** The largest launcher script read (npm / pnpm shims are well under 2 KiB). */
+const LAUNCHER_SCRIPT_MAX = 64 * 1024
+
+/**
+ * A `dsh` that is not a link into the package: a launcher script (read the
+ * script path it starts) or a volta shim (volta's package image).
+ */
+function followLauncher(candidate: string, real: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): HostDshLocation {
+  if (/^volta-shim(?:\.exe)?$/iu.test(basename(real))) {
+    const volta = env.VOLTA_HOME ?? join(env.HOME ?? env.USERPROFILE ?? '', '.volta')
+    const image = join(volta, 'tools', 'image', 'packages', '@deepseek-ai', 'dsh')
+    for (const packageDir of [join(image, 'lib', 'node_modules', '@deepseek-ai', 'dsh'), join(image, 'node_modules', '@deepseek-ai', 'dsh')]) {
+      if (isHostPackage(packageDir)) return { packageDir, launcher: candidate, via: 'volta' }
+    }
+    return { reason: `${candidate} is a volta shim and volta's image has no @deepseek-ai/dsh under ${image}` }
+  }
+  let text: string
+  try {
+    const content = readFileSync(real)
+    if (content.length > LAUNCHER_SCRIPT_MAX || content.subarray(0, 4096).includes(0)) {
+      return { reason: `${candidate} is neither a link into @deepseek-ai/dsh nor a launcher script` }
+    }
+    text = content.toString('utf8')
+  } catch (error) {
+    return { reason: `${candidate} cannot be read (${error instanceof Error ? error.message : String(error)})` }
+  }
+  const base = dirname(real)
+  for (const script of launcherScriptPaths(text)) {
+    const path = resolveLauncherPath(script, base, platform)
+    if (path === undefined || !existsSync(path)) continue
+    let target: string
+    try {
+      target = realpathSync(path)
+    } catch {
+      continue
+    }
+    const packageDir = hostPackageAbove(target)
+    if (packageDir !== undefined) return { packageDir, launcher: candidate, via: 'shim' }
+  }
+  return { reason: `${candidate} is a launcher script that starts no @deepseek-ai/dsh script found on disk` }
+}
+
+/**
+ * The script paths a launcher starts: quoted or bare tokens ending in
+ * `.js` / `.mjs` / `.cjs` (npm and pnpm cmd-shim, `.cmd` and `.ps1` shims,
+ * a hand-written `exec node …/bin.js` wrapper).
+ */
+export function launcherScriptPaths(text: string): string[] {
+  const found: string[] = []
+  const token = /"([^"\r\n]+?\.[cm]?js)"|'([^'\r\n]+?\.[cm]?js)'|((?:[^\s"'`;|&<>()]+?)\.[cm]?js)(?=[\s"';|&)]|$)/gmu
+  for (const match of text.matchAll(token)) {
+    const path = match[1] ?? match[2] ?? match[3]
+    if (path !== undefined && !found.includes(path)) found.push(path)
+  }
+  return found
+}
+
+/** Expand a launcher's own-directory variables and resolve against it. */
+function resolveLauncherPath(script: string, base: string, platform: NodeJS.Platform): string | undefined {
+  let path = script
+    .replace(/^\$\{?basedir\}?/u, base)
+    .replace(/^\$\(dirname\s+"?\$0"?\)/u, base)
+    .replace(/^%~dp0%?/iu, base + '\\')
+    .replace(/^%dp0%/iu, base)
+    .replace(/^\$PSScriptRoot/iu, base)
+  // Anything else still holding a variable is not a path this can follow.
+  if (/[$%]/u.test(path)) return undefined
+  if (platform !== 'win32') path = path.replaceAll('\\', '/')
+  return resolve(base, path)
 }
 
 function isHostPackage(dir: string): boolean {
@@ -162,15 +271,43 @@ function isHostPackage(dir: string): boolean {
   }
 }
 
-/** Load the host modules by realpath; throws naming what is missing. */
-export async function loadHostDsh(packageDir: string | undefined = locateHostDsh()): Promise<HostDsh> {
-  if (packageDir === undefined) throw new Error('dsh-tui: no installed dsh found on PATH')
+/**
+ * Load the host modules by realpath; throws naming what is missing (no
+ * host, a module that does not import, an export the entry needs). The
+ * capability probe: the caller falls back on any throw and shows its
+ * message.
+ */
+export async function loadHostDsh(packageDir: string | undefined = undefined): Promise<HostDsh> {
+  if (packageDir === undefined) {
+    const found = findHostDsh()
+    if (!('packageDir' in found)) throw new Error(found.reason)
+    packageDir = found.packageDir
+  }
+  let version = 'unknown'
+  try {
+    const manifest = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as { version?: unknown }
+    if (typeof manifest.version === 'string') version = manifest.version
+  } catch {
+    // isHostPackage read it a moment ago; a vanished file fails the imports below.
+  }
   const hostRequire = createRequire(join(packageDir, 'package.json'))
-  const hostImport = (specifier: string): Promise<unknown> => import(pathToFileURL(hostRequire.resolve(specifier)).href)
+  const importFrom = async (require: NodeJS.Require, specifier: string): Promise<unknown> => {
+    try {
+      return await import(pathToFileURL(require.resolve(specifier)).href)
+    } catch (error) {
+      throw new Error(`dsh ${version} at ${packageDir}: ${specifier} does not load (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`, { cause: error })
+    }
+  }
+  const hostImport = (specifier: string): Promise<unknown> => importFrom(hostRequire, specifier)
   // The Loader and the home paths are app-boot's own dependencies (the
   // Loader's builtins must be the instance app-boot mounts includes with).
-  const appBootRequire = createRequire(hostRequire.resolve('@deepseek-ai/dsh-app-boot'))
-  const appBootImport = (specifier: string): Promise<unknown> => import(pathToFileURL(appBootRequire.resolve(specifier)).href)
+  let appBootRequire: NodeJS.Require
+  try {
+    appBootRequire = createRequire(hostRequire.resolve('@deepseek-ai/dsh-app-boot'))
+  } catch (error) {
+    throw new Error(`dsh ${version} at ${packageDir}: @deepseek-ai/dsh-app-boot does not resolve (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`, { cause: error })
+  }
+  const appBootImport = (specifier: string): Promise<unknown> => importFrom(appBootRequire, specifier)
   const [cordis, appBoot, loader, homePaths, launchEnvironment, cmdline, profileBoot, httpProxy] = await Promise.all([
     hostImport('@deepseek-ai/cordis'),
     hostImport('@deepseek-ai/dsh-app-boot'),
@@ -183,10 +320,10 @@ export async function loadHostDsh(packageDir: string | undefined = locateHostDsh
   ])
   const field = (module: unknown, name: string, what: string): unknown => {
     const value = (module as Record<string, unknown> | undefined)?.[name]
-    if (value === undefined) throw new Error(`dsh-tui: the installed dsh lacks ${what}.${name}`)
+    if (value === undefined) throw new Error(`dsh ${version} at ${packageDir} lacks ${what}.${name}`)
     return value
   }
-  for (const name of ['loadLayeredEnv', 'createRuntimeResolution', 'PluginPackages', 'installFailLoud', 'readProfilePatches', 'mountRootInclude', 'auditStartupEntries']) field(appBoot, name, 'dsh-app-boot')
+  for (const name of ['loadLayeredEnv', 'createRuntimeResolution', 'PluginPackages', 'installFailLoud', 'readProfilePatches', 'mountRootInclude', 'auditStartupEntries', 'StartupError', 'getDshRuntimeVersion']) field(appBoot, name, 'dsh-app-boot')
   for (const name of ['prepareProfile', 'INSTALL_ANCHOR', 'PROFILE_ROOT_FILENAME']) field(profileBoot, name, 'dsh/profile-boot')
   field(cmdline, 'provideCmdline', 'dsh-cmdline')
   field(httpProxy, 'installProxyFromEnvironment', 'dsh-http-proxy')
@@ -194,6 +331,7 @@ export async function loadHostDsh(packageDir: string | undefined = locateHostDsh
   field(homePaths, 'resolveDshHome', 'dsh-home-paths')
   return {
     packageDir,
+    version,
     Context: field(cordis, 'Context', 'cordis') as HostDsh['Context'],
     appBoot: appBoot as AppBootModule,
     Loader: field(loader, 'default', 'cordis-plugin-loader'),
@@ -325,17 +463,112 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     shutdown,
     async compose(warn) {
       if (!options.dsh) throw new Error('dsh-tui: this root was prepared without the DSH profile')
-      // boot() tail: mount the profile's patch stack over its empty root
-      // config, wait for the tree, audit it; runProfile then commits ready.
-      await appBoot.mountRootInclude(ctx, rootConfig, appBoot.readProfilePatches(BIN_NAME, profileContext, profile), undefined, BIN_NAME)
-      const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
-      await loader()?.await()
-      // A surface disposed the tree while it was starting.
-      if (loader() === undefined) return
-      await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
-      if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined) appReady.commit()
+      // boot(): the warnings and errors logged while the tree starts, kept
+      // for the startup report (a logger exporter on a throwaway context,
+      // removed with it).
+      const startupLogs: unknown[] = []
+      const diagnostics = new host.Context() as Context & { logger: { exporter(exporter: unknown): unknown } }
+      diagnostics.logger = (ctx as Context & { logger: { exporter(exporter: unknown): unknown } }).logger
+      diagnostics.logger.exporter({
+        levels: { default: 2 },
+        export: ({ ts, name, type, args }: { ts: unknown; name: unknown; type: unknown; args: unknown }) => {
+          if (type === 'warn' || type === 'error') startupLogs.push({ ts, name, type, args })
+        },
+      })
+      try {
+        // boot() tail: mount the profile's patch stack over its empty root
+        // config, wait for the tree, audit it; runProfile then commits ready.
+        await appBoot.mountRootInclude(ctx, rootConfig, appBoot.readProfilePatches(BIN_NAME, profileContext, profile), undefined, BIN_NAME)
+        const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
+        await loader()?.await()
+        // A surface disposed the tree while it was starting.
+        if (loader() === undefined) return
+        await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
+        if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined) appReady.commit()
+      } catch (error) {
+        // boot() attaches the root config and the startup logs to an audit
+        // failure; bin.js then saves the report under $DSH_HOME/logs. The
+        // entry saves one for every composition failure (bin.js lets any
+        // other error crash the process; here the screen stays up and shows
+        // the report's path instead).
+        if (error instanceof appBoot.StartupError) {
+          Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: startupLogs }, enumerable: false, configurable: true, writable: true })
+        }
+        const logPath = await writeStartupReport(error, {
+          home: host.homePaths.resolveDshHome(),
+          version: hostVersion(host),
+          profile: options.profile,
+          ...(error instanceof appBoot.StartupError ? {} : { configurationPath: rootConfig, messages: startupLogs }),
+        })
+        throw new HostComposeError(error, logPath)
+      } finally {
+        await diagnostics.fiber.dispose().catch(() => undefined)
+      }
     },
   }
+}
+
+/** A composition failure, with the startup report saved for it. */
+export class HostComposeError extends Error {
+  /** The report's path; undefined when it could not be written. */
+  readonly logPath: string | undefined
+  constructor(readonly original: unknown, logPath: string | undefined) {
+    super(original instanceof Error ? original.message : String(original), { cause: original })
+    this.name = 'HostComposeError'
+    this.logPath = logPath
+  }
+}
+
+function hostVersion(host: HostDsh): string {
+  try {
+    return host.appBoot.getDshRuntimeVersion()
+  } catch {
+    return host.version
+  }
+}
+
+/**
+ * dsh `bin.js` reportStartupFailure (0.2.0-rc.2), the file half: a private,
+ * uniquely named report under `$DSH_HOME/logs`. The terminal half is the
+ * caller's (the screen is up: never stderr).
+ * @returns the report's path, or undefined when it could not be written.
+ */
+export async function writeStartupReport(error: unknown, context: {
+  readonly home: string
+  readonly version: string
+  readonly profile: string
+  /** For a non-audit failure: what boot() would have attached to one. */
+  readonly configurationPath?: string
+  readonly messages?: readonly unknown[]
+}): Promise<string | undefined> {
+  const now = new Date().toISOString()
+  const report = 'WARNING: Raw diagnostics may contain configuration or credential values from plugin errors. Review before sharing.\n\n' + inspect({
+    timestamp: now,
+    dshVersion: context.version,
+    nodeVersion: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    profile: context.profile,
+    ...(context.configurationPath === undefined ? {} : { startup: { configurationPath: context.configurationPath, messages: context.messages ?? [] } }),
+    error,
+  }, {
+    depth: null,
+    maxArrayLength: null,
+    maxStringLength: null,
+    showHidden: true,
+    customInspect: false,
+    getters: false,
+    colors: false,
+  }) + '\n'
+  const logDir = join(context.home, 'logs')
+  const logPath = join(logDir, `startup-${now.replaceAll(':', '-')}-${randomUUID()}.log`)
+  try {
+    await mkdir(logDir, { recursive: true, mode: 0o700 })
+    await writeFile(logPath, report, { flag: 'wx', mode: 0o600 })
+  } catch {
+    return undefined
+  }
+  return logPath
 }
 
 /**

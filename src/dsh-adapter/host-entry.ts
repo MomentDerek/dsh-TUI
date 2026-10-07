@@ -2,13 +2,14 @@
  * This package's own entry (docs/standalone-host-design.md 5.8, Phase 1 and
  * Phase 2): the TUI on a Cordis root of its own. The launcher starts it as
  * `node lib/types/dsh-adapter/host-entry.js <app args>` instead of
- * `dsh --profile <profile> -- <app args>` when the kernel resolves to Claude
- * — and, with `DSH_TUI_HOST_ENTRY_DSH=1`, for the DSH kernel too
- * (bin/dsh-tui.js; `DSH_TUI_HOST_ENTRY=0` switches all of it off).
+ * `dsh --profile <profile> -- <app args>` for both kernels (bin/dsh-tui.js;
+ * `DSH_TUI_HOST_ENTRY_DSH=0` keeps DSH on `dsh --profile`,
+ * `DSH_TUI_HOST_ENTRY=0` switches all of it off).
  *
  * It decides the kernel again with the profile patch's Config row
- * (../hostEntryRoute.ts). A launch that lands on DSH without the opt-in (a
- * pinned row, a `/kernel` switch relaunching through this file) is handed to
+ * (../hostEntryRoute.ts). A launch that lands on DSH while
+ * `DSH_TUI_HOST_ENTRY_DSH=0`, or whose installed dsh the entry cannot use
+ * (said on stderr and in the delegated screen), is handed to
  * `dsh --profile <profile>` unchanged: env, stdio and the kernel-switch ACK
  * pipe (fd 3) pass through, and this process only forwards the exit.
  *
@@ -34,9 +35,11 @@ import { spawn } from 'node:child_process'
 import { markBoot } from '../utils/bootTrace.js'
 import { configuredBackend, entryKernel, hostEntryDshEnabled, hostProfile } from '../hostEntryRoute.js'
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
+import { HOST_NOTICE_ENV } from '../kernelPrefs.js'
+import { logForDebugging } from '../utils/debug.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
-import { loadHostDsh, prepareHostRoot, type HostRoot } from './host-dsh.js'
+import { HostComposeError, loadHostDsh, prepareHostRoot, type HostRoot } from './host-dsh.js'
 import { installEntrySignals, type ProcessExitSeam } from './process-exit.js'
 
 markBoot('entry-start')
@@ -54,7 +57,9 @@ else delegateToDsh()
 
 /** Hand the launch to `dsh --profile <profile> -- <app args>` and mirror its exit. */
 function delegateToDsh(): void {
-  const args = ['--profile', profile, '--', ...process.argv.slice(2)]
+  // As the launcher builds it: dsh's `--` only when there are app arguments.
+  const appArgs = process.argv.slice(2)
+  const args = ['--profile', profile, ...(appArgs.length > 0 ? ['--', ...appArgs] : [])]
   // A kernel-switch replacement carries the ACK pipe on fd 3 (src/handoffAck.ts):
   // the dsh process is the one that adopts the screen, so it gets the pipe.
   const ack = process.env[HANDOFF_ACK_FD_ENV] === '3'
@@ -89,6 +94,26 @@ function delegateToDsh(): void {
   })
 }
 
+/**
+ * The installed dsh cannot host this launch (none on PATH, a launcher that
+ * cannot be followed, a module that does not load, a missing export): say
+ * so, then the caller falls back. Before anything renders, so stderr is
+ * still the terminal's: the line stays above the screen that follows (the
+ * delegated dsh's, or the entry's own). A kernel-switch replacement draws
+ * over the old screen without a gap, so it only gets the notice. The notice
+ * reaches the screen: in this process through `RuntimeApplyOptions`, in the
+ * delegated dsh through the environment (plugin.ts reads it once).
+ */
+function noteHostUnavailable(kernel: 'claude' | 'dsh', error: unknown): string {
+  const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0] ?? ''
+  const fallback = kernel === 'dsh' ? 'starting DSH through `dsh --profile`' : 'starting without its module resolution'
+  const line = `dsh-tui: the installed dsh cannot host this launch (${reason}); ${fallback}`
+  logForDebugging(line)
+  if (process.env[HANDOFF_ACK_FD_ENV] === undefined && process.env.DSH_TUI_RESTART_CHILD !== '1') process.stderr.write(`${line}\n`)
+  process.env[HOST_NOTICE_ENV] = reason
+  return reason
+}
+
 /** cmd.exe joins arguments with spaces and does not escape (bin/dsh-tui.js shellQuote). */
 function quoteForCmd(arg: string): string {
   if (arg === '') return '""'
@@ -102,6 +127,8 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // DSH kernel goes back to `dsh --profile`, and the Claude kernel to the
   // Phase 1 entry: this package's own cordis, no host resolution.
   let root: HostRoot | undefined
+  /** Why the installed dsh is not used (shown in the screen; Claude only). */
+  let hostNotice: string | undefined
   // The runtime's exit funnel fills it once mounted (signals, `ctx.appExit`).
   const exitSeam: ProcessExitSeam = {}
   try {
@@ -109,7 +136,7 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
     markBoot('entry-hijacked')
   } catch (error) {
     markBoot('entry-host-unavailable')
-    if (process.env.DSH_TUI_DEBUG) process.stderr.write(`dsh-tui: the installed dsh is not usable here (${error instanceof Error ? error.message : String(error)})\n`)
+    hostNotice = noteHostUnavailable(kernel, error)
     if (kernel === 'dsh') {
       delegateToDsh()
       return
@@ -156,7 +183,7 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // on them arrives once the profile has composed, as on the profile path.
   const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)
   try {
-    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }) })
+    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(hostNotice === undefined ? {} : { hostNotice }) })
   } catch (error) {
     handleStartupError(ctx, error)
     return
@@ -172,14 +199,23 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // 3. Compose the profile into this root. Past the mount nothing may write
   // to the terminal: host warnings go to the debug log, and a failure lands
   // in the screen (the startup notice) instead of ending the process.
+  // The screen says DSH is starting (6.1): make sure that frame reached the
+  // terminal before the composition's synchronous stretch freezes the loop.
+  await slot.firstFrameFlushed?.()
+  markBoot('entry-first-frame-flushed')
   markBoot('entry-compose-start')
+  let composed = false
   try {
     await root.compose(line => { slot.composeWarning?.(line) })
+    composed = true
   } catch (error) {
-    slot.composeFailed?.(error)
+    if (error instanceof HostComposeError) slot.composeFailed?.(error.original, error.logPath)
+    else slot.composeFailed?.(error)
   } finally {
     releaseRootGuard?.()
   }
   markBoot('entry-compose-end')
+  if (!composed) return
   if (!slot.rowSeen) slot.composeFailed?.(new Error(`the ${profile} profile has no dsh-tui row`))
+  else slot.composeSucceeded?.()
 }

@@ -1,13 +1,15 @@
 /**
  * The hand-off between this package's own entry and the profile's `dsh-tui`
  * row when both run in one Cordis root (docs/standalone-host-design.md,
- * Phase 2 single root; host-entry.ts with `DSH_TUI_HOST_ENTRY_DSH=1`).
+ * Phase 2 single root; host-entry.ts on the DSH kernel, unless
+ * `DSH_TUI_HOST_ENTRY_DSH=0`).
  *
  * The entry mounts the screen first and publishes this slot; then it
  * composes the profile into the same root. The `dsh-tui` row finds the slot
  * and does not render a second screen: it only runs the DSH side (agent,
  * DSH session) through `attachDsh` and hands the session to the mounted
- * channel. Without a slot (`dsh --profile dsh-tui`, `DSH_TUI_HOST_ENTRY=0`)
+ * channel. Without a slot (`dsh --profile dsh-tui`, `DSH_TUI_HOST_ENTRY=0`,
+ * `DSH_TUI_HOST_ENTRY_DSH=0`, an installed dsh the entry cannot use)
  * the row takes its usual path.
  *
  * `globalThis` + `Symbol.for`, as the preload branch did: the entry and the
@@ -32,8 +34,18 @@ export interface EntrySlot {
    *  terminal). Filled by the entry's runtime. */
   composeWarning?: (line: string) => void
   /** The composition failed, or settled without a `dsh-tui` row: the
-   *  startup session will never come. Filled by the entry's runtime. */
-  composeFailed?: (error: unknown) => void
+   *  startup session will never come. `logPath` is the startup report saved
+   *  for it (host-dsh.ts writeStartupReport), when one was written. Filled
+   *  by the entry's runtime. */
+  composeFailed?: (error: unknown, logPath?: string) => void
+  /** The composition settled, audited, with a `dsh-tui` row: a startup
+   *  open that failed meanwhile is that open's failure, not the
+   *  composition's. Filled by the entry's runtime. */
+  composeSucceeded?: () => void
+  /** Resolves once the mounted screen's first frame (which says DSH is
+   *  starting) has been written to the terminal: the entry awaits it before
+   *  the composition's synchronous stretch. Filled by the entry's runtime. */
+  firstFrameFlushed?: () => Promise<void>
 }
 
 export const ENTRY_SLOT_KEY = Symbol.for('@deepseek-harness-tui/dsh-tui:host-entry')
