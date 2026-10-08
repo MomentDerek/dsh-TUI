@@ -13,8 +13,8 @@
  *   - continuable 创建：边缘先、catalog 后（同一次 materialize 内）。
  *
  * 队列项只配当**无歧义时**的首帧猜测：并发派发时队列里堆着不止一条 term，而
- * 无身份的队列说不出哪条属于谁，此时整批作废 —— 卡片可以暂时没有标题（占位），
- * 但绝不显示另一个 child 的标题。迟到也不丢：keyed label 比它那一行先到时被
+ * 无身份的队列说不出哪条属于谁，此时作废描述、保留未匹配启动的槽位 —— 卡片可以
+ * 暂时没有标题（占位），但绝不显示另一个 child 的标题。keyed label 比行先到时
  * 寄存（`holdKeyedLabel`），建行时直接采用。
  *
  * 断言清单（除 B0 是 harness 自检外，每条都能被实现侧的改动打红）：
@@ -27,9 +27,9 @@
  *   K1–K7b        重复边缘不吃队列 / 新 epoch 取新 term / 占位可被补 / 历史折叠不污染
  *                 队列 / descriptor 是第二纠正路径 / 显式 patch 权威 / 早到的
  *                 descriptor 被寄存并在建行时采用
- *   P1–P9         队列上限；外层 reset；迟到 label；未 link 不认领；空 label 仍有标题；
+ *   P1–P11        队列上限；外层 reset；迟到 label；未 link 不认领；空 label 仍有标题；
  *                 空 description 不入队；无 runId 边缘的"刷新"与"首建"之别；歧义
- *                 清空不留孤儿
+ *                 作废后保留未匹配槽位；远程任务交错启动；溢出不忘记待启动的任务
  *
  * Run: node --import tsx/esm scripts/verify-subagent-description-binding.ts
  */
@@ -99,8 +99,13 @@ function delegate(h: Harness, seq: number, description: string): void {
 }
 
 /** 一次 spawn 边缘（`subagent/start`）。 */
-function spawn(h: Harness, agentId: string, runId?: string): void {
-  h.projection.onStart({ id: agentId, ...(runId === undefined ? {} : { runId }), provider: 'subagent' }, agent)
+function spawn(h: Harness, agentId: string, runId?: string, info: { provider?: string; local?: boolean } = {}): void {
+  h.projection.onStart({
+    id: agentId,
+    ...(runId === undefined ? {} : { runId }),
+    provider: info.provider ?? 'subagent',
+    ...(info.local === undefined ? {} : { local: info.local }),
+  }, agent)
 }
 
 /** `subagent/catalog`：childId-keyed 的权威事实（label 与 mode）。 */
@@ -343,18 +348,21 @@ function check(name: string, ok: boolean, extra = ''): void {
     `${queued.length} / ${String(queued[0])} / ${String(queued[31])}`)
 }
 
-// ── P2. 外层 `reset()` 与队列隔离：它整体重建投影（`subagent-projection.ts:214`
-//    的 `active = make()`），旧队列随实例一起被丢弃，下一个 spawn 不得拿到旧 term。
-//    边界（审核第三轮指出）：内层 `reset()` 里那行 `pendingTaskDescriptions.length = 0`
-//    （`subagent-projection.ts:603`）在现有调用路径下**不可观测** —— 外层重建实例而
-//    不是复用它，且内层 `reset` 没有任何调用者。因此本条只钉**外层**语义（把外层
-//    reset 改成"只清 rows、不重建"会让它变红），**不声称覆盖内层清理**。
+// ── P2. 外层 reset 重建投影，旧队列和被驱逐描述的待启动计数都不能进入新会话。
 {
   const h = harness()
   delegate(h, 1, 'reset 前的残留')
   h.projection.reset()
   spawn(h, 'agent-after-reset', 'r-reset')
   check('P2 an outer reset rebuilds the projection (no stale term reaches the next spawn)', h.descriptionOf('agent-after-reset') !== 'reset 前的残留', String(h.descriptionOf('agent-after-reset')))
+}
+{
+  const h = harness()
+  for (let i = 1; i <= 40; i += 1) delegate(h, i, `旧描述-${i}`)
+  h.projection.reset()
+  delegate(h, 41, '新会话的唯一任务')
+  spawn(h, 'agent-reset-overflow', 'r-reset-overflow')
+  check('P2b an outer reset forgets evicted pending descriptions', h.descriptionOf('agent-reset-overflow') === '新会话的唯一任务', String(h.descriptionOf('agent-reset-overflow')))
 }
 
 // ── P3. catalog 先建占位行（无 label），之后带 label 的 catalog 能补上。
@@ -426,8 +434,7 @@ function check(name: string, ok: boolean, extra = ''): void {
     h.descriptionOf('agent-after-norun') !== 'Z 的任务', String(h.descriptionOf('agent-after-norun')))
 }
 
-// ── P8. 歧义作废必须是**整批**清空：只丢队头会留下一条孤儿，下一个 spawn 就顶替它
-//    真正的主人把标题借走 —— 同一个错误晚一步发生。
+// ── P8. 文本作废不代表旧派发已经启动：Y 迟到时不能取走后来才入队的 Z。
 {
   const h = harness()
   delegate(h, 1, 'X 的 term')
@@ -435,9 +442,51 @@ function check(name: string, ok: boolean, extra = ''): void {
   spawn(h, 'agent-p8a', 'r-p8a')
   delegate(h, 3, 'Z 的 term')
   spawn(h, 'agent-p8b', 'r-p8b')
-  check('P8 a cleared batch leaves no orphan for the next spawn',
-    h.descriptionOf('agent-p8a') !== 'X 的 term' && h.descriptionOf('agent-p8a') !== 'Y 的 term' && h.descriptionOf('agent-p8b') === 'Z 的 term',
+  check('P8 a delayed start cannot take a later delegation title',
+    h.descriptionOf('agent-p8a') !== 'X 的 term' && h.descriptionOf('agent-p8a') !== 'Y 的 term' && h.descriptionOf('agent-p8b') !== 'Z 的 term',
     `${String(h.descriptionOf('agent-p8a'))} / ${String(h.descriptionOf('agent-p8b'))}`)
+}
+
+// ── P10. 远程 provider 没有本地 session，也没有 catalog/descriptor 来补救错名。
+//    B 的启动迟于 C 的派发；分别覆盖 B 先启动和 C 先启动，再确认歧义批次用完后
+//    独立的新派发仍能取得自己的首帧描述。
+for (const order of [['remote-b', 'remote-c'], ['remote-c', 'remote-b']]) {
+  const h = harness()
+  const remote = { provider: 'codex', local: false }
+  delegate(h, 1, '远程 A 的标题')
+  delegate(h, 2, '远程 B 的标题')
+  spawn(h, 'remote-a', 'r-remote-a', remote)
+  delegate(h, 3, '远程 C 的标题')
+  for (const id of order) spawn(h, id, `r-${id}`, remote)
+  h.projection.onEnd({ id: 'remote-b', runId: 'r-remote-b', stopReason: 'completed' }, agent)
+  check(`P10 ${order.join(' → ')} does not leave a remote row with a peer title`,
+    h.rowOf('remote-b')?.status === 'completed'
+      && h.rowOf('remote-c')?.status === 'running'
+      && h.descriptionOf('remote-b') !== '远程 C 的标题'
+      && h.descriptionOf('remote-c') !== '远程 B 的标题',
+    `${String(h.descriptionOf('remote-b'))} / ${String(h.descriptionOf('remote-c'))}`)
+  delegate(h, 4, '批次结束后的独立任务')
+  spawn(h, 'remote-d', 'r-remote-d', remote)
+  check(`P10b ${order.join(' → ')} drains the pending slots`,
+    h.descriptionOf('remote-d') === '批次结束后的独立任务', String(h.descriptionOf('remote-d')))
+}
+
+// ── P11. 上限只驱逐文本，不能忘记那一次派发仍在等待启动；超过 32 条的旧批次
+//    与后来的新派发交错时，同样不能把新标题交给旧任务。
+{
+  const h = harness()
+  const remote = { provider: 'codex', local: false }
+  for (let i = 1; i <= 40; i += 1) delegate(h, i, `远程任务-${i}`)
+  spawn(h, 'overflow-1', 'r-overflow-1', remote)
+  delegate(h, 41, '溢出批次之后的新标题')
+  for (let i = 2; i <= 40; i += 1) spawn(h, `overflow-${i}`, `r-overflow-${i}`, remote)
+  check('P11 evicted terms still account for delayed starts',
+    h.state.subagents.length === 40 && h.state.subagents.every(row => row.description !== '溢出批次之后的新标题'))
+  spawn(h, 'overflow-new', 'r-overflow-new', remote)
+  delegate(h, 42, '溢出批次结束后的独立任务')
+  spawn(h, 'overflow-solo', 'r-overflow-solo', remote)
+  check('P11b the overflow backlog eventually drains',
+    h.descriptionOf('overflow-solo') === '溢出批次结束后的独立任务', String(h.descriptionOf('overflow-solo')))
 }
 
 // The total is printed so the count in the docs can be checked against the run

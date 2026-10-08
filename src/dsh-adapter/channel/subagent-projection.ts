@@ -9,11 +9,9 @@ import type { ChannelState, ChatRow, SubagentControl, SubagentRow } from './type
 import { isSubagentToolName } from './projection-helpers.js'
 
 /**
- * How many un-consumed delegation terms are kept. The queue is only a
- * first-frame guess (it carries no childId), while the durable
- * `subagent/catalog` label is the authority — once the backlog is full the
- * oldest term is evicted (the newest delegation is the one still waiting for a
- * spawn), and a caller that never spawns must not grow it without bound.
+ * Bound the retained description text. Evicting an older term does not cancel
+ * its pending spawn: a separate count keeps those unmatched starts from
+ * consuming a later delegation's title without retaining unbounded text.
  */
 const MAX_PENDING_TASK_DESCRIPTIONS = 32
 
@@ -210,7 +208,7 @@ export function createSubagentProjection(getState: () => ProjectionState, deps: 
     dropRows: () => active.dropRows(),
     park, restore,
     forget(agent: Agent) { parked.delete(agent) },
-    dispose() { parked.clear(); active.store.reset(); active.dropRows(); active.pendingTaskDescriptions.length = 0 },
+    dispose() { parked.clear(); active.reset() },
     reset() { active = make(); activeParent = deps.agent(); restored = false; getState().subagents = []; getState().subagentCost = [] },
   }
 }
@@ -243,7 +241,9 @@ function createSessionSubagentProjection(
    *  oldest first, folded by durable message id. */
   const agentMessages: AgentMessageView[] = []
   const rowsByAgentId = new Map<string, ChatRow>()
+  /** Empty entries reserve starts whose ambiguous description was discarded. */
   const pendingTaskDescriptions: string[] = []
+  let evictedDescriptionCount = 0
   /** Workflow member identity: `tool-workflow/agent-end` carries no childId,
    * so member starts remember `runId:seq` → agentId for their settlement. */
   const workflowMembers = new Map<string, string>()
@@ -440,7 +440,10 @@ function createSessionSubagentProjection(
         try {
           const args = JSON.parse(data.arguments) as { description?: unknown }
           if (typeof args.description === 'string' && args.description) {
-            if (pendingTaskDescriptions.length >= MAX_PENDING_TASK_DESCRIPTIONS) pendingTaskDescriptions.shift()
+            if (pendingTaskDescriptions.length >= MAX_PENDING_TASK_DESCRIPTIONS) {
+              pendingTaskDescriptions.shift()
+              evictedDescriptionCount += 1
+            }
             pendingTaskDescriptions.push(args.description)
           }
         } catch { /* malformed arguments do not describe a child */ }
@@ -517,14 +520,14 @@ function createSessionSubagentProjection(
     // The queue carries no childId, so a term is only usable while exactly one
     // delegation is outstanding. With two or more, any pick is a coin flip
     // that puts a concurrent child's name on this card until its keyed label
-    // arrives. Clearing the whole backlog in that case (not just the head)
-    // matters: a lone survivor would be handed to the next spawn, which is the
-    // same misnaming one step later. A row may be briefly unnamed; it is never
-    // named after someone else.
+    // arrives. Discard the text, but retain every unmatched start slot: a new
+    // call can arrive before the rest of this batch starts. Forgetting those
+    // slots would let an older start consume that new call's title.
     let description: string | undefined
     if (freshRun) {
-      if (pendingTaskDescriptions.length > 1) pendingTaskDescriptions.length = 0
-      else description = pendingTaskDescriptions.shift()
+      if (evictedDescriptionCount + pendingTaskDescriptions.length > 1) pendingTaskDescriptions.fill('')
+      if (evictedDescriptionCount > 0) evictedDescriptionCount -= 1
+      else description = pendingTaskDescriptions.shift() || undefined
     }
     store.onSpawned(info.id, info.provider || 'subagent', info.provider, {
       ...(freshRun ? { runId: info.runId } : {}),
@@ -631,6 +634,6 @@ function createSessionSubagentProjection(
     },
   }
   const dropRows = (): void => { streamDirty = false; rowsByAgentId.clear() }
-  const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; agentMessages.length = 0; store.reset(); getState().subagents = []; getState().subagentCost = [] }
+  const reset = (): void => { dropRows(); cardedIds.clear(); workflowMembers.clear(); pendingTaskDescriptions.length = 0; evictedDescriptionCount = 0; agentMessages.length = 0; store.reset(); getState().subagents = []; getState().subagentCost = [] }
   return { store, control, pendingTaskDescriptions, agentMessages, onSessionEvent, onStreamFrame, onParentEvent, bootstrapFromLog, onStart, onEnd, syncNow, flush, dropRows, reset, submitPrompt }
 }
