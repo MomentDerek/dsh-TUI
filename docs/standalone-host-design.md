@@ -1431,6 +1431,10 @@ SIGTERM / SIGINT / SIGHUP 监听器——都以该信号结束、插件监听器
 `dsh-entry-sigterm-starting`、`dsh-entry-sigint-starting` 的「组合期间收到信号、释放根卡满 5s」；单独连跑三轮
 9 例失败 1 例。结局仍正确（以信号结束、终端恢复、无遗留进程）。
 
+（**已过时**：57/59 是修复前数据。那 2 例的根因是上游 `@deepseek-ai/dsh-hmr` 的 dispose 死锁，已由本包
+`src/dsh-adapter/root-dispose.ts` 修掉，`accept-host-entry` 现为 **59/59**；见「组合期间信号偶发卡 5s」与
+「rebase 到 upstream/main 85d49e53」两节。）
+
 **组合期间信号偶发卡 5s**（2.5 遗留，本块数据）：不调 arm 也能复现（2/42、另一组 0/54）；arm 但守卫包装全部
 跳过 2/42；arm 且守卫正常装约 9/123——偏高但样本小、不显著。插桩显示卡住期间守卫未拒绝任何调用，只发生在信号
 落在 `entry-compose-start` 之后、TUI 行之前。机制未查明，下一步在 `signal: received` 带上最后一个 `entry-*`
@@ -1479,8 +1483,11 @@ SIGTERM / SIGINT / SIGHUP 监听器——都以该信号结束、插件监听器
   46、plugin-lifecycle 56、`accept-host-entry` 全量 **59/59**。
 
 **遗留**：上游死锁本身还在（`dsh --profile` 启动期收信号会卡到 5s 上限），建议报上游——watchConfig 失败分支在
-init 内 `await running`，而 running 依赖的就绪只能由 init 之后的释放器放行；最小复现脚本暂存在 scratchpad
-（`repro-hmr.mjs`），报上游前需整理。`createProcessShutdown`（漏斗之前的 appExit）与 fail-loud 的释放未改走
+init 内 `await running`，而 running 依赖的就绪只能由 init 之后的释放器放行。scratchpad 里那份 `repro-hmr.mjs`
+已不在磁盘上（2026-10-08 晚查过 `/tmp` 与 `$HOME`），不必再找：`scripts/verify-entry-process-exit.ts` 的
+`--hmr-child` 模式就是回归化的等价复现（子进程自建 Loader + timer + dsh-hmr 行的临时 profile、就绪永不到来，
+Hmr 进入 loading 后 0ms 释放——既断言直接 dispose 不 settle，也断言走 `disposeRootSettled` 的 6 种延迟都在 1s
+内收敛），报上游直接引它即可。`createProcessShutdown`（漏斗之前的 appExit）与 fail-loud 的释放未改走
 `disposeRootSettled`（都在组合前或已由漏斗接管）。`dispose: root disposed {ms}` 现在含等 Loader 的时间。
 
 ### 2026-10-08 · rebase 到 upstream/main 85d49e53
@@ -1593,6 +1600,9 @@ profile，plugin 按记住的内核打开 Codex——与 rebase 前 Codex 在 `d
   `verify-compaction-progress`、`verify-splash-font-setting`、`verify-settings-compat`、
   `verify-splash-eggs`、`repro-picker-windowing`；`verify-update-checksum` 是下载流计时断言，
   负载高时两边都会红。（`verify-guide` 的 claude-backend 副本漂移已在 `e287998b` 顺带修好。）
+  （**已过时**：`verify-settings-compat` 已在 main 修好，本分支 rebase 到 `85d49e53` 之后也已跑通
+  `node --import tsx/esm scripts/verify-settings-compat.mjs` → PASS，不再属于存量失败；清单其余条目
+  未按 `85d49e53` 复核，以「2026-10-08 · rebase 到 upstream/main 85d49e53」一节为准。）
 - 本轮机器明显变慢（3 亿次空循环约 2.3s，平时约 0.3s），测时延前先跑一下这个空循环看环境。
 
 **协作约定（不变）**：本文档是方案 B 的主要参考与记录，测试发现与修正都写进实施记录；只
