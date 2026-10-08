@@ -2,8 +2,9 @@
 
 [文档索引](README.md) · [架构与限制](architecture.md) · [多后端架构](agent-backend-design.md)
 
-状态：Phase 0、Phase 1 完成，Phase 2 进行中（根模型已定单根）（原型分支 `feat/standalone-host`；规划见实施记录
-「Phase 2 规划」一节）。基于 `main`（ec48de22）与
+状态：Phase 0、Phase 1 完成；Phase 2 主体（2.0–2.7）完成，根模型**已裁定为单根（D1）**并落地
+（原型分支 `feat/standalone-host`；规划见实施记录「Phase 2 规划」一节）。正文唯一未实现的一节是
+5.7 的轻量 profile（形状 spike 进行中）。基于 `main`（ec48de22）与
 `@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。2026-10-06 修订分期：Phase 1 只做「DSH 无关」，
 TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 
@@ -15,6 +16,17 @@ TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
    转为 Claude 内核路径的必备件，纳入 Phase 2（5.7、6.2、第 7 节）。
 3. **预载**：PR #1216 关闭、分支作废（第 8 节）。它要换来的快速启动已由 Phase 1/2 的入口路径覆盖，
    那三个文件从未进 `main`——Phase 3 因此没有 `main` 上的代码可删，只剩分支清理。
+
+**2026-10-09 追加裁定四项**（详见实施记录「2026-10-09 · 维护者裁定：根模型 D1 与直启路径」）：
+
+1. **根模型 D1「单根」**（第 10 节第 3 条）：实际落地已是单根（入口自建运行时，DSH 内核也走本包
+   入口）。第 10 节第 3 条的 D1 / D2 并列**作废**，D2 不再是备选。
+2. **`dsh --profile dsh-tui` 直启路径保留**（第 10 节第 4 条）：继续支持；「没有 TuiHost 时自建并
+   渲染」的兼容路径**实现待补**（不是已完成）。
+3. **观感两项**：DSH home 的两步切换（接管后 1–2s 才弹）**已判定需改，证据待补**（仍在测量
+   归因）；Claude 占位期那句 `Starting …` **保留**（不删）。
+4. **预载分支清理已授权**：先摘 worktree 备份成 patch，再从分支清单验收删；远端分支删除需单独
+   授权，尚未执行（第 7 节 Phase 3）。
 
 **下一步（可直接接手）**：Phase 2 剩余的**轻量 profile**（5.7）——实现形状（按清单往入口那个根里
 装配，还是另建一根再桥接）、组合成本实测，以及与上游插件契约对齐注册表归属（上游 issue #1247）。
@@ -35,7 +47,7 @@ dsh-TUI 从「DSH 的一个 Cordis 插件」变成「自己拥有入口与组装
 
 ## 1. 背景
 
-### 1.1 现在的启动链
+### 1.1 旧启动链（Phase 0 之前；1.2–1.4 讨论的就是这条链）
 
 ```text
 dsh-tui（全局启动器）
@@ -49,6 +61,13 @@ dsh-tui（全局启动器）
 界面在「整个 profile 组合完、dsh-tui 行跑到 apply、后端打开」之后才出现。预载分支
 （PR #1216，`dst`）用 `--import` 在 dsh 加载前先画一棵树，再在 apply 里原地换上 live
 channel，把首帧从约 2 秒提前到约 0.6–0.7 秒。
+
+**现状（Phase 1/2 之后，单根）**：profile 启动器默认 spawn `node <本包
+lib/types/dsh-adapter/host-entry.js>`（`bin/dsh-tui.js` 的分流；`DSH_TUI_HOST_ENTRY=0` 把全部
+内核、`DSH_TUI_HOST_ENTRY_DSH=0` 把 DSH 内核退回上面的 `dsh --profile`）。入口用已装 `dsh` 的
+模块（realpath）建 Cordis 根（5.4），先挂本包运行时并渲染——**首帧不再等任何后端**；Claude /
+Codex 内核到此为止，DSH 内核再把 profile 组合进**同一个根**（第 3 节）。`dsh --profile dsh-tui`
+直启路径仍在（第 10 节第 4 条）：没有入口槽时，`dsh-tui` 行照常自己渲染（`entry-slot.ts` 头注释）。
 
 ### 1.2 预载方案的结构性成本
 
@@ -107,32 +126,37 @@ channel，把首帧从约 2 秒提前到约 0.6–0.7 秒。
 
 ## 3. 目标架构
 
+Phase 2 落地后的**单根**形态（D1 已裁定，见 2.2 / 2.3）：
+
 ```text
 bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析——保留）
-  └─ spawn node <本包 lib/types/host/entry.js> <args>
-       TuiHost（组装根，Cordis 无关）
-         ├─ logger / 生命周期栈 / 退出漏斗 / 终端恢复
-         ├─ 设置存储（见 5.6）、本地 shell/fs/attachments
-         ├─ tui* 注册表（主题、面板、场景、对话框、状态、快捷键、渲染器、命令树、工作区…）
-         └─ createCoreChannel(host, pendingSession, …)  ──►  render(Chat)   ← 首帧在这里
-       后端打开（异步，界面已在）
-         ├─ claude：openBackendStartup(host, claude) ──► channel.adoptStartup(session)
-         └─ dsh：  runProfile(host 的 dsh/profile-boot, profile: 'dsh-tui')
-                     └─ dsh-tui 行（桥接行，不再渲染）
-                          ├─ 把 TuiHost 的注册表桥成 Cordis 服务（第三方插件照旧 inject）
-                          ├─ 决策事件桥（tui/input 等 → ctx.on 处理器）
-                          ├─ resolveAgent → createDshSession
-                          └─ 交给 TuiHost：channel.adoptStartup(dshSession) + 挂 DSH 扩展
+  └─ spawn node <本包 lib/types/dsh-adapter/host-entry.js> <args>
+       入口（host-entry.ts → host-dsh.ts）：用已装 dsh 的模块（realpath）建 Cordis 根
+         ├─ 模块解析先于任何 TUI 模块加载（宿主那份 react 与 @deepseek-ai/*）
+         └─ 本包运行时（plugin.ts 的 apply）挂在这个根上，deferBackendOpen
+              └─ createCoreChannel(cordisChannelHost(ctx), pendingSession, …) ──► render(Chat)
+                                                                                  ← 首帧在这里
+       内核判定（hostEntryRoute.entryRoute）：
+         ├─ claude / codex：到这里为止。不组合 profile，运行时自己解析内核并打开后端
+         │     └─ channel.adoptStartup(session)                          可发送
+         └─ dsh：把 dsh-tui profile 组合进**同一个根**
+               └─ dsh-tui 行经 entry-slot 的 globalThis 槽发现已挂载的界面：**不画第二棵树**
+                    ├─ resolveAgent → createDshSession
+                    ├─ channel.adoptStartup(dshSession，挂 DSH 扩展——晚挂 D1)
+                    └─ 失败 / 无 dsh-tui 行 → 槽的 composeFailed / composeWarning
 ```
 
-上图是 Phase 2 之后的终态。Phase 1 的入口不建 TuiHost：它自己 `new Context()` 持有一个裸
-Cordis 根，`plugin.ts` 的 `apply` 原样挂在上面，`tui*` 服务照旧住在这个根里；Claude 内核下
-没有 DSH profile，也就没有桥接行。**profile 里声明的第三方插件因此不进这个根——这正是
-2026-10-09 裁定要补的缺口**：Claude 内核需要一个轻量 profile（5.7）把本包的行与第三方插件
-组合进来；终态下它是往同一个根里装、还是另建一个根再桥接，Phase 2 定。
+单根下没有独立的 TuiHost 对象，也没有桥接行：宿主就是那个 Cordis 根，`tui*` 服务与 DSH 服务
+住在同一棵树上，界面与第三方插件看到同一个根（5.1）。Phase 1 的入口是同一形状的起点——自持
+裸 Cordis 根、`plugin.ts` 的 `apply` 原样挂上；Phase 2 把这个根换成宿主的那份模块，并让 DSH
+组合进来。
 
-依赖方向（终态）：界面 → ports；channel 核心 → agent + ports + **TuiHost 接口**；Cordis 只出现在
-`src/dsh-adapter/`（DSH 后端与桥接行）。
+**仍未实现的缺口**：Claude / Codex 内核下，profile 里声明的第三方插件不进这个根——这是
+2026-10-09 裁定要补的缺口（5.7）：轻量 profile 把本包的行与第三方插件组合进来；它是往同一个根
+里装、还是另建一根再桥接，形状 spike 进行中。
+
+依赖方向（终态）：界面 → ports；channel 核心 → agent + ports + **`ChannelHost` 接口**；Cordis 只
+出现在 `src/dsh-adapter/`（DSH 后端与宿主复制）。
 
 ## 4. 现状的 Cordis 依赖与归属
 
@@ -144,18 +168,23 @@ Cordis 根，`plugin.ts` 的 `apply` 原样挂在上面，`tui*` 服务照旧住
 | 借 Cordis 的 TUI 基础设施 | `ctx.logger`（约 30 处）、`ctx.effect`、`ctx.root.fiber.dispose`、`ctx.cmdlineArgs`、`adapterRuntimeFor(ctx)` | 日志、资源清理、退出漏斗 | TuiHost 自有。`adapterRuntimeFor` 只把 ctx 当 WeakMap 键，换任意对象即可 |
 | 借 Cordis 的 TUI 基础设施 | `shell`、`fs`、`attachments` | `!cmd`、git 分支、@ 提及、图片 | TuiHost 提供本地实现；现有代码已有 `fallbackFs` / `localImages` 等回退 |
 | 借 Cordis 的 TUI 基础设施 | `settings`、`credentials`、`dshAuth` | `/settings` 读写、凭据、OAuth 呈现（Claude 的 `/login` 也借它） | 最难的一项，见 5.6；OAuth 呈现器移入 TuiHost |
-| 插件生态接缝 | `tuiThemes`、`tuiPanels`、`tuiScenes`、`tuiDialogs`、`tuiStatus`、`tuiShortcuts`、`tuiToast`、`tuiRenderers`、`tuiCommandTrees`、`tuiWorkspaces`、`tuiSettingsSections`、`tuiPluginHost` 系列 | 第三方插件扩展界面 | 注册表归 TuiHost；桥接行把它们以原服务名注册回 Cordis |
-| 插件生态接缝 | 决策事件（`tui/input`、`tui/session-switch`…）、`installDecisionGuard`、授权存储 | 第三方拦截输入与会话切换 | 派发接口归 TuiHost；DSH 加载后桥接行把 Cordis 处理器接进来，见 5.7 |
+| 插件生态接缝 | `tuiThemes`、`tuiPanels`、`tuiScenes`、`tuiDialogs`、`tuiStatus`、`tuiShortcuts`、`tuiToast`、`tuiRenderers`、`tuiCommandTrees`、`tuiWorkspaces`、`tuiSettingsSections`、`tuiPluginHost` 系列 | 第三方插件扩展界面 | 服务名不变；单根下它们就是那个 Cordis 根的服务，`ChannelHost.get` 每次操作实时取（晚挂的行经 `watchServices` 通知），不需要桥接行 |
+| 插件生态接缝 | 决策事件（`tui/input`、`tui/session-switch`…）、`installDecisionGuard`、授权存储 | 第三方拦截输入与会话切换 | 归 `ChannelHost`（`dispatchDecision` / `dispatchNotification` / `installDecisionGuard`），单根下即同一个 Cordis 根；启动期输入本就不发送，不存在绕过窗口，见 5.7 |
 
 channel 核心里还直接读 `ctx` 的位置（`CoreHost` 没盖住的）：`createComposerImages`、
 `createCoreFiles`、`createInputDelivery`、`createSettingsHosts`、`dshAuth`、
 `createBindingFeed`、`createSessionSwitch`、`createCoreLocalActions`、
 `createGitBranchRefresher`、`ctx.effect`（均在 `core/compose.ts`）。这就是 Phase 0 的
-工作面。
+工作面——**已完成**：`channel/core/` 不再 import 任何 `@deepseek-ai/*`（门禁规则见
+`scripts/verify-adapter-boundary.ts` 的 `CORE_DIR`），这些位置都改经 `ChannelHost`。
 
 ## 5. 关键设计
 
-### 5.1 TuiHost：把 CoreHost 补全
+### 5.1 ChannelHost：把 CoreHost 补全（单根下由 Cordis 根充当）
+
+> 2026-10-09（本轮裁定）：根模型 **D1「单根」**正式成立（第 10 节第 3 条），D2 作废。TuiHost 与
+> 桥接行都不建——宿主就是那个 Cordis 根。以下 2026-10-06 / 2026-10-07 两条是当时的分期修订与
+> 两根方案记录；5.2 / 5.4 / 5.5 里「桥接行」「TuiHost」的措辞同属那份记录。
 
 > 2026-10-07：根模型选定**单根**（TUI 的根即 DSH 根，实施记录「Phase 2 第 2.2 块」），TuiHost 与
 > 桥接行不再必要；本节保留作两根方案的记录。
@@ -165,30 +194,35 @@ channel 核心里还直接读 `ctx` 的位置（`CoreHost` 没盖住的）：`cr
 > 是 Phase 2：`runProfile` 的 `boot()` 会另建一个 Cordis 根，两根并存时第三方插件在 DSH 根里
 > 看不到 TUI 根的服务，需要 TuiHost + 桥接行。下文按终态描述。
 
-不新造抽象，扩展现有的 `CoreHost`（`core/host.ts`）：
+**实际落地（Phase 0）**：不新造抽象，扩展现有的 `CoreHost`（`core/host.ts` 的
+`resolveCoreHost(host, owner)`）。宿主接口叫 `ChannelHost`
+（`src/dsh-adapter/channel/channel-host.ts`），当前实现只有 `cordisChannelHost(ctx, services)`
+（`channel/cordis-host.ts`）：单根下宿主就是那个 Cordis 根，没有第二个宿主对象。
 
 ```ts
-interface TuiHost {
-  readonly logger: Logger                       // 现 ctx.logger
-  effect(dispose: () => void | Promise<void>): void   // 现 ctx.effect，TuiHost 自有栈
-  readonly runtime: AdapterRuntime              // 现 adapterRuntimeFor(ctx)
-  readonly shell: ShellHost | undefined
-  readonly fs: FsHost
-  readonly attachments: AttachmentHost | undefined
-  readonly settings: TuiSettingsStore           // 见 5.6
-  readonly credentials: CredentialHost | undefined
-  readonly oauth: OAuthPresenterHost | undefined
-  readonly decisions: DecisionDispatch          // 见 5.7
-  readonly registries: TuiRegistries            // 现 CoreHost 已有的 tui* 快照
+interface ChannelHost extends ServiceLookup {            // get(name) 即原来的 ctx.get
+  readonly logger: ChannelHostLogger
+  readonly runtime: AdapterRuntimeOptions                // 现 adapterRuntimeFor(ctx)
+  effect?(setup: () => () => void, label?: string): void  // 现 ctx.effect
+  onAgentPreStep?(listener: AgentPreStepListener): () => void   // 仅 DSH
+  dispatchDecision<T>(name, payload, normalize): Promise<T | undefined>
+  dispatchNotification(name, payload): Promise<void>
+  installDecisionGuard(grants: GrantStore): void
+  markDecisionDispatchTopology(): () => void
+  localSettingsSections(): TuiSettingsSectionsHost
+  watchServices?(listener: (name: string) => void): () => void
 }
 ```
 
-- Phase 0 先由 `cordisTuiHost(ctx)` 实现它，行为零变化；`createCoreChannel` 改收
-  `TuiHost`。
-- 验收写成门禁：`src/dsh-adapter/channel/core/` 不再 import `@deepseek-ai/cordis`
-  （加进 `verify:boundary`）。核心目录随后可以从 `dsh-adapter/` 挪到中立位置。
-- `resolveCoreHost` 现在在构造时快照各 `tui*` 服务（只有授权存储每次操作重读），要改成
-  从注册表实时取：DSH 晚到时，它带来的第三方插件注册要能出现在已挂载的界面里。
+- shell / fs / attachments / settings / credentials / dshAuth 与全部 `tui*` 注册表**都不是宿主
+  对象的字段**，统一走 `get(name)` 查找：`cordisChannelHost` 把它接到根的服务上，没有该服务时
+  返回 `undefined`，调用点各自降级。
+- **边界门禁已落地**：`src/dsh-adapter/channel/core/` 不得 import 任何 `@deepseek-ai/*`，也不得
+  依赖 extensions / backend（`scripts/verify-adapter-boundary.ts` 的 `CORE_DIR` 规则）。
+- **注册表实时取已落地**：`resolveCoreHost` 的 `themeHost` / `workspaceService` / `commandTrees` /
+  `sceneRuntime` / `settingsSectionsRuntime` / `rendererRuntime` 都是 getter，DSH 晚到时它带来的
+  注册立刻可见；`startHostSubscriptions` 经 `watchServices` 在服务变动时重绑，授权存储每次操作重读
+  （`core/host.ts`）。
 
 ### 5.2 启动时序
 
@@ -402,8 +436,9 @@ IPC 协议，维护成本比手写镜像更高。
   接受**。轻量 profile 由「可选」转为 Claude 内核路径的**必备件**，纳入 Phase 2（5.7、第 7 节）；
   Phase 1 的现状因此是一条待闭环的已知缺口，不是被接受的限制。
 - 内核在一次进程里只接管一次；运行中切换内核仍然要重启（`/kernel`），与今天一致。
-- `dsh --profile dsh-tui` 直接启动（不经本包 entry）是否继续支持，是决定项（第 9 节）。
-  继续支持就意味着桥接行在「没有 TuiHost」时要自己建 TuiHost 并渲染，保留一条兼容路径。
+- `dsh --profile dsh-tui` 直接启动（不经本包 entry）**已裁定保留**（2026-10-09，第 10 节第 4 条）。
+  这条兼容路径**实现待补**：单根下没有 TuiHost 可建；没有入口槽时 `dsh-tui` 行按其既有路径自己
+  渲染（`entry-slot.ts` 头注释），但没有专项实现与验收（现有覆盖见第 10 节第 4 条）。
 
 ## 7. 分期
 
@@ -414,7 +449,7 @@ IPC 协议，维护成本比手写镜像更高。
 | 0 | TuiHost 接口，`cordisTuiHost(ctx)` 实现；channel 核心改收 TuiHost；**测基线**：dsh / claude 两个内核从进程启动到首帧、到可发送的时间 | 行为零变化（现有 CI 组全过）；`verify:boundary` 新规则：`channel/core/` 不 import Cordis；基线数字写进本文 | 纯重构，直接 revert |
 | 1 | 设置存储落地（5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入）；本包 entry——自持裸 Cordis 根，`plugin.ts` 的 `apply` 原样挂载（**不建 TuiHost**，见 5.1 修订）；占位会话 + `adoptStartup`（1b）；Claude 内核走 entry、不加载 dsh-base（**profile 里声明的第三方插件此时不进这个根，是 2026-10-09 裁定要求 Phase 2 闭环的缺口**，见 5.7）。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
 | 2 | TuiHost（5.1，由 Phase 0 的 `ChannelHost` 补全）与 Cordis 无关的组装根；DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；**Claude 内核的轻量 profile（5.7，把本包行与第三方插件组合进来）**；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；**第三方插件示例（主题、面板、决策拦截）在两个内核下都通过**；轻量 profile 的组合成本计入 Claude 内核基线；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
-| 3 | 清理预载分支（PR #1216 已关闭并作废，2026-10-09；`src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js` 只在预载分支上，从未进 `main`，所以这一期**没有 `main` 代码可删**）；决定 `dsh --profile dsh-tui` 直启路径去留；改写 AGENTS.md 与架构文档；明确是否吸收预载的 compile cache 与 `onProcessExit` 兜底 | 构建门禁与全部 CI 组 | — |
+| 3 | 清理预载分支（PR #1216 已关闭并作废，2026-10-09；`src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js` 只在预载分支上，从未进 `main`，所以这一期**没有 `main` 代码可删**）；~~决定 `dsh --profile dsh-tui` 直启路径去留~~**已裁定保留（第 10 节第 4 条；兼容路径实现待补）**；~~改写 AGENTS.md 与架构文档~~**已落地（第 10 节第 1 条）**；明确是否吸收预载的 compile cache 与 `onProcessExit` 兜底 | 构建门禁与全部 CI 组 | — |
 
 Phase 1 是收益最大、风险最小的一期。分期于 2026-10-06 按 spike 结果修订：原 Phase 1 的
 TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设置存储、入口与 1b。
@@ -437,12 +472,12 @@ Phase 2（DSH 内核默认也走入口、首帧提前约 47%）都已在 `feat/s
 
 | 风险 | 影响 | 缓解 |
 | --- | --- | --- |
-| Phase 0 抽象漏项（channel 核心某处深层依赖 Cordis） | 方案停在 Phase 0 | Phase 0 本身是 kill-switch；边界门禁让漏项编译失败 |
-| DSH 扩展晚挂改动过深 | Phase 2 延期 | D2 退路：DSH 内核保留预载 |
-| `runProfile` 接口在 DSH 新版本变化 | DSH 内核启动失败 | 能力探测 + 回退到 spawn；加入 `verify:contract` 版本线 |
+| ~~Phase 0 抽象漏项（channel 核心某处深层依赖 Cordis）~~ **已关闭（Phase 0 完成）** | 曾是：方案停在 Phase 0 | 边界门禁在位（`channel/core/` 不得 import `@deepseek-ai/*`），继续守后续改动 |
+| ~~DSH 扩展晚挂改动过深~~ **已按 D1 落地（2.1）；D2 退路作废** | 曾是：Phase 2 延期 | —（D2 不再是备选，见第 8 节与第 10 节第 3 条） |
+| 入口复刻的宿主接口在 DSH 新版本漂移（`host-contract.ts` 的 HOST_MODULES / HOST_REPLICAS） | DSH 内核启动失败 | 能力探测 + 回退到 `dsh --profile`；`verify:contract` 的复刻指纹（`host-replica.snapshot.json`）与版本线 |
 | 宿主模块身份解析错误（加载了第二份 Cordis） | 插件服务注册到错误的根 | 只从宿主 realpath 解析；回归里断言单实例 |
 | 设置迁移出错 | 用户设置丢失或回到默认 | 迁移只读不删原值；失败时继续读旧层 |
-| 第三方插件依赖「TUI 在 Cordis 树里」的未文档化行为 | 插件失效 | Phase 2 用现有插件示例回归；`tui*` 同名服务保持类型不变 |
+| ~~第三方插件依赖「TUI 在 Cordis 树里」的未文档化行为~~ **单根下不成立**（界面与 DSH 同在那一棵树里） | — | 风险改形：Claude / Codex 内核下第三方插件缺失（5.7，已裁定必备件）；注册表归属待与上游插件契约（#1247）对齐 |
 
 ## 10. 需要维护者决定
 
@@ -466,8 +501,15 @@ Phase 2（DSH 内核默认也走入口、首帧提前约 47%）都已在 `feat/s
    文档描述的是当前形态，演进方向指向本文）；scripts/make-installer-bundle.mjs 的使用说明文案。
 2. ~~设置存储：5.6 的 (a) 还是 (b)。~~ 已定 (a)（2026-10-06）。
 2a. ~~分期修订（TuiHost 推迟到 Phase 2）。~~ 已接受（2026-10-06）。
-3. DSH 内核走 D1（扩展晚挂、预载整体删除）还是 D2（DSH 保留预载）。
-4. `dsh --profile dsh-tui` 直启路径是否继续支持。
+3. ~~DSH 内核走 D1（扩展晚挂、预载整体删除）还是 D2（DSH 保留预载）。~~ **已裁定（2026-10-09）：
+   D1「单根」**。实际落地已是单根（入口自建运行时、DSH 内核也走本包入口，见 2.1–2.3 与第 3 节）；
+   D2 不再是并列备选（第 8 节：PR #1216 已关闭、分支作废）。
+4. ~~`dsh --profile dsh-tui` 直启路径是否继续支持。~~ **已裁定（2026-10-09）：继续支持**。
+   「没有 TuiHost 时自建并渲染」的兼容路径**实现待补**——单根下没有 TuiHost 可建；用户直启（不经本包
+   entry）时没有入口槽，`dsh-tui` 行按其既有路径自己渲染（`entry-slot.ts` 头注释），但该路径本轮
+   没有专项实现与验收，不记为「已完成」。已有覆盖仅限启动器分流的 `DSH_TUI_HOST_ENTRY=0` 回退
+   （`scripts/verify-launcher.mjs:372,406`、`scripts/accept-host-entry.mjs` 的 `dsh-entry-off`）；
+   用户直接敲 `dsh --profile dsh-tui` 没有专项用例。见 6.2。
 5. ~~PR #1216 先合入还是关闭（第 8 节）。~~ **已裁定（2026-10-09）：关闭，分支作废**——Phase 2 的
    入口路径已覆盖它要换来的快速启动；那三个文件从未进 `main`，Phase 3 只清理分支，不删 `main` 上的
    代码。
@@ -1869,6 +1911,31 @@ node scripts/accept-host-entry.mjs    # PTY 验收
 **已知取舍，别当缺陷回退。** 本轮之后 `--backend` 不再对「语法合法但没装」的 id 早退（#1380 有意的
 UX 回退：进 TUI 后告警并回落 dsh），上游 Stage C 的 `/plugin` 才恢复装前报错。这与上游 #1246 要立的
 CLI 退出码契约相邻，改它之前先看那一条。
+
+### 2026-10-09 · 维护者裁定：根模型 D1 与直启路径（第二轮）
+
+**性质。** 只改文档：把已拍板的裁定写进正文（顶部状态段、第 3 节、第 4 节的插件生态接缝两行、5.1、
+6.2、第 7 节 Phase 3、第 9 节风险表、第 10 节第 3 / 4 条），并把措辞从「待定 / 备选」收敛为「已裁定」。
+不碰源码。
+
+1. **根模型：D1「单根」正式裁定。** 落地早就是单根——入口用已装 dsh 的模块自建 Cordis 根、先挂
+   本包运行时渲染，DSH 内核再把 profile 组合进**同一个根**（第 3 节、2.2 / 2.3）。第 10 节第 3 条的
+   D1 / D2 并列**作废**，D2 不再是备选；第 9 节里「D2 退路：DSH 内核保留预载」那行随之失效（已标注）。
+2. **`dsh --profile dsh-tui` 直启路径：保留。** 要补一条「没有 TuiHost 时自建并渲染」的兼容路径；
+   **该实现尚未落地**，正文写成「已裁定保留，实现待补」，不写成已完成（第 10 节第 4 条、6.2）。
+   核实到的现状：单根下没有 TuiHost 可建；没有入口槽时 `dsh-tui` 行按其既有路径自己渲染
+   （`entry-slot.ts` 头注释），但用户直启形态没有专项用例（现有覆盖只在启动器分流的
+   `DSH_TUI_HOST_ENTRY=0` 回退上），本轮未对该路径做验收。
+3. **观感两项（用户裁定）。** (a) DSH home 的两步切换——入口 DSH 路径接管后约 1–2s 才弹 home——
+   **判定要改**；当前仍在测量归因，**证据待补**（2.4 块记作「待确认」，本轮升级为「需改」）。
+   (b) Claude 占位期那句 `Starting …`（`status-starting`，见 2.4 块「交给后续」）**保留**，不是待删项。
+4. **预载分支清理：已授权，未执行。** 授权范围：先从 worktree 摘出备份 patch，再从分支清单验收删除。
+   现状：本地分支 `feat/preboot-fast-start`、`feat/preboot-fast-start-rebased`（各有 worktree
+   `dsh-TUI-preboot`、`dsh-TUI-preboot-rebased`）与 `tmp/test-preboot-input-history` 都还在，本轮没有
+   摘出 patch；远端 `origin/feat/preboot-fast-start` 的删除需**单独授权**（第 7 节 Phase 3、第 8 节）。
+
+**仍待决定 / 未完成**：5.7 轻量 profile 的实现（形状 spike 进行中，本轮未改该节的形状与状态描述）；
+直启兼容路径的实现与回归；预载分支的实际清理。
 
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
