@@ -53,12 +53,12 @@ import { initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
-import { HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
+import { DSH_BACKEND_ID, HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelPanels, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -85,6 +85,8 @@ import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspaces.js'
 import { getHostSettingsSections, getLocalSettingsSectionsHost, type TuiSettingsField, type TuiSettingsSectionsRuntime } from './settings-sections.js'
 import { compositionRoot, withHostRootCapability } from './host-access.js'
+import { armAdmissionLoader } from './admission-loader.js'
+import { applyConfiguredSidePanelPanels, applySidePanelPanelsFromSettings } from './panels.js'
 import { activeResources, disposeRootSettled, watchDisposal } from './root-dispose.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import { PageMargin } from '../components/PageMargin.js'
@@ -210,6 +212,15 @@ export interface RuntimeApplyOptions {
    * workspace ownership). Only the standalone entry sets it.
    */
   readonly entrySlot?: EntrySlot
+  /**
+   * The kernel the entry routed this launch to (../hostEntryRoute.ts
+   * `entryRoute`). The entry decides it with the profile patch's Config row,
+   * which its rebuilt Config lacks, so the runtime must not resolve the chain
+   * a second time: that would open the placeholder session — and name it in
+   * the status line while DSH composes — on a kernel this launch was not
+   * routed to. Unset on the profile path, which does resolve it here.
+   */
+  readonly entryKernel?: KernelBackendId
   /**
    * Why the entry is not using the installed dsh (host-entry.ts
    * noteHostUnavailable): shown once as a warning notice. A delegated
@@ -571,6 +582,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       'The bundle patch is older than the installed dsh-tui package — update the globally installed dsh-tui launcher to match the profile (issue #183).',
     )
   }
+  // v0.15 identity: admit third-party activations from their package-root
+  // `dsh-plugin.json` (./admission-loader.ts). Rows that activated before
+  // this one — the profile path applies plugin rows first — come from the
+  // loader's entry tree; every later activation arrives through the
+  // lifecycle event. Listeners and the retry timer ride this row's effects.
+  armAdmissionLoader(ctx)
   // The in-process DSH kernel mounts before the profile's workspace
   // providers exist: a target the local runtime cannot resolve (a provider
   // URI) is resolved through the composed tuiWorkspaces in `attachDsh`, and
@@ -631,14 +648,17 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // the one source that arrives raw; the other three are parsed above/beside.
   const rememberedBackend = readKernelPrefs().backend
   // The entry that runs DSH in process already decided the kernel (with the
-  // profile patch's Config row, which its rebuilt Config lacks).
-  const backendChoice: KernelBackendId = dshInEntry ? 'dsh' : resolveRememberedBackend({
+  // profile patch's Config row, which its rebuilt Config lacks) and hands its
+  // route in: use it as it stands — resolving the chain again would name the
+  // placeholder session after a kernel the entry did not route to.
+  const entryKernel = runtimeOptions.entryKernel
+  const backendChoice: KernelBackendId = entryKernel ?? (dshInEntry ? DSH_BACKEND_ID : resolveRememberedBackend({
     ...(handoffBackend === undefined ? {} : { handoff: handoffBackend }),
     configured: parseBackendChoice(config.backend),
     envRaw: rawBackend,
     envKnown: isRegisteredBackend,
     memory: isRegisteredBackend(rememberedBackend) ? rememberedBackend : undefined,
-  })
+  }))
   const rawBackendGiven = rawBackend === undefined ? '' : rawBackend.trim()
   // The launcher marks a *derived* resume target with the backend it read it from
   // (RESUME_BACKEND_ENV); a target the user placed carries no mark. Read and
@@ -1072,7 +1092,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   applySidePanelSplitEnabled(config.sidePanel?.splitEnabled)
   applySidePanelOpen(config.sidePanel?.open)
   applySidePanelRatio(config.sidePanel?.ratio)
-  applySidePanelPanels(config.sidePanel?.panels)
+  // Registered ids survive: on the profile path a third-party row may have
+  // registered its panel before this row applied (./panels.ts).
+  applyConfiguredSidePanelPanels(config.sidePanel?.panels)
   applyCompanionSkin(config.companion?.skin)
   applyBtwContextTurns(config.btw?.contextTurns)
   applyBtwContextBudget(config.btw?.contextBudget)
@@ -1359,6 +1381,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       }
       bootedTerminalImages = lastBootedTerminalImages ?? value.terminalImages ?? config.terminalImages ?? true
     }
+    /** False only while the one-shot boot application below runs: its CSV comes
+     *  from the same Config the startup apply already used, so a registered
+     *  panel absent from it is not a user removal (./panels.ts). Every later
+     *  pass is the user layer's own value. */
+    let settingsEditsLive = true
     // The /settings language field writes `lang` through the settings
     // service (user layer): apply it live and mirror it to lang.json so
     // the /lang command and next-boot resolution agree. DSH_TUI_LANG
@@ -1403,7 +1430,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       applySidePanelSplitEnabled(value.sidePanel?.splitEnabled ?? config.sidePanel?.splitEnabled)
       applySidePanelOpen(value.sidePanel?.open ?? config.sidePanel?.open)
       applySidePanelRatio(value.sidePanel?.ratio ?? config.sidePanel?.ratio)
-      applySidePanelPanels(value.sidePanel?.panels ?? config.sidePanel?.panels)
+      // A registered panel missing from this CSV was unticked in /settings:
+      // remember it before the union re-adds it (./panels.ts). Only a real
+      // edit counts — the boot application above runs while settingsEditsLive
+      // is false, and there a missing id means "that row registered after this
+      // document was written", not "the user removed it".
+      const panelsCsv = value.sidePanel?.panels ?? config.sidePanel?.panels
+      if (settingsEditsLive) applySidePanelPanelsFromSettings(panelsCsv)
+      else applyConfiguredSidePanelPanels(panelsCsv)
       applyCompanionSkin(value.companion?.skin ?? config.companion?.skin)
       applyBtwContextTurns(value.btw?.contextTurns ?? config.btw?.contextTurns)
       applyBtwContextBudget(value.btw?.contextBudget ?? config.btw?.contextBudget)
@@ -1475,7 +1509,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       notifyChannel(t('settings-fullscreen-migrated'), { color: 'warning' })
     }
     const { fullscreen: staleFullscreen, ...migratedSettings } = bootSettings
+    // The boot application is still the startup window: a panel registered by
+    // an earlier row must not be mistaken for a user's explicit removal here.
+    settingsEditsLive = false
     apply(fullscreenMigration === 'unset' ? migratedSettings : bootSettings)
+    settingsEditsLive = true
     let lastTerminalImages = bootSettings.terminalImages ?? config.terminalImages ?? true
     settingsCtx.effect(() => scope.watch(next => {
       apply(next)
@@ -3021,7 +3059,7 @@ export function writeCrashResumeMarkers(deps: {
   if (backendStart === undefined) {
     if (isExitResumable({
       pendingCount: channel.pending.length,
-      liveAgent: ctx.agents.get(SessionId(channel.agentId)),
+      liveAgent: (ctx.get('agents') as { get(id: ReturnType<typeof SessionId>): Agent | undefined } | undefined)?.get(SessionId(channel.agentId)),
       startupAgent: deps.startupAgent,
     })) {
       deps.writeResumeTarget(channel.agentId)

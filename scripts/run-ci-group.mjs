@@ -392,6 +392,13 @@ const GROUPS = {
 // 本包入口的路由（设计 5.8）：入口内核判定的排序（交接 > Config 行 > DSH_TUI_BACKEND >
 // kernel.json）、读 profile 补丁的 backend 钉、restartTui 切到 Claude 时经入口重起。
     ["verify-host-entry", ['node', '--import', 'tsx/esm', 'scripts/verify-host-entry.ts']],
+// 第三方插件的身份准入（设计 2.7 遗留 1）：真 Cordis 组合上驱动
+// armAdmissionLoader——未装 loader 时面板落 act<N> 兜底、装上后准入发生在
+// LOADING（apply 之前，面板带 manifest id）、profile 那种裸包名 entry 走
+// require.resolve('<pkg>/package.json') 的清单查找分支；以及 tuiPluginHost
+// 始终不挂载（issue #183）时 host-wait 路有上限、到限 settle 成 refused 并
+// 留下 DSH_TUI_DEBUG 诊断，不再让 flush 无上限自续。
+    ["verify-admission-loader", ['node', '--import', 'tsx/esm', 'scripts/verify-admission-loader.ts']],
 // CLI 子命令回归（issue #509）：help/version 零环境应答（不触发自举
 // 与委托）、双语输出、profile 版本读取、只认第一个参数。
     ["verify-cli-subcommands", ['node', 'scripts/verify-cli-subcommands.mjs']],
@@ -511,6 +518,10 @@ const GROUPS = {
 // tuiWorkspaces 服务可选化回归（issue #183）：代码层 inject 不含
 // tuiWorkspaces、消费处带本地兜底、patch 保留服务行与行级顺序保证。
     ["verify-workspaces-degrade", ['node', 'scripts/verify-workspaces-degrade.mjs']],
+// 轻量 profile 裁剪表 ↔ patch 行 id 的口对（秒级静态）：`LITE_PROFILE_ROW_DISABLES`
+// 的 id 被改名后 disable 会指向不存在的行，被裁服务重新 pending 而 patch-surface/
+// verify:build 都不红，这条在最近的关口拦住。加载型对表仍在 probe-lite-profile-claude。
+    ["verify-lite-profile-rows", ['node', '--import', 'tsx/esm', 'scripts/verify-lite-profile-rows.mjs']],
 // 插件扩展面回归（dsh-tui-extensions）：
 //  - events：真 cordis 总线 + 真 channel——tui/input 改写/取消/崩溃
 //    隔离、rewind 决策（模式列表/否决/完成后摘要）、session-switch
@@ -1220,6 +1231,9 @@ const GROUPS = {
 // displayName 内嵌换行入口压平（#160 窗口化列表单行契约的第一道防
 // 线）。注意必须走 tsx——脚本直接 import src/customTheme.ts。
     ["verify-themes", ['node', '--import', 'tsx/esm', 'scripts/verify-themes.mjs']],
+// ThemeProvider 的 `theme` prop 三态回归：挂载后到达的 prop 生效、prop 撤走不跳回、
+// 不可用名不崩且请求被暂存（随后注册上来要被接上，真 Cordis TuiThemeRuntime 做 oracle）。
+    ["verify-theme-prop-late", ['node', '--import', 'tsx/esm', 'scripts/verify-theme-prop-late.tsx']],
 
 // Text 背景色回归（issue #166）：公开 themed Text 与 Box 一致支持
 // 原始颜色值，且必须把对应 ANSI 背景色写入终端。
