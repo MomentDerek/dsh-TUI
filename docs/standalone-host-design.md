@@ -1441,9 +1441,51 @@ SIGTERM / SIGINT / SIGHUP 监听器——都以该信号结束、插件监听器
 5. `tuiPluginHost` 软探测文档与实际矛盾；6. 带点 component id 回落 `act*`；7. 「只放行官方行」的更严方案未做。
 1、2、5、6 两条路径都有，不是方案 B 引入的。
 
+### 2026-10-08 · 组合期间信号偶发卡 5s：dsh-hmr 的 dispose 死锁
+
+（写于交接一节之后。）**根因在上游 `@deepseek-ai/dsh-hmr` 0.2.0-rc.2，本包侧规避。**
+
+- **诊断**：复现时 restart.log 的未完成 fiber 只有 `Hmr`（`include:hmr (@deepseek-ai/dsh-hmr)`，state 1、
+  inertia），其余已释放；事件循环上只剩 TTY 与兜底计时器，没有 fs 请求或 watcher——纯 promise 环。
+- **机制**：dsh-hmr 的 `[Service.init]` 先 `yield` 释放器（`started.resolve(false)`），再逐个
+  `await this.watchConfig(...)`；chokidar `ignoreInitial:false` 初始扫描即发 `add`，启动一次 `running` 刷新，
+  经 `runReload` `await this.applicationReady`（组合期间未 commit，挂着）。此时 fiber 被释放，watcher 的
+  `ready` 到达后 `ctx.effect(...)` 抛 `INACTIVE_EFFECT`，catch 里 `await dispose()` 又 `await running`。
+  闭环：init 等 running → running 等 ready → ready 等释放器 → 释放器等 init 返回。`dsh --profile` 路径同样有，
+  被 `runProfile` 的 5s 关停上限掩盖。
+- **复现**：应用内探针在 `Include` fiber 进入 loading 时立即自发 SIGTERM，2/2 卡满 5s；延后 ≥200ms 12/12
+  正常。最小复现（宿主 cordis + Loader + timer 行 + dsh-hmr 行、appReady 永不就绪）：Hmr 进入 state 1 后
+  0–20ms 内 `ctx.root.fiber.dispose()`，3s 内不 settle；释放后 commit appReady，约 500ms 释放完——证明环卡在
+  `applicationReady`。不能靠 commit ready 修：会让 HMR 在拆除中的树上跑 `reconcileProfilePatches`。已排除：
+  能力守卫、`attachDsh`、同步冻结段、线程池阻塞。
+- **修**（新 `src/dsh-adapter/root-dispose.ts`）：`trackComposition(root, settle)` +
+  `disposeRootSettled(ctx, dispose?)`——入口组合进行中时，释放根先 `await loader.await()`（所有行激活完，
+  Hmr 的释放器并发执行互相放行），受原有 5s 计时器约束；同时置 `disposing`，`compose(warn, stopping)` 在
+  Loader 收尾后见到即返回，不审计、不 `appReady.commit`。只在入口组合窗口登记，profile 路径不受影响。
+  `plugin.ts` 的 `disposeRootAndThen` 与入口无漏斗兜底都走 `disposeRootSettled`；`attachDsh` 在
+  `compositionFailed || exited` 时直接返回（Loader 收尾会启动 dsh-tui 行，退出中不再打开 DSH 会话）。2.5 语义
+  不变（漏斗唯一出口、以信号结束、二次信号强退、第三方挂起仍有 5s 回退）。附带：组合期间收信号的收尾从
+  1.0–2.5s 降到约 0.7s。
+- **诊断保留**（只写 restart.log）：`signal: received` 带 `at`（最后一个 boot 打点，`bootTrace.ts` 新
+  `lastBootMark()`、`process-exit.ts` 新可选项 `where`）；释放超时时写 `dispose: still pending`（未完成
+  fiber、loader entry、状态、按类型统计的活动资源）。
+- **回归**：`verify-entry-process-exit` 24 → 29：子进程用 dev 依赖的 dsh 搭最小根（Loader + timer +
+  dsh-hmr，就绪永不到来），Hmr 进入 loading 后 0ms 释放——直接 dispose 确认死锁（上游修了会红，提示可重新评估
+  这段等待）；走 `disposeRootSettled` 时 6 种延迟（0/0/0/1/5/20ms）都在 1s 内 settle；另 3 条接线断言。注释掉
+  `await composition.settle()` 后 3/3 hang。
+- **连跑**：三个 `-starting` 用例各 35 轮共 105 次 0 失败（修前 15 轮 2 次、20 轮 1 次）；收尾 p50 702ms、
+  max 759ms；根释放（含等 Loader）p50 25ms、max 63ms。
+- **验证**：`pnpm build`（89 项）、input-terminal 32/32、entry-process-exit 29、host-entry 42、startup-adoption
+  46、plugin-lifecycle 56、`accept-host-entry` 全量 **59/59**。
+
+**遗留**：上游死锁本身还在（`dsh --profile` 启动期收信号会卡到 5s 上限），建议报上游——watchConfig 失败分支在
+init 内 `await running`，而 running 依赖的就绪只能由 init 之后的释放器放行；最小复现脚本暂存在 scratchpad
+（`repro-hmr.mjs`），报上游前需整理。`createProcessShutdown`（漏斗之前的 appExit）与 fail-loud 的释放未改走
+`disposeRootSettled`（都在组合前或已由漏斗接管）。`dispose: root disposed {ms}` 现在含等 Loader 的时间。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
-> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成（2.6 / 2.7 未提交）；剩组合期间信号偶发卡 5s 与 2.7 遗留。**
+> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成并提交；组合期间信号卡 5s 已查明并规避（未提交）；剩 2.7 遗留与观感决定。**
 >
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
