@@ -224,7 +224,15 @@ const crashWithMarkers = (deps: Omit<CrashMarkerDeps, 'writeResumeTarget' | 'ref
   const agentWith = (events: unknown[]) => ({ session: { events } }) as never
   const userMessage = { type: 'user/message', seq: 1, time: 0, data: { source: { kind: 'user' } } }
   const looked: unknown[] = []
-  const dshCtx = (live: unknown) => ({ agents: { get: (id: unknown) => { looked.push(id); return live } } }) as never
+  // A REAL Cordis root with the DSH registry provided. The crash tail reaches
+  // that registry through the service lookup (`ctx.get('agents')`, the shape
+  // liveDshAgent() uses), so a bare object carrying an `agents` property would
+  // stop observing the contract the moment the lookup shape changed.
+  const dshCtx = (live: unknown): Context => {
+    const root = new Context()
+    root.provide('agents' as never, { get: (id: unknown) => { looked.push(id); return live } } as never)
+    return root
+  }
   const resumable = crashWithMarkers({
     ctx: dshCtx(agentWith([userMessage])),
     backendStart: undefined,
