@@ -1728,7 +1728,61 @@ PTY `accept-host-entry`：**62 用例 60 通过**。两个红例是 `dsh-in-entr
 `dsh-to-claude`、`dsh-entry-kernel-to-*`、`restart-*`。待查的是落地页输入框内容行在 30 行终端下的
 布局（实施记录里记为通过的 30/30 一轮把 `-landing` 变体算在内，环境差异还是布局回归要重新对表）。
 
-### 2026-10-09 · 下一步：吸收上游 #1380 的后端注册表（计划；已执行，结果见上一节）
+### 2026-10-09 · 交接：Phase 2 剩余（新会话从这里接手）
+
+**现状。** 分支 `feat/standalone-host`，本地 HEAD 是吸收 #1380 的三个提交（定位改写、merge
+`bc890963`、收尾修复），**未 push**；上游基线 `main bc890963`。Phase 0 / 1 完成，Phase 2 的
+2.0–2.7 全部落地，根模型是**单根**（TUI 的根即 DSH 根，DSH 内核默认也走入口）。
+
+**本轮做 5.7 的轻量 profile**（2026-10-09 裁定：Claude 内核下第三方 Cordis 插件扩展的缺失不可
+接受，轻量 profile 由「可选」转为必备件）。四件事按序：
+
+1. **定实现形状**（先 spike，照 2.2 的老办法）：往 Phase 1 那个裸根里按清单装配本包行与第三方
+   插件，还是走 app-boot 的轻量组合另建一根再桥接。判据是模块身份与「插件注册到了哪个根」；
+   先摸 `tui-profile/` 的依赖清单与 app-boot 的组合入口，再决定。
+2. **成本实测**：省下的是 dsh-base 那段，轻量 profile 自身的组合开销要计进 Claude 内核首帧基线
+   （1.2 与 2.3 的对照表）。
+3. **与上游契约对齐注册表归属**（上游 issue #1247 要求「接口 / 清单 / 管理器 / 市场 / 兼容性」
+   一体设计后再实现；#1380 的 `unloadExport` 记账与 `parseBackendChoice` 两段式解析是邻居口径）。
+   别先把归属冻在「注册表住在 Cordis 树里」。
+4. **验收**：第三方插件三样例（主题、面板、`tui/input` 拦截）**在两个内核下都通过**；单实例断言
+   （cordis / react 各一份）。
+
+验收命令（改动面按 docs/contributing.md 选；启动链改动必须跑 PTY）：
+
+```sh
+pnpm build                                    # 91 道门禁
+node --import tsx/esm scripts/verify-host-entry.ts
+node --import tsx/esm scripts/verify-startup-argv.mjs
+node scripts/verify-safe-mode.mjs && node scripts/verify-update.mjs
+node scripts/accept-host-entry.mjs             # PTY；62 例里 2 例既红，见上一节
+```
+
+**Phase 2 收尾遗留（各块记下的，按块号）**
+
+- 2.4：DSH 占位会话传 `backendLabel`；失败后首个 `/new` 经 `options.openSession` 打开，绕过 DSH
+  扩展 `newSessionOpener` 的 preset、mount 预留与工作区所有权——DSH 内核的 `openSession` 要自己处理。
+- 2.3：`ThemeProvider` 只在挂载时判断 forced theme（持久化选了组合后才注册的运行时主题会落回 auto）；
+  占位期状态栏显示入口算的路由，接管后才换成行的路由。
+- 2.4 / 2.6：`HostComposeError`；shim 的 win32 `resolve` 未在 win32 验证；入口装劫持后
+  `import.meta.resolve` 可能解析到宿主的 app-boot 等副本（同一版本线之外，真机看 `mixed` drift 通知）。
+- 2.7（1、2、5、6 两条路径都有，非方案 B 引入）：缺 admission loader（读 `dsh-plugin.json`、调
+  `getHostAdmission`），第三方插件在任何路径上都没有身份；profile 路径上运行时 `apply` 前注册的面板
+  不进启用列表；入口首帧主题闪一次；`tuiPluginHost` 软探测文档与实际矛盾；带点 component id
+  回落 `act*`；「只放行官方行」的更严方案未做。
+- 观感待用户决定：DSH home 的两步切换、Claude 占位期那句 "Starting …" 的去留。
+
+**第 10 节仍未决**：第 3 条 D1/D2（实际已按单根 D1 落地，只差正式划掉）、第 4 条
+`dsh --profile dsh-tui` 直启路径是否继续支持（继续支持就要保留一条「没有 TuiHost 时自建并渲染」
+的兼容路径）、第 5 条 PR #1216（预载分支）先合入还是关闭。
+
+**Phase 3（未开始）**：删 `src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js`；决定直启
+路径去留；按新定位重写 AGENTS.md 与架构文档。
+
+**未 push 的提交**：`ea99d038`（定位改写）、`40644af1`（merge #1380）、`fab460df`（收尾与记录）。
+PR 一律走 `.agents/skills/pr`。
+
+### 2026-10-09 · 下一步：吸收上游 #1380 的后端注册表（计划；已执行，结果见上文「已吸收上游 #1380」一节）
 
 **方向与前提。** 合并方向是 `main` → `feat/standalone-host`（`bc890963` → `b2e1a8b2`，merge-base
 `85d49e53`）。理由：#1380 已在 main 定案，动的是共享中间层；本分支 29 个提交是上层（入口与宿主
