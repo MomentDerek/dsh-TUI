@@ -1318,9 +1318,132 @@ zstd 检查）、last-run 刷新；崩溃另查只有一行崩溃行、无 `dsh:
 `interrupt`、退出码语义不同」进契约；交给 2.7：第三方插件自挂 `process.on(sig)` 的退出行为、守卫放宽期间
 第三方插件的崩溃路径。
 
+### 2026-10-07 · Phase 2 第 2.6 块：契约与门禁
+
+（写于交接一节之后。）决定（第 10 节第 7 条）落地为：`@deepseek-ai/dsh`、`dsh-app-boot`、`dsh-cmdline`、
+`dsh-http-proxy`、`dsh-launch-environment` 成为 **optional peer + dev**（精确 `0.2.0-rc.2`），
+`dsh-home-paths` 由 dev 升为 peer + dev（沿用家族宽范围），`cordis-plugin-loader` 仍只 dev（只当
+`unknown` 用）。不进 `dependencies`：`verify:manifest-deps` 第 1 条禁止，profile 里会多出一份真实拷贝、
+cordis 变两个实例（#198）。这 6 个包进 `OPTIONAL_RUNTIME_PACKAGES`（profile `autoInstallPeers: false`，
+缺席不算 broken）。**运行期仍按宿主 realpath 加载宿主自己的副本**，本包依赖只用于类型、探测与指纹。
+`upstreamDrift` 对 dsh 仍按整条验证线判定（入口的真正门槛是 `loadHostDsh` 的导出探测）。
+
+- `pnpm-workspace.yaml`：5 个 `0.2.0-rc.2` overrides；`allowBuilds` 加 `@deepseek-ai/dsh-subprocess-local`、
+  `node-pty` 为 false（否则 pnpm 11 报 `ERR_PNPM_IGNORED_BUILDS`）；`minimumReleaseAgeExclude` 旧范围补
+  `|| 0.2.0-rc.2`。lockfile 新增 101 个包（dsh 的传递依赖），干净副本 `--frozen-lockfile` 可复现。
+- **类型**：host-dsh.ts 的本地结构类型全部换成 `import type` 宿主包，写法
+  `Pick<typeof 模块, ContractExports<'key'>>`——契约写了 pinned 宿主不存在的导出即编译失败；
+  `profileContext` 用真实 `AppBoot.ProfileContext`。
+- **单一来源**：新 `src/dsh-adapter/host-contract.ts`（纯数据：`HOST_PACKAGE`、`HOST_REPLICA_VERSION`、
+  `HOST_MODULES`（8 个模块、`via: host | app-boot`、读取的导出）、`HOST_TYPE_PACKAGES`、`HOST_REPLICAS`
+  （8 个复刻点）、`HOST_DEVIATIONS`（不复刻 `interrupt` 与退出码语义、`exitSeam`、`uninstallFailLoud` 时点、
+  所有组合失败都写报告、不复刻报告的终端半边、不处理 overlays、`deferRootCapabilityGuard`、
+  `excludeNetwork`、劫持先于 TUI 模块））。`loadHostDsh`、`contract.ts`（blessed 与可缺集合）、
+  `verify:contract` 都读它。
+- **复刻面指纹**：`scripts/lib/host-replicas.ts` 把宿主包 `lib/*.js` 当文本读，按名字切出顶层函数 / const
+  算 sha256（`createProcessShutdown`、`PROCESS_SHUTDOWN_TIMEOUT_MS`、`createAppReady`、`composeProfile`、
+  `runProfile`、`boot`、`reportStartupFailure`、`runCli`），记在 `host-replica.snapshot.json`（不进 tarball）。
+  版本线或函数体变化即失败，并列出「复核哪段上游 → host-dsh 哪段」；复核后
+  `node --import tsx/esm scripts/verify-host-contract.ts --snapshot` 重写。CI 比 dev 副本；本机 PATH 上的
+  dsh 另比、只警告。
+- **门禁**：`verify:contract` 串联 `scripts/verify-host-contract.ts`（56 项：契约自洽；dev 副本跑生产
+  `loadHostDsh`；假宿主逐个缺 13 个导出 / 8 个模块各自点名失败；无头起入口——缺 `provideCmdline` 的假 dsh 下
+  入口交给 `dsh --profile -- hello`、退出码透传、stderr 有原因、子进程收到 `DSH_TUI_HOST_NOTICE`；指纹）。
+  `verify:boundary` 新规则（均做变异验证）：`'@deepseek-ai/…'` 字面量只在 `src/dsh-adapter/`；宿主专属模块
+  任何地方不得值 import、字面量只在 host-contract.ts（contract.ts 读 `dsh/package.json` 例外）；host-dsh.ts
+  对 `@deepseek-ai/*` 只 `import type`；host-contract.ts 只被 host-dsh.ts 与 contract.ts import；
+  `DSH_TUI_TEST_FAULT` 只在 test-faults.ts、后者只被 host-entry.ts 与 plugin.ts import。门禁数仍 89（扩展
+  既有 `verify:contract`）。
+- **测试开关**：`DSH_TUI_TEST_FAULT` 作为内部开关写进 docs/contributing（双语）与 ADAPTER，不进 README /
+  configuration；扩散由门禁锁住，文档写明不再新增同类开关。
+- **win32**：`resolveLauncherPath` 导出并按 platform 选 `path.win32` / `path.posix`；`verify-host-entry` +11
+  （`.cmd` 的 `%dp0%` / `%~dp0`、`.ps1` 的 `$basedir` / `$PSScriptRoot`、相对、跨盘符、UNC 等），共 42。
+- 文档：ADAPTER.md（边界表、新节「独立入口的宿主契约」、升级流程）、docs/contributing(.en).md、AGENTS.md
+  上游边界一条。
+
+**验证**：`pnpm build`（89 项）、`verify:package`（2964 文件、30 个入口目标）通过；host-entry 42、launcher、
+entry-process-exit 24、startup-adoption 46 通过；input-terminal 32/32。
+
+**遗留**：入口装劫持后 `import.meta.resolve` 可能解析到宿主的 app-boot 等副本，宿主与 profile 不在同一版本线
+时落地页可能出现此前静默的 `mixed` drift 通知（无头测不到，真机看）；dev 依赖使安装多约 100 个包。
+
+### 2026-10-07 · Phase 2 第 2.7 块：第三方插件验收与守卫
+
+（写于交接一节之后。）在独立 worktree 做完，以补丁合入（与 2.6 无冲突）。全局 dsh 已由用户修好，profile
+路径对照直接运行。
+
+**三样例**（`plugins-entry` / `plugins-profile` 同一组插件与断言跑两条路径，均通过；夹具在
+`scripts/fixtures/host-entry-plugins/`，不进发布包）：主题插件经 `tuiThemes` 注册、`theme.json` 预选，屏上
+出现其颜色；面板插件 id `accept-panels:demo`（插件自己的前缀，非兜底 `act*`），每插件配额按身份计（第 5 个
+被拒），`tuiPluginStorage` 落 `plugin-storage/accept-panels.json`；决策插件（身份 `accept-guard`）的
+`tui/input` 否决与改写、`/new` 的 `tui/session-switch` 否决都生效（改写后的消息被投递，`llm-deepseek` 的
+`baseURL` 指向 `127.0.0.1:9`，断言以 `transport failed` 结束，不请求真实模型）。
+
+**身份相关的发现**：
+
+- **产品代码里没有任何地方调用 `getHostAdmission`**：两条路径上第三方插件今天都拿不到经验证的身份（面板落
+  `act*`，DecisionEvents 与 storage 直接拒绝）。测试插件自己调 admission 扮演缺失的 loader。所以本块证明的是
+  「单根下身份绑在插件自己的 fiber 上」（2.2 两根丢的正是这个），不是「产品会发身份」。
+- 带点的 component id（如 `com.example.x`）会让 `pluginIdFor` 的正则回落到 `act*`。
+- 插件 apply 里等待会拖住组合：profile 路径卡首帧（等 15s 的 apply 把 `runtime-apply` 推迟约 15.5s），入口
+  路径卡接管。
+- 文档要求 `tuiPluginHost` 只能软探测，但插件实际只能靠 `inject: ['tuiPluginHost']` 等它出现。
+- profile 路径既有问题：dsh-tui 运行时 apply 之前注册的面板被 `plugin.ts` 的
+  `applySidePanelPanels(config…)` 覆盖出启用列表，之后 `open()` 被忽略。入口路径没有这个窗口。
+
+**forced theme**：复现不到「落回 auto」——ThemeProvider 已有以 `runtimeThemeSnapshot` 为依赖的恢复 effect，
+attach 时 rerender 传入新 themeHost 后恢复持久化选择。实际是入口路径首帧先用自动检测配色、约 1–2s 后换成插件
+主题（profile 路径首帧即插件主题）。插件未加载时无法画它的主题，未改代码。2.3 的遗留据此更正。
+
+**守卫收紧**：越权插件在 apply 时与 4s 后各试 `root.plugin` / `root.effect` / `root.on` / `root.inject`，分
+「早行」（无 inject，模块加载完即 apply）与「晚行」（inject `tuiPanels`，必在 TUI 行之后）：
+
+| | 早行 apply | 晚行 apply | 4s 后 |
+| --- | --- | --- | --- |
+| profile 路径 | 放行 | 拒绝 | 拒绝 |
+| 入口，改前 | 放行 | **放行** | 拒绝 |
+| 入口，改后 | 放行 | 拒绝 | 拒绝 |
+
+新增 `armRootCapabilityGuard(root)`，入口在组合开始前调用：此后第一个经过 TUI 宿主代码（`compositionRoot`）
+的插件激活即装守卫——即第一个 TUI 行（每个 `dsh-tui-*` 服务构造都会经过）；宿主代码、根自身、
+`withHostRootCapability` 不触发；组合结束的释放兜底保留。即与 profile 路径对等（包括早行能抢在守卫前的那个
+竞态）。没选「只放行 DSH 官方行」：需要可靠知道每行来自哪个包，目前没有来源。2.3 的 `UserQuestionService`
+金丝雀用例通过，调试日志无官方行被拒。无头断言进 `verify-plugin-lifecycle`（+5，去掉修复变红）。
+
+**崩溃与信号**（入口路径，全过）：组合期间 apply 同步抛错——审计接住，会话照常接管，`/quit` 0；运行期抛错
+（timer 0ms 即组合期间、6s 后同步、6s 后 unhandledRejection）——只走 TUI 崩溃漏斗（一条崩溃行、无
+`dsh: fatal`、crash.log 有插件错误、启动器问安全模式前终端已恢复、退出码 1、无遗留进程）；插件自挂
+SIGTERM / SIGINT / SIGHUP 监听器——都以该信号结束、插件监听器也执行、无安全模式、终端恢复，约 800ms（比
+2.5 基线多出 0.5s 宽限）。
+
+**可见面**：`StartupOpenError`、`status-starting`、`host-dsh-unavailable`、`HOST_NOTICE_ENV` 都不在任何
+`exports` 子路径；`DSH_TUI_HOST_NOTICE` 只在委托出去的 dsh 进程环境里、被 plugin 读取删除前任何行可读。真正对
+插件可见的是 `TuiSceneProps.channel` 上的 `ready`、`startupFailure` 与 `status: 'starting'`（Phase 1 加的）。
+观感（PTY 文本时间线，从 spawn 起）：DSH 默认 home——+1.1s 聊天页、状态栏「Starting DSH… · deepseek-flash」，
++2.2s 切到 Sessions home；首启引导——+1.2s 聊天页，+2.4s 弹 Welcome；Claude（假 claude 延迟 4s）——+1.2s
+「Starting Claude Agent… · Claude Agent · max」，+5.6s 换成模型名。两步切换与 Claude 占位期 Starting 去留
+待用户决定。
+
+文档：`docs/plugins(.en).md` 加一条「DSH 内核在本包入口」，guide 副本同步。
+
+**验证**（合入 2.6 之后的树）：`pnpm build`（89 项）、input-terminal 32/32 通过；agent 侧另跑 channel-ui
+（4 项既有失败）、守卫相关 22 个脚本通过。`accept-host-entry` 全量 **59 例 57 通过**，失败 2 例是
+`dsh-entry-sigterm-starting`、`dsh-entry-sigint-starting` 的「组合期间收到信号、释放根卡满 5s」；单独连跑三轮
+9 例失败 1 例。结局仍正确（以信号结束、终端恢复、无遗留进程）。
+
+**组合期间信号偶发卡 5s**（2.5 遗留，本块数据）：不调 arm 也能复现（2/42、另一组 0/54）；arm 但守卫包装全部
+跳过 2/42；arm 且守卫正常装约 9/123——偏高但样本小、不显著。插桩显示卡住期间守卫未拒绝任何调用，只发生在信号
+落在 `entry-compose-start` 之后、TUI 行之前。机制未查明，下一步在 `signal: received` 带上最后一个 `entry-*`
+打点定位。
+
+**遗留**：1. 缺 admission loader（读 `dsh-plugin.json`、调 `getHostAdmission`），第三方插件在任何路径上都没有
+身份；2. profile 路径上运行时 apply 前注册的面板不进启用列表；3. 组合期间信号偶发卡 5s；4. 入口首帧主题闪一次；
+5. `tuiPluginHost` 软探测文档与实际矛盾；6. 带点 component id 回落 `act*`；7. 「只放行官方行」的更严方案未做。
+1、2、5、6 两条路径都有，不是方案 B 引入的。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
-> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.5 已完成（2.4 / 2.5 未提交）；下一步 2.6 / 2.7。**
+> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成（2.6 / 2.7 未提交）；剩组合期间信号偶发卡 5s 与 2.7 遗留。**
 >
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
