@@ -728,6 +728,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         ...(configuredSessionId === undefined ? {} : { configuredSessionId }),
         argv: cmdlineArgs ?? process.argv.slice(2),
       }
+      // One load per launch, whichever path opens the session: the deferred
+      // path (the entry mounts the screen between `prepare` and `start`) and the
+      // eager one share it. Loading only imports the module and books its pool
+      // hook; the session still opens in `start()`.
       const backendModule = await loadBackend(backendChoice)
       if (deferBackendOpen) {
         const prepared = await prepareBackendStartup(ctx, backendModule, startupInput)

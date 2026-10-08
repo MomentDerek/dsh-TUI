@@ -14,9 +14,10 @@ TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 2. **插件扩展**：Claude 内核下第三方 Cordis 插件扩展的缺失**不可接受**；轻量 profile 由「可选」
    转为 Claude 内核路径的必备件，纳入 Phase 2（5.7、6.2、第 7 节）。
 
-**下一步（可直接接手）**：吸收上游 #1380 的后端注册表（`main` `bc890963` → `feat/standalone-host`
-`b2e1a8b2`；10 文件 18 个冲突块 + 7 个被删符号的连带断裂 + 三处接缝统一）。完整清单、验收命令与
-开工前待拍板项见实施记录「2026-10-09 · 下一步：吸收上游 #1380」。
+**下一步（可直接接手）**：Phase 2 剩余的**轻量 profile**（5.7）——实现形状（按清单往入口那个根里
+装配，还是另建一根再桥接）、组合成本实测，以及与上游插件契约对齐注册表归属（上游 issue #1247）。
+上游 #1380 的后端注册表**已吸收**（`main` `bc890963` 进本分支，结果见实施记录「2026-10-09 ·
+已吸收上游 #1380」）。
 
 ## 一句话
 
@@ -1679,7 +1680,55 @@ architecture(.en).md / scripts/make-installer-bundle.mjs / 本文）；**未动 
 吸收 #1380 的代码级合并（符号迁移与三处接缝统一）。文档侧验证：
 `verify-source-hygiene` 与 `verify-guide` 均通过。
 
-### 2026-10-09 · 下一步：吸收上游 #1380 的后端注册表（新会话从这里接手）
+### 2026-10-09 · 已吸收上游 #1380 的后端注册表（结果）
+
+**合并。** `upstream/main bc890963` 合入 `feat/standalone-host`（merge commit，`b2e1a8b2` 为
+第一父）。10 文件 18 个冲突块按「两侧增量取并集」解（配置表的 `DSH_TUI_RESUME_BACKEND` 行 +
+本分支两行 `DSH_TUI_HOST_ENTRY*`；`update.ts`/`plugin.ts` 的 import 并集；`verify-startup-argv`
+的 sandbox scope 取并集）。真正需要判断的四处在计划节里已列明，落地形状：
+
+1. `plugin.ts` 的 `backendChoice` 保留 `dshInEntry ? DSH_BACKEND_ID : …` 短路，套上 main 的
+   两阶段解析（`parseBackendChoice(handoffBackendRaw)` + `envKnown: isRegisteredBackend` +
+   过注册表的 `memory`）。
+2. 启动会话句柄：保留 `prepareBackendStartup()`/`start()` + `deferBackendOpen`；`resumedSessionId`
+   从 `start()` 的返回移回 `prepare` 的顶层——defer 模式下后端还没打开，`bootSessionId` 只能从
+   准备阶段取。`await loadBackend(...)` 提到 `if (deferBackendOpen)` 之外：一次启动只加载一次
+   后端模块，`verify-backend-registry` 的「恰好一处」断言因此继续成立，而不是被放宽。
+3. 退出漏斗：`disposeRootSettled(ctx, () => withHostRootCapability(() => ctx.root.fiber.dispose()))
+   .finally(() => unloadBackends())`；入口自己的 `disposeEntryRoot` 改调
+   `unloadBackends`（动态 `import('./backend-registry.js')`），即「B：进程池窗口」的接口级收口。
+4. 门禁两套共存：本分支自带的 `NATIVE_RULES` 常量删除（native 规则一律取 manifest 派生结果，
+   与 `EXPECTED_NATIVE_RULES` 快照对表），host-only / `DSH_TUI_TEST_FAULT` 那套规则完整保留。
+
+**符号迁移与连带。** `hostEntryRoute.ts` 升为两阶段（`parseBackendId` + `isRegisteredBackend`），
+`configuredBackend` 交 `parseBackendChoice`，`entryKernel` 的 memory 也过注册表——入口与 boot
+对「语法合法但没装」的 id 判据一致，三条新断言进 `verify-host-entry`（51 项）。`host-entry.ts` 的
+`closeBackendResources` → `unloadBackends`，`verify-entry-process-exit` 的正则同步（31 项）。
+
+**launcher 的判据修正（不是机械合并）。** `bin/dsh-tui.js` 的 `pickKernel` 原来用已删的
+`KERNEL_IDS`——launcher 是纯 JS，不受 TS 门禁保护，只会在启动时 ReferenceError；改为 id 语法
+判定（成员判定归 boot）。分流条件由 `launchKernel() === 'claude'` 改为 `launchKernel() !== 'dsh'`，
+与 `entryRoute`「非 DSH 内核都进入口」同一判据：原条件在 `DSH_TUI_HOST_ENTRY_DSH=0` + Codex 下会
+把 Codex 交给 `dsh --profile`。
+
+**startup 探针的范围。** `verify-startup-argv` 的 `resolveAgent` 扫描原来递归整个 `apply`，合并后
+`attachDsh` 里那次调用（`rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs)`）会被当成 boot 的
+resume 目标；改为跳过嵌套函数，并在 sandbox scope 补 `DSH_BACKEND_ID` 与 `dshInEntry: false`
+（这些用例锁的是 `dsh --profile` 路径）。
+
+**验收。** `pnpm compile` ✓；`pnpm build` **91/91** ✓（首轮 `verify:initial-prompt` 红，即上面探针
+两处修复后转绿；`verify:transcript-images` / `verify:btw` 在并行负载下偶红一次，单跑稳定通过）；
+`verify-backend-registry` 47 ✓、`verify-startup-argv` 215/215 ✓、`verify-safe-mode` ✓、
+`verify-update` ✓、`verify-host-entry` 51 ✓、`verify-entry-process-exit` 31 ✓。
+
+PTY `accept-host-entry`：**62 用例 60 通过**。两个红例是 `dsh-in-entry-landing` 与
+`dsh-default-starting-landing`（等不到落地页输入框的 `❯`，30s 超时），**既有问题，不是本轮引入**：
+在 `b2e1a8b2`（合并前）上以同一隔离 profile 复现，结果相同（2/2 红）——两个用例的 `-chat` 变体与
+其余 60 例全绿，含 `codex-in-entry`、`codex-in-entry-pool-closed`、`codex-kernel-remembered`、
+`dsh-to-claude`、`dsh-entry-kernel-to-*`、`restart-*`。待查的是落地页输入框内容行在 30 行终端下的
+布局（实施记录里记为通过的 30/30 一轮把 `-landing` 变体算在内，环境差异还是布局回归要重新对表）。
+
+### 2026-10-09 · 下一步：吸收上游 #1380 的后端注册表（计划；已执行，结果见上一节）
 
 **方向与前提。** 合并方向是 `main` → `feat/standalone-host`（`bc890963` → `b2e1a8b2`，merge-base
 `85d49e53`）。理由：#1380 已在 main 定案，动的是共享中间层；本分支 29 个提交是上层（入口与宿主

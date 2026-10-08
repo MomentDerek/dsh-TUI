@@ -92,7 +92,7 @@ if (probeMode) {
 
   const { initialPromptFromCmdlineArgs } = await import('../lib/types/dsh-adapter/startup-args.js')
   const { resumeTargetFromArgv } = await import('../lib/types/sessionHistory.js')
-  const { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget } = await import('../lib/types/kernelPrefs.js')
+  const { DSH_BACKEND_ID, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget } = await import('../lib/types/kernelPrefs.js')
   const { isRegisteredBackend, parseBackendChoice } = await import('../lib/types/dsh-adapter/backend-registry.js')
   const { startup, resolution, target, submit } = JSON.parse(readFileSync(process.env.DSH_TUI_ARGV_STARTUP, 'utf8'))
   const submitted = []
@@ -102,6 +102,11 @@ if (probeMode) {
     LAUNCH_PROMPT_SENT_ENV: 'DSH_TUI_LAUNCH_PROMPT_SENT',
     KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs,
     resolveRememberedBackend, resolveResumeTarget, isRegisteredBackend, parseBackendChoice,
+    DSH_BACKEND_ID,
+    // These cases pin the `dsh --profile` path (DSH_TUI_HOST_ENTRY=0 below), so
+    // the boot is never the entry's in-process DSH row: the kernel comes from the
+    // env/Config ranking alone.
+    dshInEntry: false,
     config: {
       backend: process.env.DSH_TUI_BACKEND,
       sessionId: process.env.DSH_TUI_RESUME_SESSION,
@@ -185,12 +190,23 @@ async function compiledStartup() {
   const submit = apply.body.statements.find(node => ts.isIfStatement(node) && node.expression.getText(source) === 'initialPrompt')
   assert.ok(submit, 'compiled initial prompt submission branch exists')
   let target
+  /**
+   * Only the boot's own startup reaches `resolveAgent` at the top level of
+   * `apply`. The DSH-in-entry path (`attachDsh`, Phase 2) opens its session
+   * inside a nested function with a target of its own
+   * (`rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs)`); walking into it
+   * would take that expression for the boot's resume target.
+   */
+  const isNestedFunction = node => ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)
   const visit = node => {
     if (ts.isCallExpression(node) && node.expression.getText(source) === 'resolveAgent') {
       assert.ok(ts.isIdentifier(node.arguments[1]), 'DSH startup consumes a named resume target')
       target = node.arguments[1].text
     }
-    ts.forEachChild(node, visit)
+    ts.forEachChild(node, child => {
+      if (!isNestedFunction(child)) visit(child)
+    })
   }
   visit(apply.body)
   assert.ok(target && declarations.has(target), 'compiled resume target passed to resolveAgent exists')
