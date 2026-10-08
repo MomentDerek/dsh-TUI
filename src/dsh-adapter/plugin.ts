@@ -85,6 +85,7 @@ import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspaces.js'
 import { getHostSettingsSections, getLocalSettingsSectionsHost, type TuiSettingsField, type TuiSettingsSectionsRuntime } from './settings-sections.js'
 import { compositionRoot, withHostRootCapability } from './host-access.js'
+import { activeResources, disposeRootSettled, watchDisposal } from './root-dispose.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import { PageMargin } from '../components/PageMargin.js'
 import { normalizeSplashFont } from '../components/splashFonts.js'
@@ -96,7 +97,7 @@ import { DBP, DFE, DISABLE_MOUSE_TRACKING, EXIT_ALT_SCREEN, SHOW_CURSOR } from '
 import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMultiplexer } from '../ink/termio/osc.js'
 import { addProcessErrorAbsorber, fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
 import { CHANNEL_UI_LIFETIME_ENDED } from '../adapter/channel/ui.js'
-import { markBoot } from '../utils/bootTrace.js'
+import { lastBootMark, markBoot } from '../utils/bootTrace.js'
 import type { EntrySlot } from './entry-slot.js'
 import { TERMINATION_SIGNALS, dieBySignal, type ExitRequest, type ExitRequestAnswer, type ProcessExitSeam, type TerminationSignal } from './process-exit.js'
 import { RenderTestFault, readTestFault } from './test-faults.js'
@@ -2591,7 +2592,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       const dshCtx = rowCtx as Context
       markBoot('entry-dsh-attach')
       // The composition already failed (its row is on screen): no session.
-      if (compositionFailed) return
+      // Leaving already (a signal or /quit while composing: the root dispose
+      // waited for the Loader, which started this row): none either.
+      if (compositionFailed || exited) return
       try {
         const rowConfig = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>)
         rowFacts.config = rowConfig
@@ -3383,17 +3386,18 @@ function resumeCommand(profile: string | undefined, sessionId: string): string {
  */
 function disposeRootAndThen(ctx: Context, done: () => void, fallback: number | (() => void) = 1): void {
   const startedAt = Date.now()
+  const pendingFibers = watchDisposal(ctx)
   const timer = setTimeout(() => {
     // Diagnosis for a stalled disposal: without this line the fallback exit
     // is indistinguishable from a successful handoff in the field.
     logRestartEvent('dispose: timeout, taking fallback exit', typeof fallback === 'number' ? { fallbackCode: fallback } : { fallback: 'signal' })
+    logRestartEvent('dispose: still pending', { fibers: pendingFibers(), lastBootMark: lastBootMark(), resources: activeResources() })
     if (typeof fallback === 'number') process.exit(fallback)
     else fallback()
   }, 5000)
   timer.unref()
-  // The pooled, process-wide resources of every backend this process actually
-  // loaded are closed here — after the fiber, never before (P0 D4-P2/P3).
-  void withHostRootCapability(() => ctx.root.fiber.dispose()).finally(() => unloadBackends()).then(
+  // A composition still running into this root settles first (./root-dispose.ts).
+  void disposeRootSettled(ctx, () => withHostRootCapability(() => ctx.root.fiber.dispose())).finally(() => unloadBackends()).then(
     () => {
       clearTimeout(timer)
       // The root teardown's length (design 2.5: one 20s teardown seen in the

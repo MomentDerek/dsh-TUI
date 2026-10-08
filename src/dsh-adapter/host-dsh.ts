@@ -325,8 +325,11 @@ export interface HostRoot {
    * Compose the profile into `ctx` (DSH kernel only): the same root the
    * screen is mounted on. Rejects with the Loader's or the audit's error;
    * the tree stays up (the caller decides what the screen shows).
+   * `stopping`: a root dispose waits for this composition
+   * (./root-dispose.ts): once the Loader settled, skip the audit and the
+   * readiness commit and return.
    */
-  compose(warn: Warn): Promise<void>
+  compose(warn: Warn, stopping?: () => boolean): Promise<void>
   /**
    * Remove the fail-loud handlers (DSH kernel; a no-op otherwise). The entry
    * calls it once the TUI's process guard and crash funnel are up: from then
@@ -436,7 +439,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     ctx,
     uninstallFailLoud: () => { uninstallFailLoud() },
     shutdown,
-    async compose(warn) {
+    async compose(warn, stopping = () => false) {
       if (!options.dsh || profileContext === undefined) throw new Error('dsh-tui: this root was prepared without the DSH profile')
       // boot(): the warnings and errors logged while the tree starts, kept
       // for the startup report (a logger exporter on a throwaway context,
@@ -456,10 +459,12 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         await appBoot.mountRootInclude(ctx, rootConfig, appBoot.readProfilePatches(BIN_NAME, profileContext, profile), undefined, BIN_NAME)
         const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
         await loader()?.await()
-        // A surface disposed the tree while it was starting.
-        if (loader() === undefined) return
+        // A surface disposed the tree while it was starting, or is about to
+        // (a signal or /quit while composing): no audit, and above all no
+        // readiness (HMR would start its profile refresh on a dying tree).
+        if (loader() === undefined || stopping()) return
         await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
-        if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined) appReady.commit()
+        if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined && !stopping()) appReady.commit()
       } catch (error) {
         // boot() attaches the root config and the startup logs to an audit
         // failure; bin.js then saves the report under $DSH_HOME/logs. The

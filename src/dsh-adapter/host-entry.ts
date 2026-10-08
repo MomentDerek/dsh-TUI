@@ -32,7 +32,7 @@
  */
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
-import { markBoot } from '../utils/bootTrace.js'
+import { lastBootMark, markBoot } from '../utils/bootTrace.js'
 import { configuredBackend, entryKernel, hostEntryDshEnabled, hostProfile } from '../hostEntryRoute.js'
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
 import { HOST_NOTICE_ENV } from '../kernelPrefs.js'
@@ -41,6 +41,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
 import { HostComposeError, loadHostDsh, prepareHostRoot, type HostRoot } from './host-dsh.js'
 import { installEntrySignals, type ProcessExitSeam } from './process-exit.js'
+import { disposeRootSettled, trackComposition } from './root-dispose.js'
 
 markBoot('entry-start')
 // Diagnostic reports without the network section: DSH's native flock loader
@@ -173,8 +174,9 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // second signal forces the exit.
   installEntrySignals({
     seam: exitSeam,
-    disposeRoot: () => ctx.root.fiber.dispose(),
+    disposeRoot: () => disposeRootSettled(ctx),
     log: logRestartEvent,
+    where: lastBootMark,
   })
   // 2. Mount the screen. On DSH the slot tells the profile's dsh-tui row
   // that this screen exists (and receives the DSH side from the runtime).
@@ -208,14 +210,20 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // Rows activating after the first TUI row are guarded (third-party rows
   // land there), as on the profile path.
   armRootCapabilityGuard(ctx)
+  // A root dispose from here on (a signal, /quit) lets the Loader settle
+  // first: HMR deadlocks when disposed while its watchers start
+  // (./root-dispose.ts). Once one waits, the composition stops short.
+  const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
+  const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
   let composed = false
   try {
-    await root.compose(line => { slot.composeWarning?.(line) })
-    composed = true
+    await root.compose(line => { slot.composeWarning?.(line) }, () => composition.disposing)
+    composed = !composition.disposing
   } catch (error) {
     if (error instanceof HostComposeError) slot.composeFailed?.(error.original, error.logPath)
     else slot.composeFailed?.(error)
   } finally {
+    composition.done()
     releaseRootGuard?.()
   }
   markBoot('entry-compose-end')

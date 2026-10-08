@@ -176,6 +176,7 @@ async function readManifests(): Promise<readonly { readonly name: string; readon
   }
   return found
 }
+
 const HOST_DSH = 'dsh-adapter/host-dsh.ts'
 const HOST_CONTRACT = 'dsh-adapter/host-contract.ts'
 const HOST_CONTRACT_IMPORTERS = [HOST_DSH, 'dsh-adapter/contract.ts']

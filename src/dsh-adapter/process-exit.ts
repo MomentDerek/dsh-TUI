@@ -93,6 +93,8 @@ export interface EntrySignalOptions {
   readonly disposeRoot: () => Promise<unknown>
   /** restart.log / debug breadcrumb; must not write to the terminal. */
   readonly log?: (event: string, data?: Record<string, unknown>) => void
+  /** Where the process was when the signal came (a boot mark), for the log. */
+  readonly where?: () => string | undefined
 }
 
 /**
@@ -109,7 +111,7 @@ export function installEntrySignals(options: EntrySignalOptions): () => void {
     }
     first = signal
     const answer = options.seam.request?.({ kind: 'signal', signal }) ?? 'refused'
-    options.log?.('signal: received', { signal, answer })
+    options.log?.('signal: received', { signal, answer, ...(options.where === undefined ? {} : { at: options.where() }) })
     if (answer === 'supervising') {
       // The replacement decides; a second signal still forces this process.
       return
