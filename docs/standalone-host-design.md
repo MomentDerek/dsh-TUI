@@ -1510,13 +1510,15 @@ Hmr 进入 loading 后 0ms 释放——既断言直接 dispose 不 settle，也�
   `.finally(() => closeBackendResources())`（关闭 Codex 进程池）。入口无漏斗兜底（`host-entry.ts` 的
   `disposeRoot`）不调 `closeBackendResources`：那条路径上没有已加载的后端。
 
-**rebase 后的修补（未提交）**：`verify-settings-compat` 在新 main 上已修好，但它从 `plugin.ts` 源码抽
+**rebase 后的修补（已提交 `ebcc01fc`）**：`verify-settings-compat` 在新 main 上已修好，但它从 `plugin.ts` 源码抽
 `settingsSections.register(...)` 调用去 eval，本分支（2.3 的 rehome）把节对象提成了 `tuiSection` 声明，抽出来只剩
 `register(tuiSection)`——harness 改为一并抽取 `tuiSection` 声明。
 
-**Codex 内核与入口**：`entryKernel` 现在可能返回 `codex`。入口按「非 claude」处理：`runInEntry('dsh')` 组合 DSH
+**Codex 内核与入口**：`entryKernel` 现在可能返回 `codex`。~~入口按「非 claude」处理：`runInEntry('dsh')` 组合 DSH
 profile，plugin 按记住的内核打开 Codex——与 rebase 前 Codex 在 `dsh --profile` 里运行对等；`DSH_TUI_HOST_ENTRY_DSH`
-关闭时委托 `dsh --profile`。Codex 没有 Claude 那条「不组合 DSH」的快速路径，列为遗留。
+关闭时委托 `dsh --profile`。Codex 没有 Claude 那条「不组合 DSH」的快速路径，列为遗留。~~（**这段是错的，已修正**：
+「按非 claude 处理」实际是把内核降级成 DSH——分派传的是字面量 `'dsh'`，slot 一发布 runtime 的后端选择就被钉死，
+Codex 连可执行都没被探测过。修法与实测见下一节。）
 
 **验证**：`pnpm build`（185 项）；`verify-host-entry` 42、`verify-startup-adoption` 46、`verify-entry-process-exit`
 29、`verify-plugin-lifecycle` 56；CI 组 input-terminal 33/33；channel-ui、render-scroll、session-workspace 的失败
@@ -1524,8 +1526,56 @@ profile，plugin 按记住的内核打开 Codex——与 rebase 前 Codex 在 `d
 的临时 worktree 上同样失败（前三项单独跑两边都通过，只在组内红；`update-checksum` 是已知计时断言），与本分支无关；
 `accept-host-entry` 全量 **59/59**。
 
-**遗留**：Codex 内核走入口快速路径（不组合 DSH）未做；交接一节「已知坑」里的 main 存量失败清单已过时
-（`verify-settings-compat` 已在 main 修好），以本节为准。
+**遗留**：~~Codex 内核走入口快速路径（不组合 DSH）未做~~——2026-10-08 夜已做，见下一节；本节「Codex 内核与入口」
+那段对 Codex 的描述也已修正。交接一节「已知坑」里的 main 存量失败清单已过时（`verify-settings-compat` 已在 main
+修好），以本节为准。
+
+### 2026-10-08 夜 · 入口的 Codex 内核被静默降级（A）与进程池窗口（B）
+
+（写于交接一节之后。）rebase 把上游的原生 Codex 内核（#1352）带进 `entryKernel` 之后，独立入口对 Codex 的处理是错的：
+这一段记现象、机制、修法与实测。
+
+**A：静默降级。** 入口的分派是 `if (kernel === 'claude') … else if (hostEntryDshEnabled()) await runInEntry('dsh')`——
+字面量 `'dsh'` 把真实内核丢掉。`runInEntry` 的形参也叫 `kernel`，于是 DSH 分支照常发布 entry slot，`plugin.ts` 的
+`dshInEntry` 为真、`backendChoice` 恒取 `'dsh'`：`DSH_TUI_BACKEND`、`kernel.json`、以及入口自己塞进 `Config` 的
+`backend` 全部作废。实测（隔离 profile、`CODEX_EXECUTABLE` 指向假可执行）：boot marks 走 DSH 那一串
+（`entry-dsh-attach` / `-open` / `-owned`），屏幕是 `deepseek-flash · Max effort`，假 codex 日志 0 行——连可执行都
+没被探测过，而且界面上没有任何提示，属静默行为替换，违反本仓库「不静默回落、失败要响」的既有约定。
+`dsh --profile` 直启与 `DSH_TUI_HOST_ENTRY=0` 的委派路径今天对 Codex 正常，这是入口独有的回归。
+
+**修**（`src/hostEntryRoute.ts` 新增 `entryRoute()`；`src/dsh-adapter/host-entry.ts`）：把「内核」与「入口怎么跑它」
+解耦。只有 DSH 组合 profile（且仍受 `DSH_TUI_HOST_ENTRY_DSH` / `DSH_TUI_HOST_ENTRY` 约束），Claude 与 Codex 一样在
+入口自己的根上挂运行时、由运行时解析内核——只有入口进程读得到 profile patch 的 Config 行，在分派里再推一次会把它
+丢掉。`runInEntry(kernel: KernelBackendId)`，`noteHostUnavailable` 的类型随之放宽。
+
+**B：进程池窗口。** `src/backends/codex/rpc/hub.ts` 的 `registry` 是进程级 Map，`closeAllCodexHubs()` 全仓唯一调用点
+是退出漏斗 `disposeRootAndThen` 的 `.finally(closeBackendResources)`。入口另有一条不走漏斗的信号路径
+（`installEntrySignals` 在 `exitSeam.request` 缺席或被拒时调 `disposeRoot`，而 `request` 要到 runtime apply 之后才被
+填），落在这个窗口里的信号会绕过关池。今天窗口是空的——A 让 codex 后端永不加载、`closeCodexHubs` 恒为 `undefined`；
+A 一修好它立刻变真，所以两处一起修。入口的 `disposeEntryRoot` 在 `disposeRootSettled(ctx)` 之后 `.finally` 里用动态
+`import('./backends.js')` 调 `closeBackendResources()`（动态是为了不改入口的模块加载面与启动时序；`closeAllCodexHubs`
+清 registry，重复调用无害）。
+
+**实测**（三条 accept 用例 + 探针）：`codex-in-entry`（识别为 Codex、无 `entry-compose-*`、`initialize` 与
+`thread/start` 握手齐全、会话被采用并显示 `gpt-fixture`、`/quit` exit 0、终端恢复、无残留进程）；
+`codex-in-entry-pool-closed`（假 app-server 拒绝 EOF 自退，只有真关池才会 `stdin-eof` → +2s（`CLOSE_GRACE_MS`）→
+`SIGTERM`）；`codex-kernel-remembered`（`kernel.json` 路径，不带 `DSH_TUI_BACKEND`）。反向验证：在隔离 profile 里把
+入口补回旧两分支分派（`scripts/probes/codex-entry-probe.mjs --stale-route`），同源断言 2/5 红、假 codex 日志 0 行。
+假可执行是 `scripts/fixtures/codex/fake-app-server-child.ts`（真子进程、stdio JSON-RPC，协议大脑复用
+`scripts/lib/codex-fake-app-server.ts`）：被替换的只有二进制，探测、transport、hub、会话都是生产代码。
+两条实测事实值得记：SIGTERM 场景**不能**用来证明池被关（假 codex 与入口同属 PTY 进程组，先收到 SIGHUP，管道结束
+看起来也像干净退出），只有 HOLD 用例能；入口 `disposeEntryRoot` 里那条 `closeBackendResources` 构造不出可达窗口
+（`exitSeam.request` 在 apply 时被填、teardown 后清空，池则在 apply 之后才起），实测到的收敛路径全是漏斗的
+`disposeRootAndThen().finally(...)`——它是防御性冗余（消除注释里「那条路径上没有已加载的后端」这个错误前提），
+不要在别处把它写成主收敛路径。
+
+**验证**：`pnpm build`（91 项；`verify:source-hygiene` 先是红的——探针里注入了 Claude CLI 的可执行路径环境变量，
+触发了那条只对指定目录开例外的「foreign runtime environment variable」规则，探针移进 `scripts/probes/` 后绿）；
+`verify-host-entry` 48（+6 条
+`entryRoute`）、`verify-entry-process-exit` 31（+2）、`verify-startup-adoption` 46、`verify-settings-compat` PASS；
+`accept-host-entry` 的 `codex-*` 三例加 DSH 对照 `dsh-default-starting` 共 **4/4**。
+
+**仍未验**：真实 codex CLI（本机 PATH 无 `codex`）、`DSH_TUI_HOST_ENTRY_DSH=0` + Codex 的组合、模型与网络往返。
 
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
