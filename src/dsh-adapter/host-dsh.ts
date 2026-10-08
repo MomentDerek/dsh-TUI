@@ -2,8 +2,11 @@
  * The installed DSH host, loaded into this package's own entry
  * (docs/standalone-host-design.md 5.4 and Phase 2 "single root"): the entry's
  * Cordis root is built from the host's own `cordis`, gets the host's module
- * resolution before any TUI module loads, and — for the DSH kernel — has the
- * profile composed into it after the screen mounted. No `runProfile`, no
+ * resolution before any TUI module loads, and has a profile composed into it
+ * after the screen mounted — the whole profile on the DSH kernel
+ * (`HostRoot.compose`), and the light profile on the other kernels
+ * (`HostRoot.composeLite`, ./lite-profile.ts: this package's rows plus the
+ * profile's third-party bundles, without `dsh-base`). No `runProfile`, no
  * second root.
  *
  * Module identity. Everything comes from the `dsh` on PATH — by realpath, or
@@ -72,6 +75,7 @@ import type * as Cmdline from '@deepseek-ai/dsh-cmdline'
 import type * as HttpProxy from '@deepseek-ai/dsh-http-proxy'
 import type * as LaunchEnvironment from '@deepseek-ai/dsh-launch-environment'
 import { HOST_MODULES, HOST_PACKAGE } from './host-contract.js'
+import { liteProfileNotice, liteProfilePlan } from './lite-profile.js'
 import type { ProcessExitSeam } from './process-exit.js'
 
 /** The diagnostic prefix the host's own boot uses. */
@@ -331,6 +335,21 @@ export interface HostRoot {
    */
   compose(warn: Warn, stopping?: () => boolean): Promise<void>
   /**
+   * Compose the light profile into `ctx` (the non-DSH kernels only): this
+   * package's rows and the profile's third-party bundles, with `dsh-base`
+   * left out and the rows that only its services can activate disabled
+   * (./lite-profile.ts, design 5.7). What the screen is missing on those
+   * kernels is exactly this: the `tui*` services and the plugin rows, which
+   * the entry root holds but nothing composes in.
+   * Same contract as {@link compose}: rejects with the Loader's or the
+   * audit's error (wrapped, with the startup report saved), the tree stays up,
+   * and `stopping` short-circuits once the Loader settled.
+   * Throws when the root was prepared for DSH — that kernel composes the whole
+   * profile through {@link compose} — or when the profile has none of the
+   * excluded bundles (nothing to trim: the caller composes normally instead).
+   */
+  composeLite(warn: Warn, stopping?: () => boolean): Promise<void>
+  /**
    * Remove the fail-loud handlers (DSH kernel; a no-op otherwise). The entry
    * calls it once the TUI's process guard and crash funnel are up: from then
    * on they are the single owner of a fatal error (./process-exit.ts, design
@@ -383,15 +402,16 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     : undefined
   const ctx = new host.Context()
   if (disposeProxy !== undefined) ctx.effect(() => () => { void Promise.resolve(disposeProxy()).catch(() => undefined) }, 'dsh-tui host proxy')
-  // 4. boot() prelude (boot() itself always creates its own root).
-  if (options.dsh) {
-    ;(ctx as Context & { baseUrl?: string }).baseUrl = pathToFileURL(dirname(rootConfig)).href + '/'
-    ctx.provide('dshHomePath', host.homePaths.dshHomePath)
-    ctx.on('internal/update' as never, ((_config: unknown, _noSave: unknown, next: () => unknown) => {
-      Promise.resolve(next()).catch((error: unknown) => { ctx.logger.error(error) })
-    }) as never, { global: true, prepend: true } as never)
-    await ctx.plugin(host.Loader as never, undefined as never)
-  }
+  // 4. boot() prelude (boot() itself always creates its own root). Both
+  // kernels: the light profile mounts a Loader include on the non-DSH kernels
+  // too (`composeLite`), and its patch expressions read `dshHomePath` and
+  // resolve bare package names against `baseUrl` (./lite-profile.ts).
+  ;(ctx as Context & { baseUrl?: string }).baseUrl = pathToFileURL(dirname(rootConfig)).href + '/'
+  ctx.provide('dshHomePath', host.homePaths.dshHomePath)
+  ctx.on('internal/update' as never, ((_config: unknown, _noSave: unknown, next: () => unknown) => {
+    Promise.resolve(next()).catch((error: unknown) => { ctx.logger.error(error) })
+  }) as never, { global: true, prepend: true } as never)
+  await ctx.plugin(host.Loader as never, undefined as never)
   const shutdown = createProcessShutdown(() => ctx.fiber.dispose())
   const appReady = createAppReady()
   let uninstallFailLoud = (): void => undefined
@@ -483,6 +503,59 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         throw new HostComposeError(error, logPath)
       } finally {
         await diagnostics.fiber.dispose().catch(() => undefined)
+      }
+    },
+    async composeLite(warn, stopping = () => false) {
+      if (options.dsh) throw new Error('dsh-tui: this root was prepared for DSH; compose the whole profile instead')
+      const plan = liteProfilePlan(profile)
+      if (!plan.trimmed) throw new Error(`dsh-tui: the ${options.profile} profile has none of ${plan.excludedBundles.join(', ')} to leave out`)
+      // What was left out, on the caller's warning sink: the composition is
+      // otherwise silent, and the row list is the reviewable half of the
+      // decision (./lite-profile.ts). Before the mount, so nothing may write
+      // to the terminal yet.
+      const notice = liteProfileNotice(plan)
+      if (notice !== undefined) warn(notice)
+      // runProfile's profile facts, narrowed to the light bundle list: the
+      // patch expressions and the Loader resolve from the same profile
+      // directory, but `startedBundles` must name what is really composed.
+      const liteContext: AppBoot.ProfileContext = {
+        name: options.profile,
+        dir: profile.dir,
+        patchPath: profile.patchPath,
+        installAnchor: profileBoot.INSTALL_ANCHOR,
+        startedBundles: plan.bundles,
+        cwd: process.cwd(),
+        home: host.homePaths.resolveDshHome(),
+        overlays: [],
+        telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
+      }
+      // readProfilePatches over the trimmed layers, then the disable rows:
+      // patch entries in the profile's own shape, applied last the way the
+      // profile's user layer is (a static disable in cordis.patch.yml would
+      // also hit the DSH kernel's composition, so this must stay runtime-side).
+      const patches = appBoot.readProfilePatches(BIN_NAME, liteContext, { ...profile, layers: [...plan.layers] })
+      patches.push(...plan.disableRows)
+      try {
+        await appBoot.mountRootInclude(ctx, rootConfig, patches, undefined, BIN_NAME)
+        const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
+        await loader()?.await()
+        if (loader() === undefined || stopping()) return
+        await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
+      } catch (error) {
+        // Same failure contract as compose: the screen is up on these kernels
+        // too, so the report is saved and the path travels on the error.
+        // Difference from compose: no startup-log exporter, so `messages` is
+        // empty (the light composition has no DSH boot to log through).
+        if (error instanceof appBoot.StartupError) {
+          Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: [] }, enumerable: false, configurable: true, writable: true })
+        }
+        const logPath = await writeStartupReport(error, {
+          home: host.homePaths.resolveDshHome(),
+          version: hostVersion(host),
+          profile: options.profile,
+          ...(error instanceof appBoot.StartupError ? {} : { configurationPath: rootConfig, messages: [] }),
+        })
+        throw new HostComposeError(error, logPath)
       }
     },
   }
