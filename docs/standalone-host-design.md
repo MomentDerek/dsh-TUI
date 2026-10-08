@@ -1483,9 +1483,46 @@ init 内 `await running`，而 running 依赖的就绪只能由 init 之后的�
 （`repro-hmr.mjs`），报上游前需整理。`createProcessShutdown`（漏斗之前的 appExit）与 fail-loud 的释放未改走
 `disposeRootSettled`（都在组合前或已由漏斗接管）。`dispose: root disposed {ms}` 现在含等 Loader 的时间。
 
+### 2026-10-08 · rebase 到 upstream/main 85d49e53
+
+（写于交接一节之后。）本地 `main` 从 `ec48de22` 快进到 `upstream/main` 的 `85d49e53`（31 个提交：原生 Codex 内核
+#1352、回合中命令按命令执行 #1258、侧栏面板 #1354、context bar 对齐 #1363、winbash 预设 #1376 等），
+`feat/standalone-host` 的 24 个提交整体 rebase 上去。rebase 前的分支留在 `backup/standalone-host-pre-rebase-20261008`。
+
+**冲突与解法**：
+
+- `fdde6be2`（启动接管）：`compose.ts` 的 `subagentControl` 本分支已抽成 `subagentControlFor(session)`，main 在原
+  位加了 `messagingTool` 的原生信封——移植进 `subagentControlFor`；导入行两边合并（`WORKING_GATE_NOTICES` +
+  `markBoot`；`PromptInput` 的 `isBootSafeCommand` + `workingHoldOf`；`plugin.ts` 的 `closeBackendResources` +
+  `prepareBackendStartup` 与设置服务导入）；`run-ci-group.mjs` 两条新回归都保留。
+- `6936881d`（Phase 1 验收修复）：main 把落地页的 `node` 改名 `launchpad`，通知区 `launchpadNotice` 留在其前。
+- `32199cd7`（依赖 `@deepseek-ai/dsh`）：`ADAPTER.md` 的 `native.codex` 行与本分支三条边界行都保留；
+  `contributing{,.en}.md` 保留 Codex 协议行，上游验证线行用本分支（含 `host-contract.ts`）的版本；
+  `pnpm-lock.yaml` 取 main 的再 `pnpm install --lockfile-only` 重生成。
+- `901d0b24`（root dispose）：`disposeRootAndThen` 同时保留 `disposeRootSettled` 与 main 的
+  `.finally(() => closeBackendResources())`（关闭 Codex 进程池）。入口无漏斗兜底（`host-entry.ts` 的
+  `disposeRoot`）不调 `closeBackendResources`：那条路径上没有已加载的后端。
+
+**rebase 后的修补（未提交）**：`verify-settings-compat` 在新 main 上已修好，但它从 `plugin.ts` 源码抽
+`settingsSections.register(...)` 调用去 eval，本分支（2.3 的 rehome）把节对象提成了 `tuiSection` 声明，抽出来只剩
+`register(tuiSection)`——harness 改为一并抽取 `tuiSection` 声明。
+
+**Codex 内核与入口**：`entryKernel` 现在可能返回 `codex`。入口按「非 claude」处理：`runInEntry('dsh')` 组合 DSH
+profile，plugin 按记住的内核打开 Codex——与 rebase 前 Codex 在 `dsh --profile` 里运行对等；`DSH_TUI_HOST_ENTRY_DSH`
+关闭时委托 `dsh --profile`。Codex 没有 Claude 那条「不组合 DSH」的快速路径，列为遗留。
+
+**验证**：`pnpm build`（185 项）；`verify-host-entry` 42、`verify-startup-adoption` 46、`verify-entry-process-exit`
+29、`verify-plugin-lifecycle` 56；CI 组 input-terminal 33/33；channel-ui、render-scroll、session-workspace 的失败
+（`verify-activity-store`、`verify-compaction-progress`、`verify-splash-eggs`、`verify-update-checksum`）在新 main
+的临时 worktree 上同样失败（前三项单独跑两边都通过，只在组内红；`update-checksum` 是已知计时断言），与本分支无关；
+`accept-host-entry` 全量 **59/59**。
+
+**遗留**：Codex 内核走入口快速路径（不组合 DSH）未做；交接一节「已知坑」里的 main 存量失败清单已过时
+（`verify-settings-compat` 已在 main 修好），以本节为准。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
-> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成并提交；组合期间信号卡 5s 已查明并规避（未提交）；剩 2.7 遗留与观感决定。**
+> **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成并提交；组合期间信号卡 5s 已查明并规避（已提交）；2026-10-08 已 rebase 到 upstream/main 85d49e53；剩 2.7 遗留与观感决定。**
 >
 > **最新交接（Phase 1 实现完成，下一步是测试）。**本节开头这一块是现状；后面
 > 「（以下为 Phase 1 开工前的交接原文）」是历史记录，只在需要背景时看。
