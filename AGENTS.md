@@ -58,6 +58,7 @@ pnpm smoke                      # 通用无头屏幕组装冒烟
 
 - 厂商包按目录隔离：`@deepseek-ai/*` 只在 `src/dsh-adapter/`，`@anthropic-ai/*` 只在 `src/backends/claude/`；后端中立层 `src/agent/`、`src/channel/` 不 import 厂商包、`src/dsh-adapter/` 与 `src/backends/`；UI 层不 import `src/backends/`，从 `src/dsh-adapter/` 只取类型（存量值 import 的 allowlist 只减不增）。完整规则表见 [ADAPTER.md](ADAPTER.md)；`pnpm run verify:boundary` 扫描全部源码，越界即失败。
 - 校验版本线、peer 范围与 blessed 包清单在 `src/dsh-adapter/contract.ts`；本地检测到 drift 打警告，CI 上 `verify:contract` 直接失败。
+- 本包入口按宿主 realpath 加载已装 `dsh` 的模块：清单、复刻面与偏差的唯一来源是 `src/dsh-adapter/host-contract.ts`，加载只在 `host-dsh.ts`（对 `@deepseek-ai/*` 只 `import type`）；`verify:contract` 跑能力探测、假宿主回退与复刻指纹（`host-replica.snapshot.json`），版本线移动时要求复核。见 [ADAPTER.md](ADAPTER.md)「独立入口的宿主契约」。
 - 运行时或发布类型引用的 `@deepseek-ai/*` 框架包必须同时是 peer 与 dev 依赖（`verify:manifest-deps` 门禁）；仅测试/脚本使用的框架包只进 dev 依赖。
 - `cordis.patch.yml` 对官方行的干预已快照到 `patch-surface.snapshot.json`，改动需保持同步（`verify:patch-surface` 门禁）。
 

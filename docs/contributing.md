@@ -204,6 +204,10 @@ Cordis config
   - 新增此类引用时两组声明都要加、范围保持一致（verify:manifest-deps 门禁会校验）。
   - 仅测试/脚本使用的框架包（如 dsh-settings、dsh-tools、dsh-session-persistence-*）
     只需 dev 依赖，不要为它们声明 peer。
+  - 宿主 CLI `@deepseek-ai/dsh` 与独立入口取类型的宿主包（`src/dsh-adapter/host-contract.ts`
+    的 `HOST_TYPE_PACKAGES`）同样是 optional peer + dev：只为类型、能力探测与复刻指纹，
+    运行期由 `host-dsh.ts` 按宿主 realpath 加载宿主副本，绝不从本包解析（见 ADAPTER.md
+    「独立入口的宿主契约」）。
   - `dsh-working-activity` 等非宿主包仍是 runtime dependency。
   - 历史例外已消除：`dsh-working-activity@0.2.4` 及更早版本会经其 runtime
     dependency 把 `@deepseek-ai/schemastery`（连带 cosmokit）的真实拷贝带进
@@ -476,6 +480,10 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 - 保持帧输出缓冲、常规运行安静。TUI 活动期间不要加 `console.log` 或 stdout
   诊断。用 opt-in 的 stderr/调试路径（如 `DSH_TUI_DEBUG`）或既有
   `DSH_TUI_RENDER_LOG` 帧捕获。
+- 产品代码里的测试专用开关只有 `DSH_TUI_TEST_FAULT`（`src/dsh-adapter/test-faults.ts`，
+  给 `accept-host-entry` 注入崩溃/`appExit`）：只在显式设置该变量时生效，属内部开关，
+  不写进 README / configuration；`verify:boundary` 限定它只在该文件读取、只由入口与
+  runtime 装配。不要新增同类开关，确有必要时按同样方式登记。
 - 在成功、错误、中断与收尾时都保持 raw 模式、光标、alt-screen、同步输出、
   鼠标、焦点与终端查询的清理。
 - 避免渲染期无界集合或每 token/每帧分配。流式会话长命，本仓库对先前的 OOM
@@ -514,7 +522,7 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 | 新增或改动后端 | 新建 `src/backends/<id>/`（`manifest.ts` + 实现），并提交 `pnpm compile` 重新生成的 `src/dsh-adapter/backends.generated.ts`（入库的生成产物，过期会被 `verify-backend-registry` 判红）：构建期索引由 `scripts/gen-backend-index.mjs` 生成，**不要**手改 `src/kernelPrefs.ts`、`src/dsh-adapter/backends.ts`（目录与身份断言都按 ID 取项，新增目录不必同步任何回归）；边界门禁的厂商包/`native.<id>` 规则由 manifest 派生，但派生结果与 `scripts/verify-adapter-boundary.ts` 的 `EXPECTED_*` 快照**逐字比对**——声明了非空 `vendorPackages` 或 `nativeKey` 的后端必须把该快照与 `ADAPTER.md` 一并更新（门禁报错会写明），只声明 `vendorPackages: []`、不声明 `nativeKey` 的后端无需改动；`install` 是声明式配方（`{ executor, specifier, version }`），宿主侧执行器表在 `src/dsh-adapter/install/`（首版只有 `pnpm-profile-add`）：注册表查表派生"这个条目可不可装"，装的是你声明的 specifier，声明了宿主不认识的执行器只等于"没有安装面"（不抛错）；没有包可装的后端（驱动系统 CLI 的那类）就不声明；名字走 manifest（插件用 `kind:'literal'`，绝不进 i18n 字典）；模块级/进程级资源池声明 `unloadExport`，会话级资源仍归 `session.dispose()`；`id`、`label` 与 `install` 的边界见 `ADAPTER.md` 的「后端 manifest」；新增后端要把聚焦回归登记进 `scripts/run-ci-group.mjs`，注册表门禁是 `scripts/verify-backend-registry.ts`；用户可见取值（`--backend`、配置行）同步双 README 与 `docs/configuration{,.en}.md` |
 | Claude Agent SDK 版本 | `package.json` 的 optional peer 与 dev 两处精确版本、`pnpm-lock.yaml`、`src/backends/claude/contract.ts`（`VALIDATED_SDK_VERSION`/`VALIDATED_CLI_VERSIONS`）、`docs/claude-backend{,.en}.md` 的安装命令；`verify:claude-contract` 检查一致 |
 | Codex 协议/验证版本 | 用 `scripts/codex-protocol-sync.mjs` 正规生成类型、更新 `src/backends/codex/contract.ts`、方法表/fixture/脱敏与 live/replay 回归、双语 Codex 用户说明；不添加 Codex SDK npm 依赖，不拿最低版本当全部实验接口已验证 |
-| 上游验证线 bump | `src/dsh-adapter/contract.ts`、`src/dsh-adapter/oauth/`、`package.json` peer+dev 两组范围、`pnpm-workspace.yaml`、`.github/workflows/ci.yml` alpha-compat 的上游 SHA、`scripts/verify-{alpha-source,patch-surface,web-coexistence,upstream-contract}` 内的版本常量、`patch-surface.snapshot.json`、`ADAPTER.md`、`docs/user-guide.md`；步骤见 [ADAPTER.md](../ADAPTER.md) 升级流程 |
+| 上游验证线 bump | `src/dsh-adapter/contract.ts`、`src/dsh-adapter/host-contract.ts`（`HOST_REPLICA_VERSION`，复核复刻面后 `scripts/verify-host-contract.ts --snapshot` 重写 `host-replica.snapshot.json`）、`src/dsh-adapter/oauth/`、`package.json` peer+dev 两组范围、`pnpm-workspace.yaml`、`.github/workflows/ci.yml` alpha-compat 的上游 SHA、`scripts/verify-{alpha-source,patch-surface,web-coexistence,upstream-contract}` 内的版本常量、`patch-surface.snapshot.json`、`ADAPTER.md`、`docs/user-guide.md`；步骤见 [ADAPTER.md](../ADAPTER.md) 升级流程 |
 
 ## Git 与发布安全（Git And Release Safety）
 

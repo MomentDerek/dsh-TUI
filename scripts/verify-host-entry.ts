@@ -16,7 +16,10 @@
  *  - `findHostDsh` follows the first `dsh` on PATH to the installed host
  *    through an npm link, a pnpm cmd-shim script, a wrapper script, an npm
  *    `.cmd` shim's script path and a volta shim, and gives a reason when it
- *    cannot (a script starting something else, a binary, no dsh).
+ *    cannot (a script starting something else, a binary, no dsh);
+ *  - the launcher-path expansion with win32 path rules (`path.win32`, no
+ *    Windows needed): npm's `.cmd` (`%dp0%`, `%~dp0`) and `.ps1`
+ *    (`$basedir`, `$PSScriptRoot`) shims, drive-relative and UNC bases.
  *
  * The launcher half (bin/dsh-tui.js) is covered by verify-launcher.mjs §7.
  *
@@ -26,9 +29,9 @@ import './lib/fake-home.mjs'
 import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, win32 } from 'node:path'
 import { configuredBackend, entryKernel, hostEntryDshEnabled } from '../src/hostEntryRoute.js'
-import { findHostDsh, launcherScriptPaths } from '../src/dsh-adapter/host-dsh.js'
+import { findHostDsh, launcherScriptPaths, resolveLauncherPath } from '../src/dsh-adapter/host-dsh.js'
 import { stripResumeArgs } from '../src/sessionHistory.js'
 import { restartArgv } from '../src/update.js'
 
@@ -163,5 +166,24 @@ check('a volta shim resolves through volta\'s package image', (located(voltaBin,
 const nothing = located(binDir('empty-bin'))
 check('no dsh on PATH: no host, with the reason', 'reason' in nothing && nothing.reason === 'no dsh on PATH', nothing)
 check('the first dsh on PATH decides (a non-host first hides a host later)', 'reason' in findHostDsh({ PATH: [otherBin, npmBin].join(delimiter) }, 'linux'))
+
+// ── win32 launcher paths (expansion only: no Windows file system here) ─
+const npmPrefix = 'C:\\Users\\me\\AppData\\Roaming\\npm'
+const hostBin = win32.join(npmPrefix, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+const cmdShim = '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\r\n'
+const cmdScripts = launcherScriptPaths(cmdShim)
+check('win32: the .cmd shim yields its script path', JSON.stringify(cmdScripts) === JSON.stringify(['%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js']), cmdScripts)
+check('win32: %dp0% expands against the shim directory', resolveLauncherPath(cmdScripts[0]!, npmPrefix, 'win32') === hostBin, resolveLauncherPath(cmdScripts[0]!, npmPrefix, 'win32'))
+check('win32: %~dp0 (trailing separator) expands to the same file', resolveLauncherPath('%~dp0\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', npmPrefix, 'win32') === hostBin)
+const ps1Shim = '#!/usr/bin/env pwsh\n$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent\n\n$exe=""\nif ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) {\n  $exe=".exe"\n}\n$ret=0\nif (Test-Path "$basedir/node$exe") {\n  if ($MyInvocation.ExpectingInput) {\n    $input | & "$basedir/node$exe"  "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args\n  } else {\n    & "$basedir/node$exe"  "$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js" $args\n  }\n  $ret=$LASTEXITCODE\n}\nexit $ret\n'
+const ps1Scripts = launcherScriptPaths(ps1Shim)
+check('win32: the .ps1 shim yields its script path once', JSON.stringify(ps1Scripts) === JSON.stringify(['$basedir/node_modules/@deepseek-ai/dsh/lib/bin.js']), ps1Scripts)
+check('win32: $basedir with forward slashes resolves to the backslashed file', resolveLauncherPath(ps1Scripts[0]!, npmPrefix, 'win32') === hostBin, resolveLauncherPath(ps1Scripts[0]!, npmPrefix, 'win32'))
+check('win32: $PSScriptRoot expands like $basedir', resolveLauncherPath('$PSScriptRoot\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', npmPrefix, 'win32') === hostBin)
+check('win32: a script relative to the shim directory resolves against it', resolveLauncherPath('..\\lib\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', 'D:\\tools\\bin', 'win32') === 'D:\\tools\\lib\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js')
+check('win32: an absolute script on another drive stays as written', resolveLauncherPath('E:\\dsh\\lib\\bin.js', npmPrefix, 'win32') === 'E:\\dsh\\lib\\bin.js')
+check('win32: a UNC shim directory keeps its share', resolveLauncherPath('%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js', '\\\\server\\share\\npm', 'win32') === '\\\\server\\share\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js')
+check('win32: another variable (%APPDATA%) is not followed', resolveLauncherPath('%APPDATA%\\npm\\bin.js', npmPrefix, 'win32') === undefined)
+check('posix: backslashes in a unix launcher become separators', resolveLauncherPath('$basedir\\..\\lib\\bin.js', '/opt/dsh/bin', 'linux') === '/opt/dsh/lib/bin.js')
 
 console.log(`\nverify-host-entry: ${passed} checks passed`)

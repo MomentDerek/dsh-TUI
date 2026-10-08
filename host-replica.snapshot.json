@@ -1,0 +1,61 @@
+{
+  "hostVersion": "0.2.0-rc.2",
+  "replicas": {
+    "process-shutdown": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "createProcessShutdown",
+      "file": "lib/profile-boot-*.js",
+      "sha256": "ce47a6d7e5b06854f2db14378626efa6a973467327ed57fbeac12318fe3f2243",
+      "lines": 51
+    },
+    "process-shutdown-timeout": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "PROCESS_SHUTDOWN_TIMEOUT_MS",
+      "file": "lib/profile-boot-*.js",
+      "sha256": "dfcd03e5f76b98b6ae638e75f339934208894186dac8b419b05372f1d2460862",
+      "lines": 1
+    },
+    "app-ready": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "createAppReady",
+      "file": "lib/profile-boot-*.js",
+      "sha256": "1a89918112b8ae9e0654fbcc35cd1f790648c66d4cf5589dfc16d241860edd92",
+      "lines": 22
+    },
+    "compose-profile": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "composeProfile",
+      "file": "lib/profile-boot-*.js",
+      "sha256": "c0309d7f2a6410bf62d9d513a2e7d7fe762522d7f41524762b92264b41a46ee8",
+      "lines": 12
+    },
+    "run-profile": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "runProfile",
+      "file": "lib/profile-boot-*.js",
+      "sha256": "d28b3dfe43ad07b0bb4f86c2ce2805256cea19d9c6ea0abbabb6efc2ca2d9553",
+      "lines": 73
+    },
+    "boot": {
+      "package": "@deepseek-ai/dsh-app-boot",
+      "symbol": "boot",
+      "file": "lib/index.js",
+      "sha256": "b40db1e6c6eb0c84409c44c34da81d6a5477034cde43052999922a7bb7b7f5dc",
+      "lines": 58
+    },
+    "startup-report": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "reportStartupFailure",
+      "file": "lib/bin.js",
+      "sha256": "cfea5edc69f411fa9d50b7600ec6144d020df8124e5c8f9ed95183afa55d5ba4",
+      "lines": 37
+    },
+    "run-cli": {
+      "package": "@deepseek-ai/dsh",
+      "symbol": "runCli",
+      "file": "lib/bin.js",
+      "sha256": "ef7855a17663da628338799f3953f3f6a90928bb37f968edb85a5a6535271de5",
+      "lines": 45
+    }
+  }
+}
