@@ -7,11 +7,25 @@
 `@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。2026-10-06 修订分期：Phase 1 只做「DSH 无关」，
 TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 
+**2026-10-09 维护者裁定两项**（详见第 10 节与实施记录「2026-10-09」一节）：
+
+1. **定位**：改写成「拥有入口的终端应用」；**DSH 仍是首要适配目标与首方后端**，只因 DSH 自身的
+   启动成本（1.2）而以独立后端形态存在。
+2. **插件扩展**：Claude 内核下第三方 Cordis 插件扩展的缺失**不可接受**；轻量 profile 由「可选」
+   转为 Claude 内核路径的必备件，纳入 Phase 2（5.7、6.2、第 7 节）。
+
+**下一步（可直接接手）**：吸收上游 #1380 的后端注册表（`main` `bc890963` → `feat/standalone-host`
+`b2e1a8b2`；10 文件 18 个冲突块 + 7 个被删符号的连带断裂 + 三处接缝统一）。完整清单、验收命令与
+开工前待拍板项见实施记录「2026-10-09 · 下一步：吸收上游 #1380」。
+
 ## 一句话
 
 dsh-TUI 从「DSH 的一个 Cordis 插件」变成「自己拥有入口与组装根的终端应用」：先挂界面与
-后端中立的 channel 核心，再把后端打开；DSH 只是后端之一，按需在进程内加载，Claude 内核
-完全不加载 DSH。
+后端中立的 channel 核心，再把后端打开。**DSH 仍是首要适配目标与首方后端**——`native.dsh`
+与 DSH specialist 能力保持首方特权不变（第 10 节第 9 条）——但它不再是把 TUI 装进去的那层
+宿主：它像 claude / codex 一样作为后端之一按需在进程内加载，原因是 DSH 自身的启动成本
+（1.2）。Claude 内核不组合 dsh-base；它仍组合一个只装本包行与第三方插件的轻量 profile，
+第三方插件扩展在两个内核下都保持可用（5.7）。
 
 **整个方案只有一道门闩：channel 核心能在没有 Cordis `ctx` 的情况下构造。**Phase 0
 做的就是这件事；它做不下来，方案 B 就停在 Phase 0，不影响现状。
@@ -41,8 +55,10 @@ channel，把首帧从约 2 秒提前到约 0.6–0.7 秒。
   逐项手写；设置、落地页、内核、品牌的判定在 preload 里各算一遍，与 plugin 保持一致。
   PR #1216 在 main 走了一周后 rebase，需要补 22 个端口、4 个 Schema 字段、一处 kernel
   切换交接冲突（详见 PR 记录）。main 的改动越快，这笔税越高。
-- **Claude 内核白等 DSH。**Claude 后端（`src/backends/claude/`）不依赖 Cordis，但进程
-  仍要先组合完整个 DSH profile（约 1–2 秒、约 750 个模块），才轮到它启动 CLI。
+- **Claude 内核白等 dsh-base。**Claude 后端（`src/backends/claude/`）不依赖 Cordis，但进程
+  仍要先组合完**整份** DSH profile（约 1–2 秒、约 750 个模块，其中主体是 dsh-base），才轮到
+  它启动 CLI。轻量 profile（5.7）省下的是 dsh-base 那一段：Cordis 与本包的行仍要组合，
+  所以收益是「少组合」而不是「不组合 Cordis」，能省多少由 Phase 2 实测。
 - **交接是两套状态机的对接。**启动态 channel 与真实 channel 是两个对象，靠
   `deferred.ts` 迁移监听；任何一方新增行为都要在另一方补中性值。
 
@@ -73,10 +89,12 @@ channel，把首帧从约 2 秒提前到约 0.6–0.7 秒。
 目标：
 
 - 首帧不依赖任何后端：界面在进程启动后立即以**真实** channel 核心挂载。
-- Claude 内核启动时不加载 DSH。
+- Claude 内核启动时不加载 dsh-base（DSH 的核心行）；它仍组合一个轻量 profile 承载第三方
+  插件（5.7）。
 - 启动期没有第二套 channel：「启动中」是一个尚未就绪的会话，就绪时走 channel 现有的
   接管路径。
-- 第三方 Cordis 插件现有的 `tui*` 扩展能力在 DSH 内核下保持可用。
+- 第三方 Cordis 插件现有的 `tui*` 扩展能力**在两个内核下都保持可用**（2026-10-09 裁定：
+  Claude 内核下的缺失不可接受，见 5.7）。
 
 非目标：
 
@@ -106,7 +124,9 @@ bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析——保留�
 
 上图是 Phase 2 之后的终态。Phase 1 的入口不建 TuiHost：它自己 `new Context()` 持有一个裸
 Cordis 根，`plugin.ts` 的 `apply` 原样挂在上面，`tui*` 服务照旧住在这个根里；Claude 内核下
-没有 DSH profile，也就没有桥接行。
+没有 DSH profile，也就没有桥接行。**profile 里声明的第三方插件因此不进这个根——这正是
+2026-10-09 裁定要补的缺口**：Claude 内核需要一个轻量 profile（5.7）把本包的行与第三方插件
+组合进来；终态下它是往同一个根里装、还是另建一个根再桥接，Phase 2 定。
 
 依赖方向（终态）：界面 → ports；channel 核心 → agent + ports + **TuiHost 接口**；Cordis 只出现在
 `src/dsh-adapter/`（DSH 后端与桥接行）。
@@ -287,7 +307,8 @@ app-boot `composeEntries` 读（预载分支已验证，约 85ms），或随设�
 
 `dsh-tui.*` 的值（fullscreen、diffLayout、sidePanel、shortcuts…）在 0.1.7+ 宿主下住在
 profile 的 Config 行里，`/settings` 通过 DSH 的 `settings.mutate`（带版本号的围栏写入）
-写回。Claude 内核不加载 DSH 时，**读**可以借 app-boot 组合，**写**没有去处。
+写回。Claude 内核不组合 dsh-base 时（DSH 的 `settings` 行在其中），**读**可以借 app-boot 组合，
+**写**没有去处。
 
 - **(a) TUI 自有设置文件（2026-10-06 选定）。**如 `~/.dsh-tui/settings.json`，首次启动从 profile
   Config 一次性导入，之后 `dsh-tui` 行不再拥有这些键（Config 里残留的值作为只读的旧层，
@@ -310,9 +331,25 @@ DSH 内核下 `/settings` 改写的目标从 `settings.mutate` 切到本文件�
 - 第三方插件今天从 `@deepseek-harness-tui/dsh-tui/extensions` 等子路径拿类型，
   `inject: [tuiPanels, …]` 拿服务。方案 B 下注册表归 TuiHost，桥接行以**同名服务**把它们
   注册进 Cordis，插件代码不需要改。
-- 插件只在 DSH 内核下存在（它们是 Cordis 插件）。**这是相对今天的倒退**：今天 Claude
-  内核也跑在 `runProfile` 里，第三方主题、面板等插件照样作用于界面；Phase 1 之后 Claude
-  内核不加载 DSH，这些扩展就没有了。见 6.2 与第 10 节。
+- **插件在两个内核下都存在。**它们是 Cordis 插件，需要一个 Cordis 根。今天 Claude 内核也跑在
+  `runProfile` 里，第三方主题、面板等插件照样作用于界面；Phase 1 之后 Claude 内核不再组合那份
+  profile，这些扩展就没有了——**2026-10-09 裁定：这个缺失不可接受**。Claude 内核路径因此必须组合一个
+  **轻量 profile**：只装本包的行与 profile 依赖清单里声明的第三方插件，不装 dsh-base（DSH 的
+  agent / llm / tools / workspace 等核心行）。见 6.2 与第 7 节。
+- **缺口的确切位置。**Phase 1 的入口自己持有一个裸 Cordis 根（第 3 节），`tui*` 服务住在里面，
+  但 profile 里声明的第三方插件不在其中。轻量 profile 补的是这一块，不是「TUI 缺一个 Cordis
+  根」——根已经有了，缺的是把插件清单组合进来。
+- **首帧不受影响。**profile 在首帧之后加载，插件的 `tui*` 注册走运行期热加入（本节末条已要求
+  注册表支持运行期增删）。
+- **实现形状待 Phase 2 拍。**候选是：往 Phase 1 那个裸根里按清单装配本包的行与第三方插件；或走
+  app-boot 的轻量组合另建一根，再把服务桥接过去（5.1 的桥接行在单根下的必要性已作废，见该节
+  修订注）。判据是模块身份与「插件注册到了哪个根」，`verify:boundary` 与插件服务解析跟着定。
+- **成本待测。**省掉的是 dsh-base 的组合段；轻量 profile 自身的组合成本要计入 Claude 内核的
+  首帧对比基线（1.2）。
+- **与上游插件契约的关系（待对齐）。**本包的注册表归属（TuiHost / Cordis）、grants 与
+  `apiVersion` 会被上游的插件体系冻结看见（上游 issue #1247 要求把「接口 / 清单 / 管理器 /
+  市场 / 兼容性」一体设计后再实现）。归属形状要在 Phase 2 与那份契约对齐，不要先冻在
+  「注册表住在 Cordis 树里」上。
 - 决策事件（`tui/input`、`tui/session-switch` 等）：TuiHost 的派发接口在没有处理器时
   直接放行；DSH 加载后，桥接行把 Cordis 的 `ctx.on` 处理器与授权存储接进来。启动期
   （DSH 未就绪）的输入本就不发送，不存在绕过拦截的窗口。
@@ -357,9 +394,10 @@ IPC 协议，维护成本比手写镜像更高。
 
 ### 6.2 其他
 
-- Claude 内核下没有第三方 Cordis 插件扩展（见 5.7），相对今天是用户可见的倒退。后续可选：
-  Phase 2 之后给 Claude 内核提供一个只组合本包行、不组合 dsh-base 的轻量 profile，让界面
-  插件回来；是否值得做取决于插件生态的实际使用面。
+- ~~Claude 内核下没有第三方 Cordis 插件扩展（见 5.7），相对今天是用户可见的倒退。后续可选：给
+  Claude 内核提供一个只组合本包行、不组合 dsh-base 的轻量 profile~~ **2026-10-09 裁定：不可
+  接受**。轻量 profile 由「可选」转为 Claude 内核路径的**必备件**，纳入 Phase 2（5.7、第 7 节）；
+  Phase 1 的现状因此是一条待闭环的已知缺口，不是被接受的限制。
 - 内核在一次进程里只接管一次；运行中切换内核仍然要重启（`/kernel`），与今天一致。
 - `dsh --profile dsh-tui` 直接启动（不经本包 entry）是否继续支持，是决定项（第 9 节）。
   继续支持就意味着桥接行在「没有 TuiHost」时要自己建 TuiHost 并渲染，保留一条兼容路径。
@@ -371,8 +409,8 @@ IPC 协议，维护成本比手写镜像更高。
 | 期 | 内容 | 验收 | 回滚 |
 | --- | --- | --- | --- |
 | 0 | TuiHost 接口，`cordisTuiHost(ctx)` 实现；channel 核心改收 TuiHost；**测基线**：dsh / claude 两个内核从进程启动到首帧、到可发送的时间 | 行为零变化（现有 CI 组全过）；`verify:boundary` 新规则：`channel/core/` 不 import Cordis；基线数字写进本文 | 纯重构，直接 revert |
-| 1 | 设置存储落地（5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入）；本包 entry——自持裸 Cordis 根，`plugin.ts` 的 `apply` 原样挂载（**不建 TuiHost**，见 5.1 修订）；占位会话 + `adoptStartup`（1b）；Claude 内核走 entry、不加载 DSH。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
-| 2 | TuiHost（5.1，由 Phase 0 的 `ChannelHost` 补全）与 Cordis 无关的组装根；DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；第三方插件示例（主题、面板、决策拦截）在新路径下通过；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
+| 1 | 设置存储落地（5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入）；本包 entry——自持裸 Cordis 根，`plugin.ts` 的 `apply` 原样挂载（**不建 TuiHost**，见 5.1 修订）；占位会话 + `adoptStartup`（1b）；Claude 内核走 entry、不加载 dsh-base（**profile 里声明的第三方插件此时不进这个根，是 2026-10-09 裁定要求 Phase 2 闭环的缺口**，见 5.7）。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
+| 2 | TuiHost（5.1，由 Phase 0 的 `ChannelHost` 补全）与 Cordis 无关的组装根；DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；**Claude 内核的轻量 profile（5.7，把本包行与第三方插件组合进来）**；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；**第三方插件示例（主题、面板、决策拦截）在两个内核下都通过**；轻量 profile 的组合成本计入 Claude 内核基线；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
 | 3 | 删除 `src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js`；决定直启路径去留；改写 AGENTS.md 与架构文档 | 构建门禁与全部 CI 组 | — |
 
 Phase 1 是收益最大、风险最小的一期。分期于 2026-10-06 按 spike 结果修订：原 Phase 1 的
@@ -403,15 +441,33 @@ TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设
 
 ## 10. 需要维护者决定
 
-1. 方案方向本身：AGENTS.md 开头的「零核心改动、纯插件挂载的终端界面插件」定位会变成
-   「拥有入口的终端应用，DSH 是后端之一」。这一句要改写。
+1. ~~方案方向本身：AGENTS.md 开头的「零核心改动、纯插件挂载的终端界面插件」定位会变成
+   「拥有入口的终端应用，DSH 是后端之一」。这一句要改写。~~ **已裁定（2026-10-09）**：
+   首句从「终端界面插件」改写为「拥有入口的终端应用」形态；**DSH 仍是首要适配目标与首方
+   后端**（`native.dsh` 与 specialist 能力的首方特权不变，见第 9 条），只因 DSH 自身的启动
+   成本（1.2）而以独立后端形态存在。AGENTS.md 已按下面这段落地（`@deepseek-ai/*` 的 import 边界
+   不在首句重复，见 AGENTS.md「上游边界与契约」）：
+
+   > dsh-TUI 是 DeepSeek Harness 的终端界面应用（`@deepseek-harness-tui/dsh-tui`），零核心改动、
+   > 只消费 DSH 的公开导出。DSH 是首要适配目标与首方后端；本包正从「DSH 的插件」演进为「拥有
+   > 自身入口与组装根的终端应用」，届时 DSH 与 claude / codex 一样作为后端按需在进程内加载。
+   > Agent、会话、模型、工具、持久化与策略域仍然由 DeepSeek Harness 拥有，本包只消费它们。
+   > 改动前先读 [docs/contributing.md](docs/contributing.md)（本仓库共享开发契约的权威文本）
+   > 与 [ADAPTER.md](ADAPTER.md)（上游边界与契约）；整体结构见 [docs/architecture.md](docs/architecture.md)；
+   > 独立宿主的方案、分期与非目标见 [docs/standalone-host-design.md](docs/standalone-host-design.md)。
+
+   改写范围（**2026-10-09 已同步落地**）：AGENTS.md 首段（`CLAUDE.md` 是指向它的符号链接，改真身）；
+   README / README_ZH 的定位句；docs/architecture.md 与 architecture.en.md 的开头定位说明（写明
+   文档描述的是当前形态，演进方向指向本文）；scripts/make-installer-bundle.mjs 的使用说明文案。
 2. ~~设置存储：5.6 的 (a) 还是 (b)。~~ 已定 (a)（2026-10-06）。
 2a. ~~分期修订（TuiHost 推迟到 Phase 2）。~~ 已接受（2026-10-06）。
 3. DSH 内核走 D1（扩展晚挂、预载整体删除）还是 D2（DSH 保留预载）。
 4. `dsh --profile dsh-tui` 直启路径是否继续支持。
 5. PR #1216 先合入还是关闭（第 8 节）。
-6. 是否接受 Claude 内核在 Phase 1 之后失去第三方 Cordis 插件扩展（5.7、6.2），或要求轻量
-   profile 先行。
+6. ~~是否接受 Claude 内核在 Phase 1 之后失去第三方 Cordis 插件扩展（5.7、6.2），或要求轻量
+   profile 先行。~~ **已裁定（2026-10-09）：不接受**，要求轻量 profile（只组合本包行与第三方
+   插件、不组合 dsh-base）纳入 Phase 2（5.7、6.2、第 7 节）。实现形状（往 Phase 1 的裸根里
+   装配，还是轻量组合另建一根再桥接）在 Phase 2 定，见 5.7。
 7. `@deepseek-ai/dsh/profile-boot` 加入 blessed 包与 peer 依赖。（2026-10-07：已与维护者沟通，`@deepseek-ai/dsh` 成为依赖，2.6 落地。）
 
 ## 实施记录
@@ -1441,7 +1497,8 @@ SIGTERM / SIGINT / SIGHUP 监听器——都以该信号结束、插件监听器
 打点定位。
 
 **遗留**：1. 缺 admission loader（读 `dsh-plugin.json`、调 `getHostAdmission`），第三方插件在任何路径上都没有
-身份；2. profile 路径上运行时 apply 前注册的面板不进启用列表；3. 组合期间信号偶发卡 5s；4. 入口首帧主题闪一次；
+身份；2. profile 路径上运行时 apply 前注册的面板不进启用列表；3. ~~组合期间信号偶发卡 5s~~（**已解决**：根因是上游
+`dsh-hmr` 的 dispose 死锁，本包侧规避，见「组合期间信号偶发卡 5s」「2026-10-08 夜」两节）；4. 入口首帧主题闪一次；
 5. `tuiPluginHost` 软探测文档与实际矛盾；6. 带点 component id 回落 `act*`；7. 「只放行官方行」的更严方案未做。
 1、2、5、6 两条路径都有，不是方案 B 引入的。
 
@@ -1577,6 +1634,128 @@ A 一修好它立刻变真，所以两处一起修。入口的 `disposeEntryRoot
 
 **仍未验**：真实 codex CLI（本机 PATH 无 `codex`）、`DSH_TUI_HOST_ENTRY_DSH=0` + Codex 的组合、模型与网络往返。
 
+### 2026-10-09 · 维护者裁定：定位与插件扩展（轻量 profile 转为必备）
+
+**背景。** 本分支 2026-10-08 rebase 到 `upstream/main 85d49e53` 之后，上游 `main` 前进了一个实质
+提交：`refactor(backend): move the backend set to a runtime registry driven by manifests`（PR #1380，
+Closes #1379）。它把「非 DSH 后端」从硬编码闭集（`KERNEL_IDS` / `KERNEL_INFO` / `kernelDisplayName` /
+`BACKEND_LOADERS` / launcher 副本 / 门禁规则表）换成 manifest 纯数据 + 构建期生成索引 + 运行时注册表。
+两条线因此需要重新对表：本方案动的是**入口与宿主归属**，#1379 动的是**后端集合的数据化**，维度正交；
+但共享中间层（`kernelPrefs.ts`、`dsh-adapter/backends.ts`、`plugin.ts`、`components/kernelCatalog.ts`、
+`bin/dsh-tui.js`、边界门禁）被 #1380 整体替换，合并清单见下一节「下一步：吸收上游 #1380」。
+
+**裁定 1（定位）。** AGENTS.md 首句改写为「拥有入口的终端应用」（**已落地**，原文见第 10 节第 1 条）；
+DSH 仍是**首要适配目标与首方后端**，只因自身启动成本（1.2）而以独立后端形态存在。据此 `native.dsh` 与 DSH
+specialist 能力的首方特权不变：本方案不主张**能力面**对称化，与 #1379 非目标第 3 条（不把 DSH 降级
+为普通插件）不冲突——改的是谁 spawn 谁、注册表归谁，不是公开面能表达什么。
+
+**裁定 2（插件扩展）。** Claude 内核下失去第三方 Cordis 插件扩展**不可接受**。轻量 profile（只组合
+本包的行与 profile 依赖清单里声明的第三方插件，不组合 dsh-base）由「可选」转为 Claude 内核路径的
+**必备件**，纳入 Phase 2。Phase 1「Claude 内核走 entry、不加载 DSH」的表述随之精确化为「不加载
+dsh-base」——裸 Cordis 根与 `tui*` 服务本来就在（第 3 节），缺的是把 profile 声明的第三方插件组合
+进来（5.7）。
+
+**本次同步修订的章节。** 状态行、「一句话」、1.2（收益精确化为「少组合 dsh-base」，不是「不组合
+Cordis」）、第 2 节目标（插件能力改为两内核共用；Claude 不加载 dsh-base）、第 3 节 Phase 1 说明
+（点出插件缺口的位置）、5.7（缺口位置、实现形状待定、成本待测、与上游插件契约的对齐）、6.2
+（从「已接受的倒退」改为「待闭环缺口」）、第 7 节（Phase 1 验收措辞；Phase 2 增列轻量 profile 与
+「两个内核下都通过」的插件验收）、第 10 节第 1 与第 6 条（标记已裁定并附拟定稿）、「2026-10-06
+交接」的待决清单。
+
+**待办（Phase 2 之内）。**
+
+1. 定轻量 profile 的实现形状：往 Phase 1 那个裸根里按清单装配本包行与第三方插件，还是走 app-boot
+   的轻量组合另建一根再桥接。判据是模块身份与「插件注册到了哪个根」。
+2. 实测轻量 profile 的组合成本，与 dsh-base 省下的部分一起进 Claude 内核的首帧对比基线。
+3. 与上游插件契约对齐注册表归属（上游 issue #1247 要求「接口 / 清单 / 管理器 / 市场 / 兼容性」
+   一体设计后再实现；#1380 的 `unloadExport` 记账与 `parseBackendChoice` 两段式解析是已落地的邻居
+   口径，归属形状别先冻在「注册表住在 Cordis 树里」上）。
+4. ~~AGENTS.md 首段改写落地，README / README_ZH / docs/architecture.md 的定位句同步。~~
+   **2026-10-09 已落地**：AGENTS.md 首段、README / README_ZH 定位句、architecture.md 与
+   architecture.en.md 的开头定位说明、安装包使用说明文案。
+
+**本轮范围。** 定位改写与设计文档修订都已落地（AGENTS.md / README / README_ZH /
+architecture(.en).md / scripts/make-installer-bundle.mjs / 本文）；**未动 `src/` 源码**，未做
+吸收 #1380 的代码级合并（符号迁移与三处接缝统一）。文档侧验证：
+`verify-source-hygiene` 与 `verify-guide` 均通过。
+
+### 2026-10-09 · 下一步：吸收上游 #1380 的后端注册表（新会话从这里接手）
+
+**方向与前提。** 合并方向是 `main` → `feat/standalone-host`（`bc890963` → `b2e1a8b2`，merge-base
+`85d49e53`）。理由：#1380 已在 main 定案，动的是共享中间层；本分支 29 个提交是上层（入口与宿主
+归属）。反向合并没有意义。
+
+**接手第一件事。** 本分支工作区有 7 个未提交的文档改动（定位改写 + 设计文档修订，见上一节），
+先 commit 或 stash——不要在脏树上做合并。
+
+**体量。** `git merge-tree --write-tree --name-only feat/standalone-host main` 报 10 个文件、18 个冲突块：
+
+| 文件 | 冲突块 |
+| --- | --- |
+| `src/dsh-adapter/plugin.ts` | 6（后端选择段与退出漏斗） |
+| `src/dsh-adapter/backends.ts` | 2 |
+| `scripts/verify-adapter-boundary.ts` | 2 |
+| `scripts/verify-startup-argv.mjs` | 2 |
+| `src/update.ts`、`src/screens/Chat.tsx` | 各 1 |
+| `docs/configuration.md`、`configuration.en.md`、`guide/dsh-tui-guide/configuration{,.en}.md` | 各 1（后端 id 表述） |
+
+**比冲突块更重的：无冲突区的符号断裂。** #1380 删掉了 7 个符号（`KERNEL_IDS`、`KERNEL_INFO`、
+`isKernelId`、`kernelDisplayName`、`normalizeBackend`、`BACKEND_LOADERS`、`closeBackendResources`），
+而 git 只在同行重叠时报冲突——这些引用会在合并结果里以**编译错误**的形式出现。已被 main 自己改造过
+的调用点没问题；**本分支独有文件有 3 处必然红**（行号基于 `b2e1a8b2`）：
+
+- `src/hostEntryRoute.ts:14,40,51` —— `isKernelId` → `parseBackendId`（语法半）+ 成员判断（注册表半）。
+- `src/dsh-adapter/host-entry.ts:143-144` —— 动态 import `closeBackendResources` → `unloadBackends`。
+- `scripts/verify-entry-process-exit.ts:275` —— 正则断言上面那两行的文本，要同步改。
+- 另有 `src/dsh-adapter/plugin.ts:618` 的 `configured: config.backend` 要与「`Config.backend` 改回
+  普通 `string`」联动（main 的 `plugin.ts` 已按 `parseBackendId` 处理，取 main 版即可）。
+
+**三处接缝要人工统一（解冲突解决不了）。**
+
+1. **启动会话句柄**：main 的 `backendStart` + `resumedSessionId`（`bootSessionId` 取「实际打开者」）↔
+   本分支的 `prepareBackendStartup()` / `start()` + `deferBackendOpen`。统一形状：保留 `prepare/start`，
+   让 `start()` 的返回值带上 `resumedSessionId`；`launchSessionId` 统一为 `effectiveSessionId`。
+2. **退出漏斗**：main 的 `unloadBackends()`（只关真的 import 过的条目）↔ 本分支的
+   `disposeRootSettled(...).finally(closeBackendResources)`。统一形状：`.finally(() => unloadBackends())`，
+   并把 `host-entry.ts` 的信号路径一并改掉——这正是本文「B：进程池窗口」那条的接口级收口。
+3. **重启/恢复溯源**：main 的 `RESUME_BACKEND_ENV` + `resolveResumeTarget`（管后端来源）↔ 本分支的
+   `restartArgv()` + `HOST_ENTRY_PATH_ENV`（管入口路由）。两者互补、可并存：`restartChildEnv` 里
+   `delete childEnv[RESUME_BACKEND_ENV]` 与 `[LAUNCH_PROMPT_SENT_ENV]: '1'` 同时保留；
+   `TuiRestartOptions.backendName` 由注册表的短名喂给 `formatHandoffNotice`。
+
+**门禁层不许各自覆盖。** `verify-adapter-boundary.ts` 的 manifest 派生规则（`vendorPackages` /
+`nativeKey` → `EXPECTED_*` 快照）与本分支的 host-only / `DSH_TUI_TEST_FAULT` 规则必须**两套共存**：
+任一侧覆盖另一侧，要么放宽边界（第四个后端可凭空补 `native.*` 规则），要么丢掉独立入口的宿主规则。
+`verify-startup-argv.mjs` 同理：mock 环境常量取并集，`backendStart` 与 `channel.ready` 并存。
+`bin/dsh-tui.js` 的自动合并**必须逐 hunk 复核**——main 的 8 处与本分支的 3 处落在同一批 backend/argv
+解析段，行不重叠但语义相邻。
+
+**验收。**
+
+```sh
+pnpm compile                          # 含 gen-backend-index.mjs；生成索引入库
+pnpm build                            # 91 道门禁
+node --import tsx/esm scripts/verify-backend-registry.ts
+node --import tsx/esm scripts/verify-startup-argv.mjs
+node scripts/verify-safe-mode.mjs     # launcher 的 --backend 端到端探针
+node scripts/verify-update.mjs
+node --import tsx/esm scripts/verify-host-entry.ts
+node scripts/accept-host-entry.mjs    # PTY 验收
+```
+
+真实 TTY 演练不可省：#1380 自认「Real TTY flows were not exercised」，而本分支改的正是启动链。
+
+**开工前要拍板的两点。**
+
+1. `KernelBackendId` 的迁移：#1380 让 `Config.backend` 回到普通 `string`、brand 只留包内（它自己的
+   R1 修正）。本分支 `hostEntryRoute.ts` 的路由判定要不要同步升级为两阶段解析（语法 + 注册表）？
+   独立入口拿得到注册表就与 DSH 对齐；拿不到就在 5.8 写明「路由只做语法判定」。
+2. 接缝 1、2 的统一形状（名字留谁）——建议留 main 侧的名字，减少下游回归的改动面。
+
+**已知取舍，别当缺陷回退。** 本轮之后 `--backend` 不再对「语法合法但没装」的 id 早退（#1380 有意的
+UX 回退：进 TUI 后告警并回落 dsh），上游 Stage C 的 `/plugin` 才恢复装前报错。这与上游 #1246 要立的
+CLI 退出码契约相邻，改它之前先看那一条。
+
 ### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
 
 > **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成并提交；组合期间信号卡 5s 已查明并规避（已提交）；2026-10-08 已 rebase 到 upstream/main 85d49e53；剩 2.7 遗留与观感决定。**
@@ -1602,8 +1781,8 @@ A 一修好它立刻变真，所以两处一起修。入口的 `disposeEntryRoot
 
 各块做了什么、数字、验证结果见上面「Phase 1 第 1、2 块」「Phase 1 第 3 块」两节；设计正文
 5.3 / 5.6 / 5.8 已同步实现。已定事项：5.6 选 (a)；分期修订（Phase 1 只做 DSH 无关，TuiHost
-推迟到 Phase 2）。仍待决定：AGENTS.md 开头「零核心改动、纯插件挂载」定位句的改写（只补了
-布局表）、Phase 2 排期、PR #1216 去留（第 8 节）。
+推迟到 Phase 2）。2026-10-09 另定两项：AGENTS.md 定位句改写（第 10 节第 1 条）与 Claude 内核
+的第三方插件扩展为必备件（5.7）。仍待决定：Phase 2 排期、PR #1216 去留（第 8 节）。
 
 **下一步：测试（由新会话主导）**
 
