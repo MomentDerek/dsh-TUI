@@ -102,6 +102,16 @@
  *                          rows (both paths agree); a row failing in its
  *                          apply, from a timer, by an unhandled rejection;
  *                          a row holding SIGTERM / SIGINT / SIGHUP.
+ *   codex-in-entry         the Codex kernel in the entry (the rebase added it
+ *                          to `entryKernel`): the entry runs it itself rather
+ *                          than composing the DSH profile, the codex
+ *                          app-server is probed and handshaken with, the
+ *                          session is adopted and /quit exits 0;
+ *                          `codex-in-entry-pool-closed` holds the fake
+ *                          app-server on stdin EOF so only a real close (EOF →
+ *                          SIGTERM after CLOSE_GRACE_MS) passes;
+ *                          `codex-kernel-remembered` is the same through
+ *                          `kernel.json` with no DSH_TUI_BACKEND at all
  *
  * Every case checks the terminal state after exit (alt screen left, cursor
  * shown, bracketed paste, focus reporting and mouse tracking off) and, on
@@ -1307,6 +1317,97 @@ for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) await runCase(`plugin-hold
   } finally {
     writeFileSync(profilePatchFile, '[]\n')
   }
+})
+
+// ── Codex kernel in the entry (the rebase brought `entryKernel` codex) ────
+// A Codex launch used to take the DSH branch of the entry's dispatch: the
+// whole DSH profile was composed into the entry's root and the runtime then
+// opened whatever kernel it remembered — so `DSH_TUI_BACKEND=codex` painted
+// a DSH session (deepseek-flash) and never even probed for a `codex`
+// executable. The route hands `runInEntry` the kernel it found, so only DSH
+// composes the profile; the Codex session is opened by the runtime itself,
+// and the process-wide codex hub (src/backends/codex/rpc/hub.ts) has to be
+// closed on the way out.
+//
+// The fake `codex` here is a real child process
+// (scripts/fixtures/codex/fake-app-server-child.ts) speaking the app-server's
+// newline-delimited JSON-RPC on stdio, driven by the in-process fake the
+// Codex regressions use: the executable probe, transport, hub and session are
+// the production ones, only the binary is replaced.
+const fakeCodexPath = join(root, 'fake-codex.sh')
+/** Written on first use: a run that selects none of these cases adds nothing. */
+function fakeCodex() {
+  writeFileSync(fakeCodexPath, `#!/bin/sh
+exec '${process.execPath}' '${repo}/node_modules/tsx/dist/cli.mjs' '${repo}/scripts/fixtures/codex/fake-app-server-child.ts' "$@"
+`)
+  chmodSync(fakeCodexPath, 0o755)
+  return fakeCodexPath
+}
+/** The environment a Codex case injects (see launch()). */
+const codexEnv = log => ({
+  CODEX_EXECUTABLE: fakeCodex(),
+  FAKE_CODEX_LOG: log,
+  OPENAI_API_KEY: 'fixture',
+  CODEX_HOME: join(root, 'codex-home'),
+})
+const codexNotes = (run, log) => [
+  `marks: ${run.marks().map(entry => entry.mark).join(', ')}`,
+  `fake codex log:\n${readLines(log).join('\n')}`,
+].join('\n')
+/** The composed-profile marks only the DSH route produces. */
+const composedProfile = run => run.marks().map(entry => entry.mark).filter(mark => mark.startsWith('entry-compose'))
+
+await runCase('codex-in-entry', async ({ check, launch }) => {
+  const log = join(root, 'codex-entry.log')
+  const run = await launch({ backend: 'codex', landing: false, env: codexEnv(log) })
+  check('the Codex session is up in the entry', await until(async () => (await run.screen()).includes('gpt-fixture'), 60000), lines(await run.screen()).slice(-8).join('\n'))
+  check('the entry ran itself, not `dsh --profile`', run.traced('entry-start') && run.traced('entry-hijacked'), codexNotes(run, log))
+  check('the DSH profile was not composed for a Codex launch', composedProfile(run).length === 0, codexNotes(run, log))
+  check('the session was adopted', run.traced('startup-adopted'), codexNotes(run, log))
+  const handshake = readLines(log)
+  check('the app-server was probed and handshaken with (initialize, thread/start)',
+    handshake.some(line => line.includes('version')) && handshake.some(line => line.includes('in initialize')) && handshake.some(line => line.includes('in thread/start')),
+    handshake.join('\n'))
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+})
+
+await runCase('codex-in-entry-pool-closed', async ({ check, launch }) => {
+  // The child refuses to exit on stdin EOF: only a close that is real ends it
+  // (Transport.close escalates EOF → SIGTERM after CLOSE_GRACE_MS), while a
+  // parent that merely dies leaves the pipe to end and the child behind.
+  // A plain SIGTERM case cannot show this: the child shares the PTY's process
+  // group, so the session going away hands it a SIGHUP first and the pipe
+  // ending looks like a clean shutdown either way (measured: SIGTERM → the
+  // child logged SIGHUP, no EOF).
+  const log = join(root, 'codex-entry-hold.log')
+  const run = await launch({ backend: 'codex', landing: false, env: { ...codexEnv(log), FAKE_CODEX_HOLD_ON_EOF: '1' } })
+  check('the Codex session is up in the entry', await until(async () => (await run.screen()).includes('gpt-fixture'), 60000), lines(await run.screen()).slice(-8).join('\n'))
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
+  const sent = readLines(log)
+  const eof = sent.findIndex(line => line.includes('stdin-eof'))
+  const term = sent.findIndex(line => line.includes('SIGTERM'))
+  check('the child held on after EOF', eof !== -1 && sent.some(line => line.includes('hold-on-eof')), sent.join('\n'))
+  check('the entry closed the codex hub pool (EOF → SIGTERM, not the pipe alone)', term > eof && term !== -1, sent.join('\n'))
+})
+
+await runCase('codex-kernel-remembered', async ({ check, launch }) => {
+  // The other way a launch lands on Codex: the remembered kernel, with no
+  // DSH_TUI_BACKEND at all (`kernel.json` on this case's own HOME).
+  const home = join(root, 'codex-remembered-home')
+  mkdirSync(join(home, '.dsh-tui'), { recursive: true })
+  writeFileSync(join(home, '.dsh-tui', 'kernel.json'), `${JSON.stringify({ backend: 'codex' })}\n`)
+  writeFileSync(join(home, '.dsh-tui', 'onboarding.json'), JSON.stringify({ completed: true, version: 1 }))
+  const log = join(root, 'codex-remembered.log')
+  // launch() defaults `backend` to 'claude' (so every other case sets
+  // DSH_TUI_BACKEND): an explicit undefined here drops the variable, which is
+  // what lets kernel.json decide.
+  const run = await launch({ backend: undefined, landing: false, env: { ...codexEnv(log), HOME: home, DSH_TUI_BACKEND: undefined } })
+  check('the remembered Codex kernel is up in the entry', await until(async () => (await run.screen()).includes('gpt-fixture'), 60000), lines(await run.screen()).slice(-8).join('\n'))
+  check('the DSH profile was not composed', composedProfile(run).length === 0, codexNotes(run, log))
+  await run.command('/quit')
+  await checkExit(run, check, { code: 0 })
 })
 
 const failed = results.filter(result => result.status === 'fail').length

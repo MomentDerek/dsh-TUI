@@ -12,7 +12,10 @@
  *  - a second signal ends it at once, the owner still busy;
  *  - `supervising` (a /restart supervisor) arms no backstop;
  *  - the owner stalls: the backstop ends it by the signal;
- *  - a foreign listener on the signal (a plugin's) cannot keep it alive.
+ *  - a foreign listener on the signal (a plugin's) cannot keep it alive;
+ *  - the entry's own, owner-less dispose closes what the funnel's teardown
+ *    closes as well (the process-wide codex hub pool), and it routes the
+ *    kernel it found rather than a literal backend.
  *
  * And the root dispose during the profile composition
  * (src/dsh-adapter/root-dispose.ts): a minimal root from the host packages
@@ -261,12 +264,30 @@ esac
   check('a signal exit dies by the signal after the root dispose, the stalled case too',
     /disposeRootAndThen\(ctx, \(\) => \{ dieBySignal\(request\.signal\) \}, \(\) => \{ dieBySignal\(request\.signal\) \}\)/.test(plugin))
   check('a root dispose lets a composition in progress settle first (the funnel and the entry\'s own)',
-    /disposeRootSettled\(ctx, \(\) => withHostRootCapability\(\(\) => ctx\.root\.fiber\.dispose\(\)\)\)/.test(plugin) && /disposeRoot: \(\) => disposeRootSettled\(ctx\)/.test(entry))
+    /disposeRootSettled\(ctx, \(\) => withHostRootCapability\(\(\) => ctx\.root\.fiber\.dispose\(\)\)\)/.test(plugin)
+    && /disposeRoot: \(\) => disposeEntryRoot\(ctx\)/.test(entry) && /await disposeRootSettled\(ctx\)/.test(entry))
+  // A signal that lands before the runtime filled `exitSeam.request` takes the
+  // entry's own dispose instead of the funnel's, so it must close what the
+  // funnel's teardown closes: the codex hub pool is process-wide and no
+  // session's own dispose closes it (src/backends/codex/rpc/hub.ts).
+  check('the entry\'s own dispose closes the backend resources the funnel also closes',
+    /disposeRootSettled\(ctx\)\n  \} finally \{/.test(entry)
+    && /const \{ closeBackendResources \} = await import\('\.\/backends\.js'\)\n      await closeBackendResources\(\)/.test(entry))
   check('the entry tracks its composition, which stops short of the audit and readiness once a dispose waits',
     /const composition = trackComposition\(ctx, /.test(entry) && /await root\.compose\([^\n]*\(\) => composition\.disposing\)/.test(entry)
       && /if \(loader\(\) === undefined \|\| stopping\(\)\) return/.test(hostDsh) && /&& !stopping\(\)\) appReady\.commit\(\)/.test(hostDsh))
   check('the dsh-tui row opens no DSH session once the exit started',
     /if \(compositionFailed \|\| exited\) return/.test(plugin))
+  // The entry routes the kernel it found and hands it to `runInEntry` as it
+  // is: only DSH composes the profile and so publishes the slot, while Claude
+  // and Codex mount without it and let the runtime resolve the kernel itself.
+  // Passing the literal 'dsh' into `runInEntry` is what silently degraded
+  // Codex to DSH (`dshInEntry` then pins the runtime's backend choice).
+  check('the entry runs the kernel its route found, not a literal backend (only DSH then publishes the slot)',
+    /const route = entryRoute\(entryKernel\(process\.env, \{ configured: configuredBackend\(profile\) \}\)\)/.test(entry)
+    && /if \(route\.kind === 'entry'\) await runInEntry\(route\.kernel\)/.test(entry)
+    && /else delegateToDsh\(\)/.test(entry)
+    && /const slot = kernel === 'dsh' && root !== undefined \? publishEntrySlot\(\) : undefined/.test(entry))
   check('/restart and /update supervise their replacement through the seam',
     /const supervision = superviseReplacement\(exitSeam, options\)/.test(plugin) && /superviseReplacement\(exitSeam, \{\}\)/.test(plugin))
 

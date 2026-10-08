@@ -11,7 +11,7 @@
  */
 import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
-import { KERNEL_SWITCH_HANDOFF_ENV, isKernelId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, hostEntryDshEnabled, isKernelId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
 import { profilePatchPath, readProfileTuiSettings } from './tuiSettingsFile.js'
 
 export { HOST_ENTRY_DSH_ENV, HOST_ENTRY_ENV, HOST_ENTRY_PATH_ENV, hostEntryDisabled, hostEntryDshEnabled } from './kernelPrefs.js'
@@ -58,4 +58,26 @@ export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
 /** The entry's path inside an installed package (from this module's dir). */
 export function hostEntryPath(packageRoot: string): string {
   return join(packageRoot, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
+}
+
+/** Where the entry sends a launch (docs/standalone-host-design.md 5.8). */
+export type EntryRoute =
+  /** Run this kernel in this process. `dsh` composes the profile into the
+   *  entry's root afterwards; every other kernel stops after the mount. */
+  | { readonly kind: 'entry'; readonly kernel: KernelBackendId }
+  /** Hand the launch to `dsh --profile <profile>` unchanged. */
+  | { readonly kind: 'delegate' }
+
+/**
+ * How the entry routes a launch whose kernel {@link entryKernel} already
+ * found. Only the DSH kernel composes the profile into the entry's root, and
+ * only while Phase 2's default holds (`DSH_TUI_HOST_ENTRY_DSH=0` hands DSH
+ * back to `dsh --profile`). Claude and Codex alike mount the runtime on the
+ * entry's own root without a profile, so the runtime resolves the kernel
+ * itself — deriving it here again would drop the one input only this process
+ * reads (the profile patch's Config row).
+ */
+export function entryRoute(kernel: KernelBackendId, env: NodeJS.ProcessEnv = process.env): EntryRoute {
+  if (kernel !== 'dsh') return { kind: 'entry', kernel }
+  return hostEntryDshEnabled(env) ? { kind: 'entry', kernel } : { kind: 'delegate' }
 }

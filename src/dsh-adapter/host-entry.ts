@@ -6,8 +6,8 @@
  * `DSH_TUI_HOST_ENTRY_DSH=0` keeps DSH on `dsh --profile`,
  * `DSH_TUI_HOST_ENTRY=0` switches all of it off).
  *
- * It decides the kernel again with the profile patch's Config row
- * (../hostEntryRoute.ts). A launch that lands on DSH while
+ * It decides the kernel again with the profile patch's Config row and routes
+ * it (../hostEntryRoute.ts `entryRoute`). A launch that lands on DSH while
  * `DSH_TUI_HOST_ENTRY_DSH=0`, or whose installed dsh the entry cannot use
  * (said on stderr and in the delegated screen), is handed to
  * `dsh --profile <profile>` unchanged: env, stdio and the kernel-switch ACK
@@ -25,7 +25,9 @@
  *  3. DSH only: the dsh-tui profile is composed into the same root. Its
  *     dsh-tui row finds the mounted screen (./entry-slot.ts), opens the DSH
  *     session and hands it to the channel, which adopts it.
- * The Claude kernel stops after 2 (no profile, no `tui*` services).
+ * The Claude and Codex kernels stop after 2 (no profile, no `tui*`
+ * services): the runtime resolves the kernel itself, as on the
+ * `dsh --profile` path.
  * This process owns its signals and its exit (./process-exit.ts): SIGTERM,
  * SIGHUP and SIGINT go through the TUI's exit funnel (terminal restored,
  * root and DSH session disposed) and end the process by the signal.
@@ -33,9 +35,9 @@
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
 import { lastBootMark, markBoot } from '../utils/bootTrace.js'
-import { configuredBackend, entryKernel, hostEntryDshEnabled, hostProfile } from '../hostEntryRoute.js'
+import { configuredBackend, entryKernel, entryRoute, hostProfile } from '../hostEntryRoute.js'
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
-import { HOST_NOTICE_ENV } from '../kernelPrefs.js'
+import { HOST_NOTICE_ENV, type KernelBackendId } from '../kernelPrefs.js'
 import { logForDebugging } from '../utils/debug.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
@@ -51,9 +53,8 @@ markBoot('entry-start')
 // ~10s. Reports are not otherwise used in this process.
 if (process.report !== undefined) (process.report as { excludeNetwork?: boolean }).excludeNetwork = true
 const profile = hostProfile()
-const kernel = entryKernel(process.env, { configured: configuredBackend(profile) })
-if (kernel === 'claude') await runInEntry('claude')
-else if (hostEntryDshEnabled()) await runInEntry('dsh')
+const route = entryRoute(entryKernel(process.env, { configured: configuredBackend(profile) }))
+if (route.kind === 'entry') await runInEntry(route.kernel)
 else delegateToDsh()
 
 /** Hand the launch to `dsh --profile <profile> -- <app args>` and mirror its exit. */
@@ -105,7 +106,7 @@ function delegateToDsh(): void {
  * reaches the screen: in this process through `RuntimeApplyOptions`, in the
  * delegated dsh through the environment (plugin.ts reads it once).
  */
-function noteHostUnavailable(kernel: 'claude' | 'dsh', error: unknown): string {
+function noteHostUnavailable(kernel: KernelBackendId, error: unknown): string {
   const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0] ?? ''
   const fallback = kernel === 'dsh' ? 'starting DSH through `dsh --profile`' : 'starting without its module resolution'
   const line = `dsh-tui: the installed dsh cannot host this launch (${reason}); ${fallback}`
@@ -122,13 +123,38 @@ function quoteForCmd(arg: string): string {
   return `"${arg.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, '$1$1')}"`
 }
 
-async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
+/**
+ * Dispose the root without the funnel (`installEntrySignals`' fallback: no
+ * owner yet, or one that refused) and close what the funnel's own teardown
+ * closes on its way out (`plugin.ts disposeRootAndThen`'s
+ * `.finally(closeBackendResources)`) — a signal that lands before the runtime
+ * fills `exitSeam.request` (the funnel, plugin.ts) takes this path instead,
+ * and a codex hub is a process-wide pool (src/backends/codex/rpc/hub.ts) that
+ * no session's own `dispose` closes. Closing twice is harmless
+ * (`closeAllCodexHubs` clears its registry). The import stays dynamic: this
+ * module's load surface and the entry's start-up order must not gain a
+ * backend.
+ */
+async function disposeEntryRoot(ctx: Context): Promise<void> {
+  try {
+    await disposeRootSettled(ctx)
+  } finally {
+    try {
+      const { closeBackendResources } = await import('./backends.js')
+      await closeBackendResources()
+    } catch (error) {
+      logForDebugging(`dsh-tui: closing backend resources on the entry's exit path failed (${error instanceof Error ? error.message : String(error)})`)
+    }
+  }
+}
+
+async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // 1. The host's root and module resolution, before any TUI module loads.
   // Without a usable installed dsh (none on PATH, an unexpected shape) the
-  // DSH kernel goes back to `dsh --profile`, and the Claude kernel to the
+  // DSH kernel goes back to `dsh --profile`, and the other kernels to the
   // Phase 1 entry: this package's own cordis, no host resolution.
   let root: HostRoot | undefined
-  /** Why the installed dsh is not used (shown in the screen; Claude only). */
+  /** Why the installed dsh is not used (shown in the screen; non-DSH kernels). */
   let hostNotice: string | undefined
   // The runtime's exit funnel fills it once mounted (signals, `ctx.appExit`).
   const exitSeam: ProcessExitSeam = {}
@@ -174,7 +200,7 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // second signal forces the exit.
   installEntrySignals({
     seam: exitSeam,
-    disposeRoot: () => disposeRootSettled(ctx),
+    disposeRoot: () => disposeEntryRoot(ctx),
     log: logRestartEvent,
     where: lastBootMark,
   })

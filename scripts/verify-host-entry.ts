@@ -11,6 +11,10 @@
  *    own script, and never re-targets the entry onto itself; with the DSH
  *    kernel in the entry (`dshInEntry`, the default) a DSH replacement goes
  *    to the entry too;
+ *  - `entryRoute` runs Claude and Codex alike in the entry without composing
+ *    the profile (only DSH composes it, and only while the Phase 2 default
+ *    and `DSH_TUI_HOST_ENTRY` allow), so a codex launch keeps the kernel the
+ *    entry found instead of being degraded to DSH;
  *  - the DSH kernel runs in the entry unless `DSH_TUI_HOST_ENTRY_DSH=0` or
  *    `DSH_TUI_HOST_ENTRY=0`;
  *  - `findHostDsh` follows the first `dsh` on PATH to the installed host
@@ -30,10 +34,11 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, win32 } from 'node:path'
-import { configuredBackend, entryKernel, hostEntryDshEnabled } from '../src/hostEntryRoute.js'
+import { configuredBackend, entryKernel, entryRoute, hostEntryDshEnabled } from '../src/hostEntryRoute.js'
 import { findHostDsh, launcherScriptPaths, resolveLauncherPath } from '../src/dsh-adapter/host-dsh.js'
 import { stripResumeArgs } from '../src/sessionHistory.js'
 import { restartArgv } from '../src/update.js'
+import type { KernelBackendId } from '../src/kernelPrefs.js'
 
 let passed = 0
 const check = (label: string, ok: boolean, detail?: unknown): void => {
@@ -54,6 +59,21 @@ check('DSH_TUI_BACKEND beats kernel.json', entryKernel({ DSH_TUI_BACKEND: 'dsh' 
 check('an invalid DSH_TUI_BACKEND means dsh, not the memory', entryKernel({ DSH_TUI_BACKEND: 'nope' }, { memoryFile: memory }) === 'dsh')
 check('the Config row beats DSH_TUI_BACKEND', entryKernel({ DSH_TUI_BACKEND: 'claude' }, { configured: 'dsh', memoryFile: noMemory }) === 'dsh')
 check('a handoff beats the Config row', entryKernel({ DSH_TUI_BACKEND_HANDOFF: 'claude' }, { configured: 'dsh', memoryFile: noMemory }) === 'claude')
+
+// ── entryRoute: what the entry runs itself, and what it hands to dsh ──
+/** The kernel the entry would run in process, or 'delegate' for `dsh --profile`. */
+const routed = (kernel: KernelBackendId, env: NodeJS.ProcessEnv = {}): KernelBackendId | 'delegate' => {
+  const route = entryRoute(kernel, env)
+  return route.kind === 'entry' ? route.kernel : 'delegate'
+}
+check('claude runs in the entry, without the profile', routed('claude') === 'claude')
+check('codex runs in the entry the same way, on its own kernel', routed('codex') === 'codex')
+check('dsh composes the profile into the entry by default', routed('dsh') === 'dsh')
+check('DSH_TUI_HOST_ENTRY_DSH=0 hands dsh to dsh --profile', routed('dsh', { DSH_TUI_HOST_ENTRY_DSH: '0' }) === 'delegate')
+check('DSH_TUI_HOST_ENTRY=0 hands dsh on as well', routed('dsh', { DSH_TUI_HOST_ENTRY: '0' }) === 'delegate')
+check('the DSH switches leave claude and codex in the entry',
+  routed('claude', { DSH_TUI_HOST_ENTRY_DSH: '0', DSH_TUI_HOST_ENTRY: '0' }) === 'claude'
+  && routed('codex', { DSH_TUI_HOST_ENTRY_DSH: '0' }) === 'codex')
 
 // ── configuredBackend ─────────────────────────────────────────────────
 const patch = join(root, 'cordis.patch.yml')
