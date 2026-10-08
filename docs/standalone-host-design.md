@@ -7,12 +7,14 @@
 `@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。2026-10-06 修订分期：Phase 1 只做「DSH 无关」，
 TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 
-**2026-10-09 维护者裁定两项**（详见第 10 节与实施记录「2026-10-09」一节）：
+**2026-10-09 维护者裁定三项**（详见第 10 节与实施记录「2026-10-09」一节）：
 
 1. **定位**：改写成「拥有入口的终端应用」；**DSH 仍是首要适配目标与首方后端**，只因 DSH 自身的
    启动成本（1.2）而以独立后端形态存在。
 2. **插件扩展**：Claude 内核下第三方 Cordis 插件扩展的缺失**不可接受**；轻量 profile 由「可选」
    转为 Claude 内核路径的必备件，纳入 Phase 2（5.7、6.2、第 7 节）。
+3. **预载**：PR #1216 关闭、分支作废（第 8 节）。它要换来的快速启动已由 Phase 1/2 的入口路径覆盖，
+   那三个文件从未进 `main`——Phase 3 因此没有 `main` 上的代码可删，只剩分支清理。
 
 **下一步（可直接接手）**：Phase 2 剩余的**轻量 profile**（5.7）——实现形状（按清单往入口那个根里
 装配，还是另建一根再桥接）、组合成本实测，以及与上游插件契约对齐注册表归属（上游 issue #1247）。
@@ -412,22 +414,24 @@ IPC 协议，维护成本比手写镜像更高。
 | 0 | TuiHost 接口，`cordisTuiHost(ctx)` 实现；channel 核心改收 TuiHost；**测基线**：dsh / claude 两个内核从进程启动到首帧、到可发送的时间 | 行为零变化（现有 CI 组全过）；`verify:boundary` 新规则：`channel/core/` 不 import Cordis；基线数字写进本文 | 纯重构，直接 revert |
 | 1 | 设置存储落地（5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入）；本包 entry——自持裸 Cordis 根，`plugin.ts` 的 `apply` 原样挂载（**不建 TuiHost**，见 5.1 修订）；占位会话 + `adoptStartup`（1b）；Claude 内核走 entry、不加载 dsh-base（**profile 里声明的第三方插件此时不进这个根，是 2026-10-09 裁定要求 Phase 2 闭环的缺口**，见 5.7）。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
 | 2 | TuiHost（5.1，由 Phase 0 的 `ChannelHost` 补全）与 Cordis 无关的组装根；DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；**Claude 内核的轻量 profile（5.7，把本包行与第三方插件组合进来）**；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；**第三方插件示例（主题、面板、决策拦截）在两个内核下都通过**；轻量 profile 的组合成本计入 Claude 内核基线；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
-| 3 | 删除 `src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js`；决定直启路径去留；改写 AGENTS.md 与架构文档 | 构建门禁与全部 CI 组 | — |
+| 3 | 清理预载分支（PR #1216 已关闭并作废，2026-10-09；`src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js` 只在预载分支上，从未进 `main`，所以这一期**没有 `main` 代码可删**）；决定 `dsh --profile dsh-tui` 直启路径去留；改写 AGENTS.md 与架构文档；明确是否吸收预载的 compile cache 与 `onProcessExit` 兜底 | 构建门禁与全部 CI 组 | — |
 
 Phase 1 是收益最大、风险最小的一期。分期于 2026-10-06 按 spike 结果修订：原 Phase 1 的
 TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设置存储、入口与 1b。
 
 ## 8. 与 PR #1216（预载）的关系
 
-方案 B 落地后，预载分支整体删除（Phase 3）。在那之前有两个选择：
+**已裁定（2026-10-09）：关闭，分支作废。**方案 B 的 Phase 1（Claude 内核不组合 dsh-base）与
+Phase 2（DSH 内核默认也走入口、首帧提前约 47%）都已在 `feat/standalone-host` 落地，预载要换来的
+快速启动由它们提供。`src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js` 只存在于预载
+分支，从未进入 `main`，所以 Phase 3 没有 `main` 上的代码可删，只剩分支清理（第 7 节）。
 
-- **(a) 先合入。**DSH 内核用户马上得到快速启动；代价是到 Phase 2 之前，main 的每次
-  `ChannelUi` / 设置改动都要同步补预载的镜像（参考本周 rebase：22 个端口、4 个 Schema
-  字段、一处 kernel 交接冲突）。
-- **(b) 不再维护，关闭。**快速启动等方案 B 的 Phase 1（Claude）/ Phase 2（DSH）。
+历史选择（保留作记录）：**(a) 先合入**——DSH 内核用户马上得到快速启动，代价是到 Phase 2 之前 main
+的每次 `ChannelUi` / 设置改动都要同步补预载镜像（参考当时那次 rebase：22 个端口、4 个 Schema 字段、
+一处 kernel 交接冲突）；**(b) 不再维护、关闭**。判断依据是 Phase 2 的到期时间，(b) 是这里的结论。
 
-判断依据是 Phase 2 预计多久能到。Phase 0 完成并拿到基线数字后再定也不迟；已 rebase 到
-当前 main 的预载分支可作为 (a) 的实现。
+预载验证过、需要明确吸收或明确不采纳的两样：compile cache（首帧约 −70ms、交接约 −150ms）与
+`onProcessExit` 兜底，见 5.2 与 6.1。
 
 ## 9. 风险
 
@@ -464,7 +468,9 @@ TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设
 2a. ~~分期修订（TuiHost 推迟到 Phase 2）。~~ 已接受（2026-10-06）。
 3. DSH 内核走 D1（扩展晚挂、预载整体删除）还是 D2（DSH 保留预载）。
 4. `dsh --profile dsh-tui` 直启路径是否继续支持。
-5. PR #1216 先合入还是关闭（第 8 节）。
+5. ~~PR #1216 先合入还是关闭（第 8 节）。~~ **已裁定（2026-10-09）：关闭，分支作废**——Phase 2 的
+   入口路径已覆盖它要换来的快速启动；那三个文件从未进 `main`，Phase 3 只清理分支，不删 `main` 上的
+   代码。
 6. ~~是否接受 Claude 内核在 Phase 1 之后失去第三方 Cordis 插件扩展（5.7、6.2），或要求轻量
    profile 先行。~~ **已裁定（2026-10-09）：不接受**，要求轻量 profile（只组合本包行与第三方
    插件、不组合 dsh-base）纳入 Phase 2（5.7、6.2、第 7 节）。实现形状（往 Phase 1 的裸根里
@@ -1776,8 +1782,9 @@ node scripts/accept-host-entry.mjs             # PTY；62 例里 2 例既红，�
 `dsh --profile dsh-tui` 直启路径是否继续支持（继续支持就要保留一条「没有 TuiHost 时自建并渲染」
 的兼容路径）、第 5 条 PR #1216（预载分支）先合入还是关闭。
 
-**Phase 3（未开始）**：删 `src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js`；决定直启
-路径去留；按新定位重写 AGENTS.md 与架构文档。
+**Phase 3（未开始）**：清理预载分支（PR #1216 已关闭并作废，2026-10-09——那三个文件从未进
+`main`，没有 `main` 代码可删）；决定 `dsh --profile dsh-tui` 直启路径去留；按新定位重写 AGENTS.md 与
+架构文档；明确是否吸收预载的 compile cache 与 `onProcessExit` 兜底。
 
 **未 push 的提交**：`ea99d038`（定位改写）、`40644af1`（merge #1380）、`fab460df`（收尾与记录）。
 PR 一律走 `.agents/skills/pr`。
