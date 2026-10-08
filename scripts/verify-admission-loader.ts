@@ -32,8 +32,8 @@
 import { createRequire } from 'node:module'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import './lib/fake-home.mjs' // 必须最先：DATA_DIR/effect-ledger 在 import 时定死
 
 const { Context } = await import('@deepseek-ai/cordis')
@@ -49,6 +49,10 @@ function check(name: string, ok: boolean, extra = ''): void {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-admission-loader-'))
 const packageDir = join(dir, 'third-party-package')
@@ -169,6 +173,54 @@ const armedIds = reportedIds(armed.report)
 check('armed: the plugin applied and registered its panel', armedIds.length === 1, JSON.stringify(armedIds))
 check('armed: admission lands before apply, so the panel carries the manifest id',
   armedIds.length === 1 && armedIds[0] === 'verify-admitted:demo')
+
+// ── nested entry id: the shape a real profile actually produces ────────────
+// `loader.locate(fiber)` returns `fiber.entry.id`, and a profile nests rows
+// behind group ids separated by `:` — the live dsh-tui profile carries
+// `include:dsh-tui-agent-preset-registry:agent-instructions`. `EntryTree.
+// resolve` does NOT return undefined for such an id, it **throws** (`cannot
+// resolve entry <id>`). The loader walks every activating fiber, so one
+// unresolvable entry among the profile's own rows used to take the whole
+// process down from inside the `internal/status` listener: every PTY case
+// ended in `dsh-tui crashed: cannot resolve entry …`. The pass must be
+// skipped for it and every other activation still handled.
+const nested = await mount(true)
+// A genuine nested entry: a Group row owns the child, so the child's id grows
+// a `:` segment. Its `name` is the same fixture as the top-level one; only the
+// id differs, which is exactly what the fence has to survive.
+const groupFile = join(dir, 'nested-group.mjs')
+writeFileSync(groupFile, `import { Group } from ${JSON.stringify(
+  pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@deepseek-ai', 'cordis-plugin-loader', 'lib', 'index.js')).href,
+)}
+export default Group
+`)
+const nestedReport = join(dir, 'nested-report.jsonl')
+writeFileSync(nestedReport, '')
+await nested.root.loader.create({ id: 'include', name: groupFile, group: true, config: [] })
+await nested.root.loader.await()
+// The child's OWN id already contains the separator, so `grp:child` cannot
+// resolve: that is the failing shape, without waiting for a Group plugin to
+// reparent the entry. `writePackage` is the fixture this pass must still
+// admit, on the same composition and after the unresolvable one.
+await nested.root.loader.create({
+  id: 'dsh-tui-agent-preset-registry:agent-instructions',
+  name: writePackage('verify-nested'),
+  group: true,
+  config: [],
+})
+await nested.root.loader.await()
+// 固定窗:pacing 嵌套 entry 的激活落点没有可轮询完成条件（下一步的断言在另一组合上）
+await sleep(300)
+let nestedThrew: string | undefined
+try {
+  await activate(nested, 'verify-after-nested')
+} catch (error) {
+  nestedThrew = messageOf(error)
+}
+check('nested id: an unresolvable entry id does not tear the loader down',
+  nestedThrew === undefined, nestedThrew ?? '')
+check('nested id: the other activation on the same composition is still admitted',
+  readFileSync(nested.report, 'utf8').includes('verify-after-nested:demo'), readFileSync(nested.report, 'utf8'))
 
 // The identity is bound to the plugin's own activation: unloading the row
 // (dispose the entry fiber) must release it — re-activating the same entry

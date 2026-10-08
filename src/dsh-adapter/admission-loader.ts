@@ -41,7 +41,7 @@ import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { componentIdentityOf } from './component-identity.js'
-import { compositionRoot } from './host-access.js'
+import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { getHostAdmission, type TuiPluginHost } from './plugin-host.js'
 import { logForDebugging } from '../utils/debug.js'
 
@@ -254,9 +254,23 @@ export function armAdmissionLoader(
     // The composition root, not this row: plugin rows hang off the loader's
     // context, so their lifecycle events never travel through the TUI row.
     // `global` keeps child filters from hiding them (// ./host-access.ts).
-    const disposer = root.on('internal/status', listener, { global: true }) as unknown
+    //
+    // Registering that subscription is a host-side act: this function runs
+    // inside the `dsh-tui` row's activation, where the root capability guard
+    // (installed with the first TUI row) refuses `root.events.on` outright —
+    // "dsh-tui: root.events.on is unavailable from a plugin activation".
+    // The listener and its cleanup are the host's own bookkeeping about which
+    // third-party activations exist, not a plugin reaching into the root, so
+    // they run in the host capability (same shape as the kernel refresh in
+    // ./plugin-host.ts). Both the subscription and its disposer are wrapped:
+    // teardown runs from a plugin activation too.
+    const disposer = withHostRootCapability(
+      () => root.on('internal/status', listener, { global: true }) as unknown,
+    )
     return () => {
-      if (typeof disposer === 'function') (disposer as () => void)()
+      if (typeof disposer === 'function') {
+        withHostRootCapability(() => (disposer as () => void)())
+      }
     }
   })
   const releaseTimer = ctx.effect(() => stopTimer)
@@ -270,7 +284,18 @@ export function armAdmissionLoader(
   }
 }
 
-/** The package-root `dsh-plugin.json` of the entry that owns `fiber`, if any. */
+/** The package-root `dsh-plugin.json` of the entry that owns `fiber`, if any.
+ *
+ *  Both loader calls are fences: `locate` can return an entry id this loader
+ *  cannot look up, and `EntryTree.resolve` **throws** (`cannot resolve entry
+ *  <id>`) instead of returning undefined for anything but a plain top-level
+ *  id. A real profile nests rows behind group ids separated by `:`
+ *  (`include:<group>:<row>`), and `dsh-tui-agent-preset-registry` is exactly
+ *  such a child row — so a bare `resolve(entryId)` took the whole process down
+ *  from inside the `internal/status` listener. "Not an entry we can inspect"
+ *  and "not a Component" are the same answer here: no manifest, skip. Real
+ *  admission failures are unaffected — they surface from `admission.admit`
+ *  and still settle as `refused` with a diagnostic. */
 function manifestPathOf(loader: LoaderLike, fiber: object): string | undefined {
   let entryId: string | undefined
   try {
@@ -279,7 +304,12 @@ function manifestPathOf(loader: LoaderLike, fiber: object): string | undefined {
     return undefined
   }
   if (entryId === undefined) return undefined
-  const entry = loader.resolve?.(entryId)
+  let entry: LoaderEntryLike | undefined
+  try {
+    entry = loader.resolve?.(entryId)
+  } catch {
+    return undefined
+  }
   const name = entry?.options?.name
   if (typeof name !== 'string' || name === '') return undefined
   const entryFile = resolveEntryFile(name, entry?.ctx?.baseUrl)
