@@ -142,7 +142,7 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
       return
     }
   }
-  const [{ Config }, { apply, handleStartupError }, { publishEntrySlot }, { deferRootCapabilityGuard }, { processGuardActive }, { armProcessTestFault, readTestFault }, { logRestartEvent }] = await Promise.all([
+  const [{ Config }, { apply, handleStartupError }, { publishEntrySlot }, { deferRootCapabilityGuard, armRootCapabilityGuard }, { processGuardActive }, { armProcessTestFault, readTestFault }, { logRestartEvent }] = await Promise.all([
     import('./index.js'),
     import('./plugin.js'),
     import('./entry-slot.js'),
@@ -180,7 +180,8 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   // that this screen exists (and receives the DSH side from the runtime).
   const slot = kernel === 'dsh' && root !== undefined ? publishEntrySlot() : undefined
   // DSH's plugins use root capabilities while they activate; the TUI's guard
-  // on them arrives once the profile has composed, as on the profile path.
+  // on them arrives with the profile's first TUI row, as on the profile path
+  // (armed below), or once the profile has composed at the latest.
   const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)
   try {
     await apply(ctx, config, ctx, { deferBackendOpen: true, profile, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(hostNotice === undefined ? {} : { hostNotice }) })
@@ -204,6 +205,9 @@ async function runInEntry(kernel: 'claude' | 'dsh'): Promise<void> {
   await slot.firstFrameFlushed?.()
   markBoot('entry-first-frame-flushed')
   markBoot('entry-compose-start')
+  // Rows activating after the first TUI row are guarded (third-party rows
+  // land there), as on the profile path.
+  armRootCapabilityGuard(ctx)
   let composed = false
   try {
     await root.compose(line => { slot.composeWarning?.(line) })

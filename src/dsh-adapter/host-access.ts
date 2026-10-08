@@ -184,16 +184,48 @@ const deferredGuardRoots = new WeakSet<object>()
  * Phase 2, single root): DSH's own plugins use root capabilities while they
  * activate (`ctx.accessor` effects on the root fiber), which the guard would
  * refuse. On the profile path the TUI only touches the root once the profile
- * rows load, so the guard arrives during the composition; the entry releases
- * it right after its composition settles. Fiber tracking itself starts at
- * once either way.
+ * rows load, so the guard arrives during the composition; the entry arms it
+ * for its composition (`armRootCapabilityGuard`: the first TUI row installs
+ * it, as there) and releases it after the composition settles at the latest.
+ * Fiber tracking itself starts at once either way.
  */
 export function deferRootCapabilityGuard(root: Context): () => void {
   deferredGuardRoots.add(root as object)
-  return () => {
-    if (!deferredGuardRoots.delete(root as object)) return
-    if (trackedRoots.has(root as object)) guardRootCapabilities(root)
-  }
+  return () => releaseDeferredGuard(root)
+}
+
+function releaseDeferredGuard(root: Context): void {
+  armedGuardRoots.delete(root as object)
+  if (!deferredGuardRoots.delete(root as object)) return
+  if (trackedRoots.has(root as object)) guardRootCapabilities(root)
+}
+
+/** Deferred roots whose guard the first TUI row activation installs (below). */
+const armedGuardRoots = new WeakSet<object>()
+
+/**
+ * The composition of a deferred root starts: from now on the guard arrives
+ * the way it does on the profile path — with the first of the TUI's own rows
+ * (the first plugin activation of this root that reaches the TUI's host
+ * code, which every `dsh-tui-*` service does as it constructs). DSH's rows
+ * that activate before that keep their root capabilities, as there; every
+ * row after it, third-party ones included, is guarded. The release returned
+ * by `deferRootCapabilityGuard` still installs it once the composition
+ * settles, should no TUI row have activated.
+ */
+export function armRootCapabilityGuard(root: Context): void {
+  if (deferredGuardRoots.has(root as object)) armedGuardRoots.add(root as object)
+}
+
+/** A plugin activation of `root` (not the root's own, not host code) is
+ * resolving its composition through the TUI's host code: a TUI row. */
+function noteTuiRowActivation(root: Context): void {
+  if (!armedGuardRoots.has(root as object)) return
+  if (hostCapabilityStorage.getStore() === true) return
+  const token = activationStorage.getStore()
+  const rootFiber = rootFibers.get(root as object)
+  if (token === undefined || token.root !== root || rootFiber === token.fiber) return
+  releaseDeferredGuard(root)
 }
 
 function invalidateActivation(fiber: object): void {
@@ -485,6 +517,12 @@ export function activationContext(ctx: Context): Context | undefined {
  * through caller-bound Cordis proxies; keeping this root in host state avoids
  * resolving sibling services through an attacker-provided caller shadow. */
 export function compositionRoot(ctx: Context): Context {
+  const root = resolveCompositionRoot(ctx)
+  noteTuiRowActivation(root)
+  return root
+}
+
+function resolveCompositionRoot(ctx: Context): Context {
   try {
     const knownFiber = contextFibers.get(ctx as object)
     const trustedRoot = knownFiber === undefined ? undefined : fiberRoots.get(knownFiber)

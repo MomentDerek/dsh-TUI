@@ -92,6 +92,16 @@
  *                          teardown time. Faults and appExit come from the
  *                          test-only DSH_TUI_TEST_FAULT
  *                          (src/dsh-adapter/test-faults.ts).
+ *   plugin-*               block 2.7, third-party test plugins
+ *                          (scripts/fixtures/host-entry-plugins/) as rows of
+ *                          the profile's patch layer: a runtime theme the
+ *                          user had persisted, a side panel, input /
+ *                          session-switch decisions, each under its own
+ *                          identity (`-entry` / `-profile`: both paths); root
+ *                          capabilities from a row before / after the TUI's
+ *                          rows (both paths agree); a row failing in its
+ *                          apply, from a timer, by an unhandled rejection;
+ *                          a row holding SIGTERM / SIGINT / SIGHUP.
  *
  * Every case checks the terminal state after exit (alt screen left, cursor
  * shown, bracketed paste, focus reporting and mouse tracking off) and, on
@@ -1055,6 +1065,247 @@ await runCase('dsh-entry-row-activation-fails', async ({ check, launch }) => {
     await checkOwnedExit(run, check, { code: 0, sentAt })
   } finally {
     writeFileSync(patch, original)
+  }
+})
+
+// ── 8. third-party plugins with DSH in the entry (block 2.7) ─────────────
+// Test plugins (scripts/fixtures/host-entry-plugins/, not shipped) as rows of
+// the isolated profile's own patch layer — inserted after the TUI's rows, as
+// a third-party row lands. Each case runs on both paths: `entry` (the
+// default: DSH in the entry, one root) and `profile`
+// (DSH_TUI_HOST_ENTRY_DSH=0: dsh --profile), and the plugins append what
+// they saw to a report file. A case-owned HOME carries the case's
+// ~/.dsh-tui (persisted theme, extension grants); the plugins' admission
+// stands in for a loader the product does not have yet (common.mjs).
+const PLUGIN_FIXTURES = join(repo, 'scripts', 'fixtures', 'host-entry-plugins')
+const fileUrl = path => new URL(`file://${path}`).href
+// The running dsh-tui copy's adapter module (one instance with the TUI's).
+const ADAPTER_URL = fileUrl(join(launcher, '..', '..', 'lib', 'types', 'dsh-adapter', 'plugin-host.js'))
+const PLUGIN_PATHS = { entry: {}, profile: { DSH_TUI_HOST_ENTRY_DSH: '0' } }
+/** The patch layer inserting `rows` ([id, fixture, extra config]). */
+const pluginPatch = (rows, report) => `- insert:\n${rows.map(([id, fixture, config = {}]) =>
+  `    - id: ${id}\n      name: ${JSON.stringify(fileUrl(join(PLUGIN_FIXTURES, fixture)))}\n      config: ${JSON.stringify({ report, adapter: ADAPTER_URL, ...config })}\n`).join('')}`
+const readReport = path => readLines(path).map(line => JSON.parse(line))
+const GRANTS = {
+  grants: {
+    'accept-guard': [{ name: 'session.input.intercept', scope: 'tui/input' }, { name: 'session.switch.intercept', scope: 'tui/session-switch' }],
+    'accept-panels': [{ name: 'storage.local.read', scope: 'accept-panels' }, { name: 'storage.local.write', scope: 'accept-panels' }],
+  },
+}
+/** A HOME of the case's own: its ~/.dsh-tui holds `files` (name → JSON). */
+function pluginHome(name, files = {}) {
+  const home = join(root, `home-${name}`)
+  rmSync(home, { recursive: true, force: true })
+  mkdirSync(join(home, '.dsh-tui'), { recursive: true })
+  writeFileSync(join(home, '.dsh-tui', 'onboarding.json'), JSON.stringify({ completed: true, version: 1 }))
+  for (const [file, value] of Object.entries(files)) writeFileSync(join(home, '.dsh-tui', file), JSON.stringify(value))
+  return home
+}
+const homeRestartLog = home => readLines(join(home, '.dsh-tui', 'restart.log'))
+/** Adopted on `path`: in the entry process, or by a dsh-tui row in dsh. */
+const adoptedOn = (run, path) => path === 'entry'
+  ? adoptedInEntry(run)
+  : run.traced('row-apply') && !run.traced('entry-start') && run.traced('render-done')
+/** Cells whose foreground is the test theme's colour. */
+const THEME_RGB = 0xab12cd
+const themedCells = async run => {
+  const { cols, rows } = await run.t.getSize()
+  const cells = await run.t.cells(0, 0, cols, rows)
+  return cells.filter(cell => cell.fg === THEME_RGB || String(cell.fg).toLowerCase().includes('ab12cd')).length
+}
+
+for (const [path, pathEnv] of Object.entries(PLUGIN_PATHS)) await runCase(`plugins-${path}`, async ({ check, launch }) => {
+  const report = join(root, `report-plugins-${path}.jsonl`)
+  rmSync(report, { force: true })
+  const home = pluginHome(`plugins-${path}`, { 'theme.json': { theme: 'accept-theme' }, 'extension-grants.json': GRANTS })
+  // A rewritten input is delivered: its model request goes to a closed local
+  // port instead of DeepSeek, so no model is asked (an id-targeted config
+  // replaces the row's block: cordis.patch.yml's llm-deepseek, base URL changed).
+  const offline = `- id: llm-deepseek\n  config:\n    apiKeyEnv: 'DEEPSEEK_API_KEY'\n    baseURL: 'http://127.0.0.1:9'\n    thinking: enabled\n    reasoningEffort: max\n`
+  await withProfilePatch(offline + pluginPatch([['accept-theme', 'theme.mjs'], ['accept-panels', 'panels.mjs'], ['accept-guard', 'guard.mjs']], report), async () => {
+    const run = await launch({
+      backend: 'dsh', landing: false, cols: 150, rows: 36,
+      env: { ...pathEnv, HOME: home },
+    })
+    await run.t.getByText(PROMPT).expect({ timeout: 60000 })
+    // In the entry the first frame precedes every plugin row: the persisted
+    // runtime theme cannot be drawn yet (auto-detection stands in), and
+    // ThemeProvider restores it once it registers. Recorded, not asserted.
+    check(`first frame: ${await themedCells(run)} cells in the test theme's colour (before adoption: ${!run.traced('startup-adopted')})`, true)
+    check(`adopted on the ${path} path`, await until(() => adoptedOn(run, path), 60000), timeline(run))
+    const entries = () => readReport(report)
+    const find = (plugin, event) => entries().find(entry => entry.plugin === plugin && entry.event === event)
+    await until(() => find('panels', 'opened') !== undefined || find('panels', 'open-failed') !== undefined, 20000)
+    // (a) the runtime theme, persisted before it existed
+    check('theme registered', find('theme', 'registered')?.ok === true, JSON.stringify(entries()))
+    check('the persisted runtime theme is the one in use', await until(async () => (await themedCells(run)) > 20, 5000), `themed cells: ${await themedCells(run)}`)
+    // (b) the panel, under the plugin's own identity
+    const panels = find('panels', 'registered')
+    check('panels plugin admitted as accept-panels', find('panels', 'admitted')?.componentId === 'accept-panels', JSON.stringify(entries()))
+    check('panel id carries the plugin id (no act<N> fallback)', JSON.stringify(panels?.ids) === '["accept-panels:demo"]', JSON.stringify(panels))
+    const budget = find('panels', 'budget')
+    check('panel budget counted per plugin: 3 more fit, a 5th is refused', budget?.accepted === 3 && budget?.fifthRefused === true, JSON.stringify(budget))
+    check('storage write under the plugin identity', find('panels', 'storage')?.ok === true && existsSync(join(home, '.dsh-tui', 'plugin-storage', 'accept-panels.json')), JSON.stringify(entries().filter(entry => entry.plugin === 'panels')))
+    check('panel opened', find('panels', 'opened') !== undefined, JSON.stringify(entries().filter(entry => entry.plugin === 'panels')))
+    const shown = await until(async () => (await run.screen()).includes('ACCEPT-PANEL-BODY'), 5000)
+    // The profile path drops a panel registered before the dsh-tui row's
+    // runtime applies: the runtime seeds the enabled-panels store from its
+    // Config (plugin.ts applySidePanelPanels) over the plugin's entry, and the
+    // open is then ignored. In the entry the runtime is mounted first.
+    if (path === 'entry') check('panel shown', shown, lines(await run.screen()).join('\n'))
+    else check(`panel shown: ${shown} (profile path: a panel registered before the runtime applies is not enabled; known, not this block's)`, true)
+    // The opened panel holds the focus: back to the prompt.
+    await run.t.press('Escape')
+    await sleep(300)
+    // (c) decisions (DecisionEvents admission waits for the channel's dispatch)
+    check('guard admitted as accept-guard and subscribed', await until(() => find('guard', 'subscribed')?.componentId === 'accept-guard', 20000), JSON.stringify(entries().filter(entry => entry.plugin === 'guard')))
+    await run.clear()
+    await run.t.type('accept-veto this line')
+    await sleep(300)
+    await run.t.press('Enter')
+    check('tui/input veto: the reason is on screen', await until(async () => (await run.screen()).includes('ACCEPT-VETOED'), 5000), lines(await run.screen()).slice(-10).join('\n'))
+    check('the guard saw the input as accept-guard', entries().some(entry => entry.event === 'input' && entry.text === 'accept-veto this line' && entry.componentId === 'accept-guard'))
+    await run.clear()
+    await run.command('/new')
+    check('tui/session-switch veto: the reason is on screen', await until(async () => (await run.screen()).includes('ACCEPT-SWITCH-VETOED'), 5000), lines(await run.screen()).slice(-10).join('\n'))
+    check('the guard saw the /new', entries().some(entry => entry.event === 'session-switch' && entry.kind === 'new'))
+    await run.clear()
+    await run.t.type('accept-rewrite this line')
+    await sleep(300)
+    await run.t.press('Enter')
+    check('tui/input rewrite: the transcript has the rewritten text', await until(async () => (await run.screen()).includes('ACCEPT-REWRITTEN'), 8000), lines(await run.screen()).slice(-12).join('\n'))
+    check('and not the typed one', !(await run.screen()).includes('accept-rewrite this line'))
+    // ("429 — catching a breath" and the like are working-activity's retry
+    // phrases, not responses.) A transport failure: nothing answered at all.
+    check('no model answered: the turn ends in a transport failure', await until(async () => (await run.screen()).includes('transport failed'), 60000, 500), lines(await run.screen()).slice(-12).join('\n'))
+    await sleep(1000)
+    await run.t.press('Escape')
+    await sleep(500)
+    await run.clear()
+    await run.command('/quit')
+    await checkExit(run, check, { code: 0 })
+    check('no crash in restart.log', !homeRestartLog(home).some(line => / pid=\d+ crash /.test(line)), homeRestartLog(home).join('\n'))
+  })
+})
+
+// Root capabilities from a third-party row, in its apply (the profile still
+// composing) and 4s later. On the profile path the guard arrives with the
+// first TUI row: a row activating after it (here: one that injects a TUI
+// service) is refused, one activating before it (no inject: it applies as
+// soon as its module loads) is not. The entry arms the same point
+// (host-access.ts armRootCapabilityGuard); before block 2.7 it guarded no
+// row while the profile composed.
+const overreachEarly = {}
+for (const [path, pathEnv] of Object.entries(PLUGIN_PATHS)) await runCase(`plugin-overreach-${path}`, async ({ check, launch }) => {
+  const report = join(root, `report-overreach-${path}.jsonl`)
+  rmSync(report, { force: true })
+  const home = pluginHome(`overreach-${path}`)
+  await withProfilePatch(pluginPatch([['accept-overreach', 'overreach.mjs', { label: 'early' }], ['accept-overreach-late', 'overreach-late.mjs', { label: 'late' }]], report), async () => {
+    const run = await launch({ backend: 'dsh', landing: false, env: { ...pathEnv, HOME: home } })
+    await run.t.getByText(PROMPT).expect({ timeout: 60000 })
+    check(`adopted on the ${path} path`, await until(() => adoptedOn(run, path), 60000), timeline(run))
+    const entries = () => readReport(report)
+    check('both rows applied and tried again later', await until(() => entries().filter(entry => entry.event === 'later').length === 2, 15000), JSON.stringify(entries()))
+    const allDenied = results => Object.values(results ?? {}).length > 0 && Object.values(results).every(value => value === 'denied')
+    for (const entry of entries()) {
+      // A row applying before any TUI row (no inject: as soon as its module
+      // loads) is ahead of the guard on both paths; recorded, and the two
+      // paths must agree.
+      if (entry.plugin === 'early' && entry.event === 'apply') {
+        overreachEarly[path] = JSON.stringify(entry.results)
+        check(`early row, apply (before any TUI row): ${overreachEarly[path]}`, true)
+        continue
+      }
+      check(`${entry.plugin} row, ${entry.event}: every root capability denied ${JSON.stringify(entry.results)}`, allDenied(entry.results))
+    }
+    const other = path === 'entry' ? 'profile' : 'entry'
+    if (overreachEarly[other] !== undefined) check(`early row: the ${path} path agrees with the ${other} path`, overreachEarly[path] === overreachEarly[other], `${path}=${overreachEarly[path]} ${other}=${overreachEarly[other]}`)
+    await run.clear()
+    await run.command('/quit')
+    await checkExit(run, check, { code: 0 })
+  })
+})
+
+// A third-party row failing, on the entry path: in its apply while the
+// profile composes (DSH's audit reports it; the TUI does not crash, the
+// session opens), or later from a timer / an unhandled rejection — then the
+// TUI's crash funnel is the one exit (block 2.5): one crash line, crash.log,
+// terminal restored, exit 1 (the launcher offers safe mode).
+const launchPluginCase = async (launch, name, rows, report, env = {}) => {
+  rmSync(report, { force: true })
+  const home = pluginHome(name)
+  writeFileSync(profilePatchFile, pluginPatch(rows, report))
+  const run = await launch({ backend: 'dsh', landing: false, env: { HOME: home, ...env } })
+  await run.t.getByText(PROMPT).expect({ timeout: 60000 })
+  return { run, home }
+}
+await runCase('plugin-apply-throws', async ({ check, launch }) => {
+  const report = join(root, 'report-apply-throws.jsonl')
+  try {
+    const { run, home } = await launchPluginCase(launch, 'apply-throws', [['accept-misbehave', 'misbehave.mjs', { mode: 'apply-throw' }]], report)
+    check('adopted in the entry', await until(() => adoptedInEntry(run), 60000), timeline(run))
+    check('the row applied (and threw) while the profile composed', readReport(report).some(entry => entry.event === 'apply'), JSON.stringify(readReport(report)))
+    await sleep(1500)
+    check('still running, no crash', (await run.t.state()).exited === null && !homeRestartLog(home).some(line => / pid=\d+ crash /.test(line)), homeRestartLog(home).join('\n'))
+    await run.clear()
+    const sentAt = Date.now()
+    await run.command('/quit')
+    await checkExit(run, check, { code: 0 })
+    check(`quit → gone ${Date.now() - sentAt}ms`, true)
+  } finally {
+    writeFileSync(profilePatchFile, '[]\n')
+  }
+})
+for (const [name, mode, text] of [
+  ['plugin-throws-composing', 'throw@0', 'plugin runtime threw'],
+  ['plugin-throws-running', 'throw@6000', 'plugin runtime threw'],
+  ['plugin-rejects-running', 'reject@6000', 'plugin runtime rejection'],
+]) await runCase(name, async ({ check, launch }) => {
+  const report = join(root, `report-${name}.jsonl`)
+  try {
+    const { run, home } = await launchPluginCase(launch, name, [['accept-misbehave', 'misbehave.mjs', { mode }]], report)
+    check('the crash line is on screen', await until(async () => (await run.screen()).includes('dsh-tui crashed'), 20000), `${timeline(run)}\n${lines(await run.screen()).slice(-8).join('\n')}`)
+    const state = await run.t.state()
+    const modes = state.modes
+    check('terminal restored by the TUI (before the launcher prompt)',
+      modes.alternate_screen === false && modes.cursor_visible === true && modes.bracketed_paste === false && modes.focus_events === false && state.mouse_mode === 'none',
+      JSON.stringify({ ...modes, mouse_mode: state.mouse_mode }))
+    const screen = await run.screen()
+    check('one crash line, no DSH fail-loud line', screen.split('dsh-tui crashed').length === 2 && !screen.includes('dsh: fatal'), lines(screen).slice(-8).join('\n'))
+    const crashLog = join(home, '.dsh-tui', 'crash.log')
+    check('crash.log names the plugin error', existsSync(crashLog) && readFileSync(crashLog, 'utf8').includes(text))
+    check(`crashed ${run.traced('startup-adopted') ? 'after' : 'before'} the adoption`, true)
+    check('the safe-mode prompt follows', await until(async () => (await run.screen()).includes(SAFE_MODE), 10000, 25), lines(await run.screen()).slice(-4).join('\n'))
+    await run.t.type('n')
+    await run.t.press('Enter')
+    await checkExit(run, check, { code: 1 })
+  } finally {
+    writeFileSync(profilePatchFile, '[]\n')
+  }
+})
+
+// A third-party row holding SIGTERM / SIGINT / SIGHUP with listeners of its
+// own: the entry still ends by the signal (dieBySignal drops its own
+// listeners, then after 0.5s every listener, and raises it again); terminal
+// restored, no safe-mode prompt.
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) await runCase(`plugin-holds-${signal.toLowerCase()}`, async ({ check, launch }) => {
+  const report = join(root, `report-holds-${signal}.jsonl`)
+  try {
+    const { run, home } = await launchPluginCase(launch, `holds-${signal}`, [['accept-misbehave', 'misbehave.mjs', { mode: 'signals' }]], report)
+    check('adopted in the entry', await until(() => adoptedInEntry(run), 60000), timeline(run))
+    const pid = entryPidOf(run)
+    const sentAt = Date.now()
+    process.kill(pid, signal)
+    const ms = await waitGone(run, sentAt)
+    const state = await run.t.state()
+    check(`ends by ${signal} (exited=${state.exited} signal=${state.exit_signal})`, state.exit_signal === SIGNAL_TEXT[signal])
+    check(`signal → gone ${ms}ms (≤ 3000: the 0.5s grace included)`, ms <= 3000)
+    check("the plugin's own listener ran", readReport(report).some(entry => entry.event === 'signal' && entry.signal === signal), JSON.stringify(readReport(report)))
+    check('the entry took the signal', homeRestartLog(home).some(line => line.includes('signal: received') && line.includes(signal)), homeRestartLog(home).filter(line => line.includes('signal')).join('\n'))
+    check('no crash, no safe-mode prompt', !homeRestartLog(home).some(line => / pid=\d+ crash /.test(line)) && !(await run.screen()).includes(SAFE_MODE), lines(await run.screen()).slice(-4).join('\n'))
+    await checkExit(run, check)
+  } finally {
+    writeFileSync(profilePatchFile, '[]\n')
   }
 })
 

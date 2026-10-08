@@ -57,6 +57,14 @@
   `TuiSceneProps.channel` 取用该端口的插件）做一次 `.minimal` / `.setMinimal(`
   扫描：零调用方即在 v0.13 删除这两个别名与 `ui-policy.ts` 里的
   `'setMinimal': 'mutate'` 行；仍有调用方则在同一版本内完成迁移，不再顺延。
+- **DSH 内核在本包入口进程内**（独立宿主起的默认，见[配置](configuration.md)）：
+  界面先挂、profile 后组合，插件行在首帧**之后**激活，所有 `ctx.tui*` 注册都落到
+  已挂载的界面上（主题、面板、状态视图等实时加入）。用户选定的运行时主题在其插件
+  注册后生效，此前的首帧用自动检测的配色。根能力守卫与 `dsh --profile` 一致：在首个
+  TUI 行之后激活的行，apply 里不能用 `ctx.root` 的能力（`root.plugin`、
+  `root.effect`、`root.on` 等）。apply 里等待会拖住组合：耗时工作脱离 apply 启动、
+  不要 await。场景的 `TuiSceneProps.channel` 在没有会话撑着时（例如启动会话打开失败，
+  见 `startupFailure`）`ready` 为 `false`、`status` 为 `'starting'`。
 
 核心仓库保持独立，社区插件各居其位。
 生态组织只维护收录与准入规则——不对社区插件的功能、质量或安全性
