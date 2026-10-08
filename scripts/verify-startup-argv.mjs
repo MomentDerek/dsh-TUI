@@ -105,8 +105,11 @@ if (probeMode) {
     DSH_BACKEND_ID,
     // These cases pin the `dsh --profile` path (DSH_TUI_HOST_ENTRY=0 below), so
     // the boot is never the entry's in-process DSH row: the kernel comes from the
-    // env/Config ranking alone.
+    // env/Config ranking alone. Nothing is handed in from an entry either, so
+    // the compiled `apply` sees an empty options object — no kernel route
+    // (`RuntimeApplyOptions.entryKernel`, replayed as a declaration below).
     dshInEntry: false,
+    runtimeOptions: {},
     config: {
       backend: process.env.DSH_TUI_BACKEND,
       sessionId: process.env.DSH_TUI_RESUME_SESSION,
@@ -178,9 +181,11 @@ async function compiledStartup() {
       declarations.set(declaration.name.getText(source), statement.getText(source))
     }
   }
+  // In `apply` order: `entryKernel` (the route an entry hands in) is replayed
+  // because `backendChoice` reads it first; the pinned scope leaves it unset.
   const names = [
     'cmdline', 'cmdlineArgs', 'requestedWorkspace', 'launchSessionId', 'submitChannel', 'initialPrompt',
-    'rawBackend', 'handoffBackendRaw', 'handoffBackend', 'rememberedBackend', 'backendChoice',
+    'rawBackend', 'handoffBackendRaw', 'handoffBackend', 'rememberedBackend', 'entryKernel', 'backendChoice',
     'resumeBackendRaw', 'resumeTarget', 'effectiveSessionId', 'configuredSessionId',
   ]
   const startup = names.map(name => {

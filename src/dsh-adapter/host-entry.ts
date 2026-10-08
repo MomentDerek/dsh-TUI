@@ -212,7 +212,12 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // (armed below), or once the profile has composed at the latest.
   const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)
   try {
-    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(hostNotice === undefined ? {} : { hostNotice }) })
+    // The route this process took goes in as well (`entryKernel`): the runtime
+    // must not resolve the kernel chain again — its rebuilt Config lacks the
+    // profile patch's Config row this decision was based on — so the
+    // placeholder session (and the status line naming it) is the kernel this
+    // launch was routed to.
+    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, entryKernel: kernel, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(hostNotice === undefined ? {} : { hostNotice }) })
   } catch (error) {
     handleStartupError(ctx, error)
     return

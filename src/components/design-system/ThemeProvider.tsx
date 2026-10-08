@@ -117,13 +117,16 @@ export function ThemeProvider({
   themeHost,
 }: {
   children: React.ReactNode
+  /** Explicit theme. A value that changes after mount is applied like one
+   *  present at mount (the entry hands the settled route's theme in late). */
   theme?: string
   /** Optional runtime theme host; absent in headless/static embeds. */
   themeHost?: TuiThemeHost
 }): React.ReactNode {
   const runtimeThemeSnapshot = useRuntimeThemeSnapshot(themeHost)
   // Resolution happens once on mount: the forced chain (prop > env >
-  // persisted) or null, which arms OSC 11 detection.
+  // persisted) or null, which arms OSC 11 detection. A `theme` prop that
+  // arrives later than the mount is applied by the effect further down.
   const [forced] = useState<string | undefined>(() =>
     theme ?? envThemeOverride() ?? readThemePref(),
   )
@@ -287,6 +290,23 @@ export function ThemeProvider({
       setActive(requested)
     }
   }, [active, redetectAutoBase, runtimeThemeSnapshot])
+
+  /**
+   * forced theme 的**变化**：`theme` prop 可能挂载后才到（入口挂载早于 profile
+   * 装配，装配完的 rerender 才把定好的主题传进来）。只在挂载时读一次会让屏幕
+   * 停在检测配色上，所以 prop 一到就落成当前请求并立即生效；名字此刻还查不到
+   * （运行时插件主题尚未注册）时只记成请求，由下面那个 effect 在它出现后接上。
+   * prop 撤走不算一次请求变更：env 与持久化偏好是启动期输入，不在这里重读。
+   */
+  useEffect(() => {
+    if (theme === undefined) return
+    requestedThemeRef.current = theme
+    // 显式 prop 与挂载时的锁判定同口径：品牌默认档让位。
+    brandThemeLockRef.current = true
+    if (!isThemeAvailable(theme)) return
+    setActive(theme)
+    if (theme === AUTO_THEME_NAME) redetectAutoBase()
+  }, [theme, redetectAutoBase])
 
   // ── 品牌默认档（branding.ts）───────────────────────────────────────────
   // Claude 后端（claude 品牌）时把默认主题档替换成 Claude 双主题（claude-dark
