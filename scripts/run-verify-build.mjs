@@ -133,6 +133,7 @@ const GATES = [
   'verify:btw',
   'verify:session-mounts',
   'verify:handoff-stdin',
+  'verify:lib-bundle',
 ]
 
 // The longest gates start first so none of them is left running alone at the
