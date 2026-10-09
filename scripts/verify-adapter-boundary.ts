@@ -143,6 +143,31 @@ const SCOPED_PACKAGE = /^@[^/]+\//u
 // messages and ids for every backend through createUserMessage.
 const CORE_DIR = 'dsh-adapter/channel/core/'
 
+const HOST_DSH = 'dsh-adapter/host-dsh.ts'
+const HOST_CONTRACT = 'dsh-adapter/host-contract.ts'
+const HOST_CONTRACT_IMPORTERS = [HOST_DSH, 'dsh-adapter/contract.ts']
+/** Host-only literals contract.ts may carry (a manifest read, not a module load). */
+const HOST_LITERAL_EXCEPTIONS = new Set(['dsh-adapter/contract.ts @deepseek-ai/dsh/package.json'])
+const TEST_FAULTS = 'dsh-adapter/test-faults.ts'
+const TEST_FAULT_IMPORTERS = ['dsh-adapter/host-entry.ts', 'dsh-adapter/plugin.ts']
+const STRING_LITERAL = /(['"`])(@deepseek-ai\/[^'"`\s]*)\1/gu
+
+/** The host-only specifiers, read from the contract's source text (the gate
+ *  must not import src/). The host package itself and its subpaths count. */
+function readHostOnlySpecifiers(): Set<string> {
+  const source = readFileSync(join(SRC, HOST_CONTRACT), 'utf8')
+  const host = /export const HOST_PACKAGE = '([^']+)'/u.exec(source)?.[1]
+  const modules = /export const HOST_MODULES = \[([\s\S]*?)\] as const/u.exec(source)?.[1]
+  if (host === undefined || modules === undefined) throw new Error(`src/${HOST_CONTRACT}: HOST_PACKAGE / HOST_MODULES not found`)
+  const specifiers = new Set([host])
+  for (const match of modules.matchAll(/specifier: '([^']+)'/gu)) if (match[1] !== '@deepseek-ai/cordis') specifiers.add(match[1])
+  if (specifiers.size < 2) throw new Error(`src/${HOST_CONTRACT}: HOST_MODULES lists no specifier`)
+  return specifiers
+}
+const HOST_ONLY = readHostOnlySpecifiers()
+const HOST_PACKAGE_NAME = [...HOST_ONLY][0]
+const isHostOnly = (specifier: string): boolean => HOST_ONLY.has(specifier) || specifier.startsWith(`${HOST_PACKAGE_NAME}/`)
+
 /** Read every backend manifest, fail loud when one cannot be read (a manifest
  *  that silently disappears would silently *relax* the gate), and check that it
  *  imports nothing but types. */
@@ -176,36 +201,6 @@ async function readManifests(): Promise<readonly { readonly name: string; readon
   }
   return found
 }
-
-const HOST_DSH = 'dsh-adapter/host-dsh.ts'
-const HOST_CONTRACT = 'dsh-adapter/host-contract.ts'
-const HOST_CONTRACT_IMPORTERS = [HOST_DSH, 'dsh-adapter/contract.ts']
-/** Host-only literals contract.ts may carry (a manifest read, not a module load). */
-const HOST_LITERAL_EXCEPTIONS = new Set(['dsh-adapter/contract.ts @deepseek-ai/dsh/package.json'])
-const TEST_FAULTS = 'dsh-adapter/test-faults.ts'
-const TEST_FAULT_IMPORTERS = ['dsh-adapter/host-entry.ts', 'dsh-adapter/plugin.ts']
-const STRING_LITERAL = /(['"`])(@deepseek-ai\/[^'"`\s]*)\1/gu
-
-/** The host-only specifiers, read from the contract's source text (the gate
- *  must not import src/). The host package itself and its subpaths count. */
-function readHostOnlySpecifiers(): Set<string> {
-  const source = readFileSync(join(SRC, HOST_CONTRACT), 'utf8')
-  const host = /export const HOST_PACKAGE = '([^']+)'/u.exec(source)?.[1]
-  const modules = /export const HOST_MODULES = \[([\s\S]*?)\] as const/u.exec(source)?.[1]
-  if (host === undefined || modules === undefined) throw new Error(`src/${HOST_CONTRACT}: HOST_PACKAGE / HOST_MODULES not found`)
-  const specifiers = new Set([host])
-  for (const match of modules.matchAll(/specifier: '([^']+)'/gu)) if (match[1] !== '@deepseek-ai/cordis') specifiers.add(match[1])
-  if (specifiers.size < 2) throw new Error(`src/${HOST_CONTRACT}: HOST_MODULES lists no specifier`)
-  return specifiers
-}
-const HOST_ONLY = readHostOnlySpecifiers()
-const HOST_PACKAGE_NAME = [...HOST_ONLY][0]
-const isHostOnly = (specifier: string): boolean => HOST_ONLY.has(specifier) || specifier.startsWith(`${HOST_PACKAGE_NAME}/`)
-
-const NATIVE_RULES: readonly { readonly key: string; readonly allowedIn: string }[] = [
-  { key: 'dsh', allowedIn: 'dsh-adapter/' },
-  { key: 'codex', allowedIn: 'backends/codex/' },
-]
 
 const fail = (message: string): never => {
   console.error(`Adapter boundary violated:\n  - ${message}`)

@@ -3471,6 +3471,8 @@ function disposeRootAndThen(ctx: Context, done: () => void, fallback: number | (
   }, 5000)
   timer.unref()
   // A composition still running into this root settles first (./root-dispose.ts).
+  // The pooled, process-wide resources of every backend this process actually
+  // loaded are closed here — after the fiber, never before (P0 D4-P2/P3).
   void disposeRootSettled(ctx, () => withHostRootCapability(() => ctx.root.fiber.dispose())).finally(() => unloadBackends()).then(
     () => {
       clearTimeout(timer)

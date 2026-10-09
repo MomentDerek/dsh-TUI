@@ -1988,7 +1988,7 @@ export function PromptInput({
    */
   /** The startup phase's refusal (see `ChannelUi.ready`). */
   const notifyNotReady = (): void => {
-    channel.notify(t('startup-not-ready', { backend: kernelDisplayName(channel.backendCapabilities.backendId) }), { color: 'warning', timeoutMs: 2500 })
+    channel.notify(t('startup-not-ready', { backend: backendLabel ?? channel.backendCapabilities.backendId }), { color: 'warning', timeoutMs: 2500 })
   }
   const tryRunCommand = (text: string): boolean => {
     if (!text.startsWith('/')) return false

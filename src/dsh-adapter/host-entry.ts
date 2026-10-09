@@ -134,11 +134,11 @@ function quoteForCmd(arg: string): string {
  * Dispose the root without the funnel (`installEntrySignals`' fallback: no
  * owner yet, or one that refused) and close what the funnel's own teardown
  * closes on its way out (`plugin.ts disposeRootAndThen`'s
- * `.finally(closeBackendResources)`) — a signal that lands before the runtime
+ * `.finally(unloadBackends)`) — a signal that lands before the runtime
  * fills `exitSeam.request` (the funnel, plugin.ts) takes this path instead,
  * and a codex hub is a process-wide pool (src/backends/codex/rpc/hub.ts) that
- * no session's own `dispose` closes. Closing twice is harmless
- * (`closeAllCodexHubs` clears its registry). The import stays dynamic: this
+ * no session's own `dispose` closes. Closing twice is harmless (the registry
+ * forgets each hook once it ran). The import stays dynamic: this
  * module's load surface and the entry's start-up order must not gain a
  * backend.
  */
@@ -147,8 +147,8 @@ async function disposeEntryRoot(ctx: Context): Promise<void> {
     await disposeRootSettled(ctx)
   } finally {
     try {
-      const { closeBackendResources } = await import('./backends.js')
-      await closeBackendResources()
+      const { unloadBackends } = await import('./backend-registry.js')
+      await unloadBackends()
     } catch (error) {
       logForDebugging(`dsh-tui: closing backend resources on the entry's exit path failed (${error instanceof Error ? error.message : String(error)})`)
     }

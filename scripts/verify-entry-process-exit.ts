@@ -272,7 +272,7 @@ esac
   // session's own dispose closes it (src/backends/codex/rpc/hub.ts).
   check('the entry\'s own dispose closes the backend resources the funnel also closes',
     /disposeRootSettled\(ctx\)\n  \} finally \{/.test(entry)
-    && /const \{ closeBackendResources \} = await import\('\.\/backends\.js'\)\n      await closeBackendResources\(\)/.test(entry))
+    && /const \{ unloadBackends \} = await import\('\.\/backend-registry\.js'\)\n      await unloadBackends\(\)/.test(entry))
   check('the entry tracks its composition, which stops short of the audit and readiness once a dispose waits',
     /const composition = trackComposition\(ctx, /.test(entry) && /await root\.compose\([^\n]*\(\) => composition\.disposing\)/.test(entry)
       && /if \(loader\(\) === undefined \|\| stopping\(\)\) return/.test(hostDsh) && /&& !stopping\(\)\) appReady\.commit\(\)/.test(hostDsh))

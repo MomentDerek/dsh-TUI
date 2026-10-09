@@ -1631,8 +1631,9 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // the app-level separator too, and replay this same argv on a safe retry.
   const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
 
-  // 内核分流（docs/standalone-host-design.md 5.8）：判定为 Claude 时走本包入口，
-  // 不组合 DSH profile。启动器读不到 profile 补丁里 Config 行的 backend（零 lib
+  // 内核分流（docs/standalone-host-design.md 5.8）：判定为非 DSH 内核时走本包入口
+  // （Claude 与 Codex 同一判据，见 src/hostEntryRoute.ts `entryRoute`），不组合 DSH
+  // profile。启动器读不到 profile 补丁里 Config 行的 backend（零 lib
   // 依赖），所以这里只按 一次性交接 → DSH_TUI_BACKEND（--backend）→ kernel.json
   // 判定；入口自己会再读 Config 行，钉在 DSH 上时原样交给 dsh。dsh 自己的
   // 一次性开关（--version、--dump-config* 等 hostArgs）始终交给 dsh。
@@ -1643,9 +1644,11 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
   const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
   const dshInEntry = hostEntryEnabled && process.env.DSH_TUI_HOST_ENTRY_DSH !== '0'
+  // 只做 id 语法判定（P0 D1）：成员判定归 boot——未装的插件 id 在那里与写错的 id
+  // 一样回落 dsh 并告警，启动器不必（也不能）复制注册表。
   const pickKernel = value => {
     const id = typeof value === 'string' ? value.trim().toLowerCase() : ''
-    return KERNEL_IDS.includes(id) ? id : undefined
+    return isBackendIdSyntax(id) ? id : undefined
   }
   const launchKernel = () => {
     const handoff = pickKernel(process.env.DSH_TUI_BACKEND_HANDOFF)
@@ -1661,7 +1664,7 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   }
   // 必须在首次 spawn 之前：本次启动的 TUI 写的记录都晚于这个时刻。
   noteLaunchChain()
-  if (hostEntryEnabled && hostArgs.length === 0 && (dshInEntry || launchKernel() === 'claude')) {
+  if (hostEntryEnabled && hostArgs.length === 0 && (dshInEntry || launchKernel() !== 'dsh')) {
     // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
     settleFirstResult(await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env), firstArgs)
   } else {

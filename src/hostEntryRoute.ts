@@ -11,7 +11,8 @@
  */
 import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
-import { KERNEL_SWITCH_HANDOFF_ENV, hostEntryDshEnabled, isKernelId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, hostEntryDshEnabled, parseBackendId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
+import { isRegisteredBackend, parseBackendChoice } from './dsh-adapter/backend-registry.js'
 import { profilePatchPath, readProfileTuiSettings } from './tuiSettingsFile.js'
 
 export { HOST_ENTRY_DSH_ENV, HOST_ENTRY_ENV, HOST_ENTRY_PATH_ENV, hostEntryDisabled, hostEntryDshEnabled } from './kernelPrefs.js'
@@ -34,24 +35,27 @@ export function configuredBackend(profile: string, patchFile: string = profilePa
   } catch {
     return undefined
   }
-  const value = readProfileTuiSettings(patchFile, ['backend'])?.backend
-  if (typeof value !== 'string') return undefined
-  const id = value.trim().toLowerCase()
-  return isKernelId(id) ? id : undefined
+  return parseBackendChoice(readProfileTuiSettings(patchFile, ['backend'])?.backend)
 }
 
 /** The kernel this launch boots on, by the same ranking as the plugin
- *  (handoff → Config row → DSH_TUI_BACKEND → kernel.json → dsh). */
+ *  (handoff → Config row → DSH_TUI_BACKEND → kernel.json → dsh). Both halves of
+ *  the parse are here, as in the boot (`plugin.ts`): the syntax gate first, then
+ *  the registry — an id that is syntactically valid but not installed falls back
+ *  to dsh exactly like a typo does (P0 D1), so the entry never mounts the
+ *  runtime on a kernel this process cannot load. */
 export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
   readonly configured?: KernelBackendId
   readonly memoryFile?: string
 } = {}): KernelBackendId {
-  const handoff = env[KERNEL_SWITCH_HANDOFF_ENV]?.trim().toLowerCase()
+  const handoff = parseBackendId(env[KERNEL_SWITCH_HANDOFF_ENV])
+  const memory = readKernelPrefs(input.memoryFile).backend
   return resolveRememberedBackend({
-    ...(isKernelId(handoff) ? { handoff } : {}),
+    ...(handoff === undefined ? {} : { handoff }),
     ...(input.configured === undefined ? {} : { configured: input.configured }),
     envRaw: env.DSH_TUI_BACKEND,
-    memory: readKernelPrefs(input.memoryFile).backend,
+    envKnown: isRegisteredBackend,
+    memory: isRegisteredBackend(memory) ? memory : undefined,
   })
 }
 

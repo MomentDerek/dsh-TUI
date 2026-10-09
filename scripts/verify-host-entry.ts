@@ -51,12 +51,19 @@ const root = mkdtempSync(join(tmpdir(), 'verify-host-entry-'))
 const memory = join(root, 'kernel.json')
 const noMemory = join(root, 'absent.json')
 writeFileSync(memory, JSON.stringify({ backend: 'claude' }))
+/** A remembered kernel that is not installed: the registry's half rejects it. */
+const ghostMemory = join(root, 'kernel-ghost.json')
+writeFileSync(ghostMemory, JSON.stringify({ backend: 'ghost-backend' }))
 
 // ── entryKernel ───────────────────────────────────────────────────────
 check('nothing set: dsh', entryKernel({}, { memoryFile: noMemory }) === 'dsh')
 check('kernel.json: claude', entryKernel({}, { memoryFile: memory }) === 'claude')
 check('DSH_TUI_BACKEND beats kernel.json', entryKernel({ DSH_TUI_BACKEND: 'dsh' }, { memoryFile: memory }) === 'dsh')
 check('an invalid DSH_TUI_BACKEND means dsh, not the memory', entryKernel({ DSH_TUI_BACKEND: 'nope' }, { memoryFile: memory }) === 'dsh')
+check('a legal but uninstalled id means dsh too (membership is the registry\'s half)',
+  entryKernel({ DSH_TUI_BACKEND: 'ghost-backend' }, { memoryFile: memory }) === 'dsh')
+check('an uninstalled kernel.json entry does not decide the boot either',
+  entryKernel({}, { memoryFile: ghostMemory }) === 'dsh')
 check('the Config row beats DSH_TUI_BACKEND', entryKernel({ DSH_TUI_BACKEND: 'claude' }, { configured: 'dsh', memoryFile: noMemory }) === 'dsh')
 check('a handoff beats the Config row', entryKernel({ DSH_TUI_BACKEND_HANDOFF: 'claude' }, { configured: 'dsh', memoryFile: noMemory }) === 'claude')
 
@@ -84,6 +91,8 @@ writeFileSync(patch, '- id: dsh-tui\n  config:\n    backend: !!js process.env.DS
 check('a !!js backend is no pin', configuredBackend('x', patch) === undefined)
 writeFileSync(patch, '- id: dsh-tui\n  config:\n    lang: en\n')
 check('a row without backend is no pin', configuredBackend('x', patch) === undefined)
+writeFileSync(patch, '- id: dsh-tui\n  config:\n    backend: ghost-backend\n')
+check('a row naming an uninstalled backend is no pin', configuredBackend('x', patch) === undefined)
 
 // ── restartArgv ───────────────────────────────────────────────────────
 const entry = '/pkg/lib/types/dsh-adapter/host-entry.js'
