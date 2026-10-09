@@ -347,6 +347,14 @@ CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 | Markdown 独立节点（表格、mermaid 图、公式块）、LaTeX 公式与流式分块间距 | `pnpm verify:table-layout`、`pnpm verify:mermaid-diagram`、`pnpm verify:latex-math`、`node --import tsx/esm scripts/verify-streaming-markdown-spacing.tsx` |
 | 跨进程会话占用账本（失败行为、严格读、锁回收、预约） | `pnpm verify:session-mounts` |
 | 未发送草稿的跨屏交接（快照、光标、图片绑定、归属） | `pnpm verify:composer-draft-handoff`；端到端换屏另见 `node scripts/verify-session-browser.mjs` |
+| 启动器 `bin/dsh-tui.js`（argv 解析与委托/自举、安全模式、`/update` 的启动器迁移、entry 子进程的 env） | `node scripts/verify-launcher.mjs` + `node scripts/verify-safe-mode.mjs` + `node scripts/verify-update.mjs` + `node scripts/verify-update-recovery.mjs` |
+
+启动器那一行是个特例：这四个脚本都在 CI 的 `input-terminal` 组内（required），
+但**不在本地 `pnpm verify:build` 的聚合清单里**——只跑 `verify:build` 会漏掉它们，
+而启动器改动恰好落在它们身上。改 `bin/dsh-tui.js` 时必须单跑这四条。
+`verify-safe-mode` 与 `verify-backend-registry` 还会按标记**文本切片**启动器片段、在
+vm 沙箱里只注入少数符号：改动切片区间内的代码、或在其中引入模块级常量，都会让
+它们静默转红（函数自带的 try/catch 把沙箱里的 `ReferenceError` 吞成「读不到数据」）。
 
 多数用普通 `node` 调用的脚本 import `lib/types/`——先跑 `pnpm build`。import
 TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式。不要凭

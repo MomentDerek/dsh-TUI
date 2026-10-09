@@ -3,8 +3,11 @@
 [文档索引](README.md) · [架构与限制](architecture.md) · [多后端架构](agent-backend-design.md)
 
 状态：Phase 0、Phase 1 完成；Phase 2 主体（2.0–2.7）完成，根模型**已裁定为单根（D1）**并落地
-（原型分支 `feat/standalone-host`；规划见实施记录「Phase 2 规划」一节）。正文唯一未实现的一节是
-5.7 的轻量 profile（形状 spike 进行中）。基于 `main`（ec48de22）与
+（原型分支 `feat/standalone-host`；规划见实施记录「Phase 2 规划」一节）。**5.7 的轻量 profile
+已落地（2026-10-09）**：形状取「往入口那个裸根里按清单装配」，**Claude 内核**下第三方插件
+三样例（主题、面板、`tui/input` 拦截）与 `/settings` 的 `dsh-tui` 分节**已有验收用例并通过**；
+Codex 内核走同一条入口组合路径，但**未验收**（新增用例只跑 Claude，实施记录也只以 Claude 为
+证据，见 5.7 末条遗留）。剩余是组合成本与上游插件契约归属。基于 `main`（ec48de22）与
 `@deepseek-ai/dsh` 0.2.0-rc.2 的代码阅读。2026-10-06 修订分期：Phase 1 只做「DSH 无关」，
 TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 
@@ -28,8 +31,11 @@ TuiHost 推迟到 Phase 2（见 5.1、第 7 节与实施记录）。
 4. **预载分支清理已授权**：先摘 worktree 备份成 patch，再从分支清单验收删；远端分支删除需单独
    授权，尚未执行（第 7 节 Phase 3）。
 
-**下一步（可直接接手）**：Phase 2 剩余的**轻量 profile**（5.7）——实现形状（按清单往入口那个根里
-装配，还是另建一根再桥接）、组合成本实测，以及与上游插件契约对齐注册表归属（上游 issue #1247）。
+**下一步（可直接接手）**：Phase 2 的剩余项——轻量 profile 的组合成本计入 Claude 内核首帧基线
+（5.7 末条），以及与上游插件契约对齐注册表归属（上游 issue #1247）。5.7 的实现形状与接线
+**已落地（2026-10-09）**，见 5.7 与实施记录「2026-10-09 · 5.7 接线收口」；收口的验收边界为
+**Claude 已验收、Codex 未验**，另有两条遗留（`/theme` 交互路径、`trimmed=false` 的继续组合）
+见 5.7 末条。
 上游 #1380 的后端注册表**已吸收**（`main` `bc890963` 进本分支，结果见实施记录「2026-10-09 ·
 已吸收上游 #1380」）。
 
@@ -378,9 +384,29 @@ DSH 内核下 `/settings` 改写的目标从 `settings.mutate` 切到本文件�
   根」——根已经有了，缺的是把插件清单组合进来。
 - **首帧不受影响。**profile 在首帧之后加载，插件的 `tui*` 注册走运行期热加入（本节末条已要求
   注册表支持运行期增删）。
-- **实现形状待 Phase 2 拍。**候选是：往 Phase 1 那个裸根里按清单装配本包的行与第三方插件；或走
-  app-boot 的轻量组合另建一根，再把服务桥接过去（5.1 的桥接行在单根下的必要性已作废，见该节
-  修订注）。判据是模块身份与「插件注册到了哪个根」，`verify:boundary` 与插件服务解析跟着定。
+- **实现形状（2026-10-09 已定并落地）。**取「往 Phase 1 那个裸根里按清单装配」：入口用 app-boot
+  的 `mountRootInclude` 把一份**轻量组合**挂到同一个根上（计划在 `lite-profile.ts`，组合在
+  `host-dsh.ts` 的 `composeLite`），本包的行与 profile 依赖清单里声明的第三方插件随之进入这个根；
+  `dsh-base` 那层被裁掉，只由它提供服务的行按表禁用（依据是「行的 `inject` 缺哪些服务」，实测
+  对账）。另一条候选（另建一根再桥接）被否：两根下第三方行会永久 pending，且它们的 effect 需要
+  第二个释放点。判据（模块身份、`cordis` / `react` 各一份）由已入库的
+  `scripts/probe-lite-profile-claude.mjs` 在真实实现路径上持续复核。
+- **接线与非 DSH 内核下的现状（2026-10-09）。**组合挂在首帧之后：入口等
+  `HostComposeSeam.firstFrameFlushed` 再组合，组合成功（已审计）后调用 `composeSucceeded`，运行时
+  据此重读挂载时取值的接缝（主题 host、扩展 store、toast sink），并把本包的 `/settings` 分节迁到
+  组合的 sections 服务（`rehomeSettingsSection`）。**Claude 内核**上实测（隔离 profile + 本仓
+  fixtures `theme`/`panels`/`guard`，验收用例 `plugins-light-claude`）：面板在屏 ✓、`tui/input`
+  拦截在屏且 guard 收到输入 ✓、`tui/session-switch` 拦截在屏 ✓、panel id 落在插件自己的身份下
+  （无 `act<N>` 兜底）✓、panel budget 与 storage 按身份计入 ✓、运行时主题在组合结算后解析并上屏 ✓
+  （`#ab12cd` 单元格，~450 格量级）、`/settings` 出现 `dsh-tui (dsh-tui)` 分节 ✓。**Codex 内核未验**：
+  同一条入口组合路径，但 `plugins-light-*` 用例当前只跑 Claude（见末条遗留）。主题一格的判据是
+  `DSH_TUI_THEME`（明确意愿）：**仅** `~/.dsh-tui/theme.json` 的持久化偏好不算锁，claude / codex
+  品牌默认档（`BRAND_THEMES`）在它之上——实测只放 `theme.json` 时 Claude 内核保持品牌色（0 格），
+  DSH 内核（deepseek 不在该表内）画运行时主题。这与 2.3 遗留「`ThemeProvider` 只在挂载时判断
+  forced theme」叠加，正是 `composeSucceeded` 补上的那一环。
+- **单元格数只作同量级证据。**同一类装置上，实现者与审核各自的探针量到的「哪个内核更多」并不一致
+  （一次 Claude 侧更多、一次 DSH 侧更多），所以本节只写量级（~450 格），不写精确单点值：它衡量的
+  是「运行时主题画上去了」，不是内核之间的可比值。
 - **成本待测。**省掉的是 dsh-base 的组合段；轻量 profile 自身的组合成本要计入 Claude 内核的
   首帧对比基线（1.2）。
 - **与上游插件契约的关系（待对齐）。**本包的注册表归属（TuiHost / Cordis）、grants 与
@@ -392,6 +418,16 @@ DSH 内核下 `/settings` 改写的目标从 `settings.mutate` 切到本文件�
   （DSH 未就绪）的输入本就不发送，不存在绕过拦截的窗口。
 - `tui*` 注册在 DSH 晚到时才出现：主题、面板等要能在已挂载的界面上热加入。现有注册表
   大多已支持运行期增删（插件本来就能在运行期装卸），需逐项确认。
+- **遗留项 1（2026-10-09 收口，未闭环）**：`/theme` 的**交互路径**在轻量内核上**没有验收覆盖**——
+  运行时主题本身已可用（上一条实测），但从 `/theme` 里选主题到它上屏这一路没有任何用例守护；
+  DSH 内核路径同样没有（`plugins-*` 只断言由持久化偏好或环境变量驱动的主题）。
+- **遗留项 2（2026-10-09 收口，未闭环）**：`composeLite` 的 `trimmed=false` 分支「warning 后
+  继续整份组合」**没有入库的自动化覆盖**：入口级真 PTY 证据只在未入库的
+  `scripts/probes/lite-profile-entry-probe.mjs --fail-notrim` 上，`accept-host-entry.mjs` 不跑它。
+  **残留风险（如实记）**：判「有没有可裁的层」看的是清单里有没有 `excludedBundles` 那几个**写死的
+  bundle 名**（`lite-profile.ts`）；若 dsh-base 的行以后经**别的 bundle 名**进清单，计划会被判成
+  「无可裁」并静默继续整份组合——相比旧行为的「exit 1 + 启动器 safe mode」，这是从**响亮拒绝**
+  变成**静默接受**的语义落差，且 warning 只走调试日志通道（默认不可见）。
 
 ### 5.8 启动器
 
@@ -426,7 +462,14 @@ DSH 的模块加载与组合在进程内有约 1 秒的同步段，这期间事�
 同一棵已挂载的树、零可见切换，而跨进程的界面与会话桥接把每个 `ChannelUi` 端口都变成了
 IPC 协议，维护成本比手写镜像更高。
 
-可以缓解：compile cache（预载分支已做，首帧约 −70ms、交接约 −150ms）；冻结前画出
+可以缓解：compile cache（**已吸收，2026-10-09**：启动器给 entry 子进程注入
+`NODE_COMPILE_CACHE=<数据目录>/compile-cache`，纯 env 注入、启动器仍零 lib 依赖，用户已
+设值与 `NODE_DISABLE_COMPILE_CACHE` 照旧生效，`/restart`、`/kernel` 的替身进程随 entry 的
+env 继承。收益是 **0.1s 量级且方差大**：本机交替取样的 render-done 中位数 −80ms、独立复现
+−143ms，5 对里出现过 1 次反例；prompt（可发送）侧更稳，约 −0.3s，5/5 warm 更快。与预载
+分支的 −70ms / −150ms 同源，不必按单点数字引用。只有 `DSH_TUI_HOST_ENTRY=0` 或
+`DSH_TUI_HOST_ENTRY_DSH=0` 两个非默认开关下走 `dsh --profile` 的 DSH 内核不受益——默认路径
+下 DSH 内核经入口、或入口委托 dsh，都在 entry 子进程的 env 里，都会继承）；冻结前画出
 「正在启动 DSH」的静态状态。
 
 ### 6.2 其他
@@ -449,7 +492,7 @@ IPC 协议，维护成本比手写镜像更高。
 | 0 | TuiHost 接口，`cordisTuiHost(ctx)` 实现；channel 核心改收 TuiHost；**测基线**：dsh / claude 两个内核从进程启动到首帧、到可发送的时间 | 行为零变化（现有 CI 组全过）；`verify:boundary` 新规则：`channel/core/` 不 import Cordis；基线数字写进本文 | 纯重构，直接 revert |
 | 1 | 设置存储落地（5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入）；本包 entry——自持裸 Cordis 根，`plugin.ts` 的 `apply` 原样挂载（**不建 TuiHost**，见 5.1 修订）；占位会话 + `adoptStartup`（1b）；Claude 内核走 entry、不加载 dsh-base（**profile 里声明的第三方插件此时不进这个根，是 2026-10-09 裁定要求 Phase 2 闭环的缺口**，见 5.7）。DSH 内核此时**不进 entry**，profile 启动器照旧 spawn dsh | Claude 内核首帧与可发送时间对比基线；新增启动接管、启动失败、启动期退出的无头回归；inline / fullscreen / 窄屏手动演练 | profile 启动器只在内核判定为 claude 时走 entry，可用环境变量关闭，关闭即回到今天的 spawn dsh |
 | 2 | TuiHost（5.1，由 Phase 0 的 `ChannelHost` 补全）与 Cordis 无关的组装根；DSH 经宿主 `runProfile` 进程内加载；桥接行；DSH 扩展晚挂（D1）；**Claude 内核的轻量 profile（5.7，把本包行与第三方插件组合进来）**；契约加入 `@deepseek-ai/dsh/profile-boot` | DSH 内核首帧对比基线与预载分支；**第三方插件示例（主题、面板、决策拦截）在两个内核下都通过**；轻量 profile 的组合成本计入 Claude 内核基线；`verify:contract` 覆盖能力探测与回退 | 能力探测失败或环境变量关闭时回退到「spawn dsh」 |
-| 3 | 清理预载分支（PR #1216 已关闭并作废，2026-10-09；`src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js` 只在预载分支上，从未进 `main`，所以这一期**没有 `main` 代码可删**）；~~决定 `dsh --profile dsh-tui` 直启路径去留~~**已裁定保留（第 10 节第 4 条；兼容路径实现待补）**；~~改写 AGENTS.md 与架构文档~~**已落地（第 10 节第 1 条）**；明确是否吸收预载的 compile cache 与 `onProcessExit` 兜底 | 构建门禁与全部 CI 组 | — |
+| 3 | 清理预载分支（PR #1216 已关闭并作废，2026-10-09；`src/preboot/`、`src/adapter/channel/deferred.ts`、`bin/dst.js` 只在预载分支上，从未进 `main`，所以这一期**没有 `main` 代码可删**）；~~决定 `dsh --profile dsh-tui` 直启路径去留~~**已裁定保留（第 10 节第 4 条；兼容路径实现待补）**；~~改写 AGENTS.md 与架构文档~~**已落地（第 10 节第 1 条）**；~~明确是否吸收预载的 compile cache~~**已吸收（见 6.1）**；明确是否吸收 `onProcessExit` 兜底 | 构建门禁与全部 CI 组 | — |
 
 Phase 1 是收益最大、风险最小的一期。分期于 2026-10-06 按 spike 结果修订：原 Phase 1 的
 TuiHost / 组装根重写挪进 Phase 2，Phase 1 的工作量因此主要是设置存储、入口与 1b。
@@ -1830,7 +1873,7 @@ node scripts/accept-host-entry.mjs             # PTY；62 例里 2 例既红，�
 
 **Phase 3（未开始）**：清理预载分支（PR #1216 已关闭并作废，2026-10-09——那三个文件从未进
 `main`，没有 `main` 代码可删）；决定 `dsh --profile dsh-tui` 直启路径去留；按新定位重写 AGENTS.md 与
-架构文档；明确是否吸收预载的 compile cache 与 `onProcessExit` 兜底。
+架构文档；~~明确是否吸收预载的 compile cache~~**已吸收（6.1，启动器给 entry 注入 `NODE_COMPILE_CACHE`）**；明确是否吸收 `onProcessExit` 兜底。
 
 **未 push 的提交**：`ea99d038`（定位改写）、`40644af1`（merge #1380）、`fab460df`（收尾与记录）。
 PR 一律走 `.agents/skills/pr`。
@@ -2110,6 +2153,88 @@ Phase 1 真正需要的是「DSH 无关」而不是「Cordis 无关」——TUI 
 - 本机 PTY 下 TUI 只画空帧（环境发现 3），可见首帧只能在真实终端手测；时间点打点不受影响。
 - `verify-settings-compat.mjs` 在 main 上本就失败（harness 漏注入 `normalizeBrandSetting`
   与 `BTW_CONTEXT_*`）；预载 rebase 分支里有修法可参考，本分支未修。
+
+### 2026-10-09 · 5.7 接线收口：非 DSH 内核下的插件生态
+
+**做了什么。**轻量 profile 的接线已落地（`host-entry.ts` 三分支 + `composeLiteRoot`、
+`plugin.ts` 的 `composeSeam` / `flushFirstFrame`、`entry-slot.ts` 的 `HostComposeSeam`）；本轮把它
+补齐到「非 DSH 内核下插件生态可用」：新增 `HostComposeSeam.composeSucceeded`，组合成功（已审计）
+后由入口调用，运行时据此跑 `refreshHostServices`（重读挂载时取值的服务接缝：主题 host、扩展
+store、toast sink）并把本包的 `/settings` 分节迁到组合的 sections 服务。缺这一步时 Claude / Codex
+内核上的屏幕停在组合前解析的值。
+
+**三样例实测**（同装置、隔离 profile、本仓 fixtures）。内核一栏的单元格数只作同量级证据：
+
+| 项 | DSH 内核 | Claude 内核（修复前 → 修复后） |
+|---|---|---|
+| 主题 `#ab12cd` 单元格 | ~450 格量级 | 0 → ~450 格量级 |
+| 面板 `ACCEPT-PANEL-BODY` | 在屏 | 在屏 → 在屏 |
+| `tui/input` veto | 在屏 + guard 收到 input | 在屏 + guard 收到 input |
+| `/settings` 的 `dsh-tui` 分节 | 有 | 无 → `dsh-tui (dsh-tui)` |
+
+实现者与审核各自的探针在同类装置上量到的单点数并不一致（一次 Claude 侧更多、一次 DSH 侧更多，
+顺序相反），所以只写量级，不写精确单点值。
+
+主题那格的判据是 `DSH_TUI_THEME=accept-theme`（明确意愿），不是 `theme.json`：`BRAND_THEMES`
+给 claude / codex 品牌一对默认档，**仅持久化偏好**按设计不算锁，品牌默认档在它之上——实测
+只放 `theme.json` 时 Claude 内核保持品牌色（0 格），同一装置在 DSH 内核（deepseek 品牌不在
+`BRAND_THEMES` 里）画运行时主题（~450 格量级）。清空 `composeSucceeded` 的调用后该断言实测回
+0 格（判别力：新增的主题断言确实跟着它变）。
+
+**rehome 的迁移一致性（审核标注的风险，已实测排除）。**`rehomeSettingsSection` 把 TUI 分节从
+local host 迁到组合服务；channel 侧 `channel/core/host.ts` 的 `settingsSectionsRuntime` 读法是
+「组合服务优先，缺失才退 local」。在组合回调内取值：
+
+```
+before rehome {"composed":[],"local":["dsh-tui"]}
+after  rehome {"composed":["dsh-tui"],"local":[]}
+```
+
+修复前 channel 读到的是组合服务的空列表（所以分节缺失）；若它读 local，修复前就该显示分节。
+迁移后二者是同一份服务，不需要额外桥接。
+
+**顺带两项。**（a）`lite-profile.ts` 的注释不再引用未入库的 spike 脚本，改指已入库的
+`scripts/probe-lite-profile-claude.mjs`（轮 A 的第三方行激活与 effect ledger 就是单根形状的
+证据）。（b）`host-dsh.ts` 的 `composeLite` 在 `!plan.trimmed`（清单里没有可裁的 bundle，例如
+不含 `dsh-base`）时不再 `throw`：按 `lite-profile.ts` 的设计语义，那种计划的 layers 本就是整份
+profile、`rowDisables` 为空，组合它就是「复用整份组合」；改为在被调方的 warning sink 上说明后
+继续组合。原来会在屏幕已挂载之后以 exit 1 结束，被启动器读成崩溃并进 safe mode。实测（临时
+profile，bundles 不含 `dsh-base`）：修复后 `threw = null`、22 行组合；打回 `throw` 后
+`threw = "dsh-tui: the dsh-tui profile has none of @deepseek-ai/dsh-base to leave out"`、0 行。
+
+**验收新增。**`scripts/accept-host-entry.mjs` 的 `plugins-light-claude`：同一批 fixtures 在
+Claude 内核（无 `dsh-tui` 行、由入口组合轻量 profile）上断言主题色单元格 > 20 与 `/settings`
+含 `dsh-tui (dsh-tui)`，外加面板与 `tui/input` 拦截。把 `composeSucceeded` 的调用打回后，
+前两条断言同时变红。
+
+**收口补的断言（2026-10-09 审核）。**轻量路径此前只断主题与 `/settings` 分节，而 DSH 的两条
+路径还断 panel id 形态、panel budget、plugin-storage、`tui/session-switch` veto —— 这些与内核
+无关（身份准入、面板 store、storage 契约、channel 的决策派发都不问内核），现在也断在轻量路径上：
+`panel id carries the plugin id (no act<N> fallback)`、`panel budget counted per plugin: 3 more
+fit, a 5th is refused`、`storage write under the plugin identity`、
+`tui/session-switch veto: the reason is on screen` + `the guard saw the /new`。**没有搬的两条**：
+input rewrite 的送达文本与 transport failure —— 它们要发一次模型请求，DSH 那两条用例靠往 profile
+打补丁把 `llm-deepseek` 指向关闭端口来离线；那份行属于轻量组合**裁掉**的 dsh-base 层，在 Claude
+内核上提交会走真实后端。判别力（各自打回后变红，`--only plugins-light-claude` 退出码 1）：把
+fixture 的准入去掉（无 verified identity）→ panel id 实测回 `["act1:demo"]`、storage 转
+`storage-failed`；把 guard 的 `tui/session-switch` 处理器改成不 cancel → 屏上不再有
+`ACCEPT-SWITCH-VETOED`（其余断言仍绿）。两次 sabotage 都只临时动 fixture，跑完即还原
+（`git diff scripts/fixtures/` 为空）。
+
+**Codex 未验。**新增用例当前只跑 Claude（`for (const kernel of ['claude'])`；留成循环是为了后续
+加 Codex）。Codex 的**入口路由**本身由 `codex-in-entry*` 覆盖，但第三方插件生态在 Codex 内核上
+没有验收证据——状态行与 5.7 的措辞相应收窄为「Claude 已验收、Codex 未验」。
+
+**收口顺带清的残留。**（a）`scripts/probes/lite-profile-entry-probe.mjs` 的 `--fail-notrim` 原本
+期望 `!trimmed` 守卫「响亮失败 + exit 1」，是本轮语义变更后的**过时期望**：已改成新语义（组合跑
+到底 + warning 落到 sink），入口的 stderr 在该模式下单独重定向到文件后断言。（b）已入库的
+`scripts/probe-lite-profile-claude.mjs` 注释里对未入库的 `spike-lite-profile-roots.mjs` 的引用
+（悬空引用）改指向本脚本自身第 4 点的真实组合证据，随后两个一次性 spike
+（`scripts/spike-lite-profile-roots.mjs`、`scripts/spike-lite-profile-compose.mjs`）与该轮的
+`scripts/probes/tmp-entry-route-probe.mjs` 一并删除——删除前确认没有入库文件引用它们（`grep`
+无命中；`tmp-entry-route-probe.mjs` 自述 "TEMP PROBE (deleted before the commit)"）。（c）
+`AGENTS.md` 的仓库布局行按事实补正：非 DSH 内核**不组合完整 DSH profile，但会组合轻量 profile**。
+
 
 **协作约定**
 

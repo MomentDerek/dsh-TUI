@@ -7,7 +7,7 @@ dsh-TUI 是 DeepSeek Harness 的终端界面应用（`@deepseek-harness-tui/dsh-
 ```
 src/index.ts        公共 Cordis 插件入口、配置 Schema、对运行时实现的惰性移交
 src/dsh-adapter/plugin.ts  运行时实现：TTY 校验、服务注册、Agent 创建/恢复、React 树挂载与收尾
-src/dsh-adapter/host-entry.ts  本包入口：Claude 内核不组合 DSH profile、在裸 Cordis 根上挂运行时；路由判定在 src/hostEntryRoute.ts（docs/standalone-host-design.md）
+src/dsh-adapter/host-entry.ts  本包入口：非 DSH 内核不组合完整 DSH profile（改组合轻量 profile：本包的行 + profile 声明的第三方插件）、在裸 Cordis 根上挂运行时；路由判定在 src/hostEntryRoute.ts（docs/standalone-host-design.md）
 src/dsh-adapter/channel.ts  Channel 入口：后端中立核心（channel/core/）+ 仅 DSH 会话挂载的扩展（channel/extensions.ts）
 src/agent/          后端中立的会话领域：AgentEvent、AgentSession、类型化能力（无 I/O、无厂商依赖）
 src/channel/        共享投影器（AgentEvent → 视图状态）与审批/问卷等中立 store
