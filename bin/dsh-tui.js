@@ -28,7 +28,7 @@
  * `DSH_TUI_LANG` 显式指定时从其值，否则默认中文（同 src/i18n.ts 的缺省）。
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -780,12 +780,50 @@ const startDshSession = (dshArgs, profile = PROFILE, env = process.env) =>
     })
   })
 
+// entry 子进程的 Node 编译缓存（`NODE_COMPILE_CACHE`）：整条模块图（含入口进程内
+// runProfile 组装的 DSH）都省掉解析与编译，与预载分支验证过的收益同源（首帧约
+// −70ms，docs/standalone-host-design.md 6.1）。纯 env 注入——不调
+// `module.enableCompileCache`，不改模块图、不新增依赖；`/restart`、`/kernel` 的
+// 替身进程从 entry 继承这个 env，自动跟着受益。
+//
+// 边界：用户显式设过 `NODE_COMPILE_CACHE` 一律不覆盖（空字符串同理——实测 Node 对
+// 空值静默禁用）。`NODE_DISABLE_COMPILE_CACHE` 是 Node 自己的开关，这里不参与也
+// 不与它冲突。目录创建 best-effort：建不出来就完全不注入，也不去动用户自己指定的
+// 目录。这是保守选择而不是故障对策——把入口引向一个建不出来的位置没有任何收益，
+// 而实测不可创建的位置代价不对称：/proc 类路径下 Node 会长时间不退出，常见的不可
+// 写目录则被 Node 自己静默跳过（chmod 500 的目录实测 exit 0、无告警）。新建目录按
+// 0700 建，已存在的目录权限不变（真实 `~/.dsh-tui` 及其下目录常见为 755）——这是
+// 一次窄权限创建，不是「目录私有」的保证。
+//
+// 路径沿用启动器既有的 `join(homedir(), '.dsh-tui', …)` 写法：与 src/utils/paths.ts
+// 的 `DATA_DIR` 同一解析（`<home>/.dsh-tui`），本文件零 lib 依赖（见文件头），所以
+// 这是同一表达式的复用，而不是第二份规则。
+//
+// **不要**把 :838-:930（`readLastRunRecord` 的声明行起、至 `// TTY 判定` 那段注释为止；
+// 行号随编辑漂移）之间的路径抽成模块级常量：verify-safe-mode.mjs 按这两个标记切片该
+// 区间、在 vm 沙箱里只注入 readFileSync/join/homedir/process（该脚本 :383-:398），区间
+// 内出现的外部标识符在沙箱里是 `undefined`；函数自身的 try/catch 会把它吞成「读不到
+// 记录」，表现为该套件 12 项静默转红（实测 exit=1）。同款切片手法也用在
+// verify-backend-registry.ts :185 对顶部 id 规则的提取上。注入点本身在这个区间之外，
+// 所以这里沿用既有写法即可。（上面刻意没有抄那两个标记的原文：抄进注释会让脚本的
+// indexOf 提前命中本注释，切片起点/终点整段错位。）
+const withCompileCache = env => {
+  if (env.NODE_COMPILE_CACHE !== undefined) return env
+  const cacheDir = join(homedir(), '.dsh-tui', 'compile-cache')
+  try {
+    mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
+  } catch {
+    return env
+  }
+  return { ...env, NODE_COMPILE_CACHE: cacheDir }
+}
+
 // 本包自己的入口（docs/standalone-host-design.md 5.8）：Claude 内核不组合 DSH
 // profile，直接 `node <入口> <应用参数>`。结果模型与 startDshSession 相同，
 // 首启结算与安全模式照旧。
 const startEntrySession = (entry, appArgs, env = process.env) =>
   new Promise(resolve => {
-    const child = spawn(process.execPath, [entry, ...appArgs], { stdio: 'inherit', env })
+    const child = spawn(process.execPath, [entry, ...appArgs], { stdio: 'inherit', env: withCompileCache(env) })
     child.on('error', err => resolve({ kind: 'error', error: err }))
     child.on('exit', (code, signal) => {
       if (signal) resolve({ kind: 'signal', signal })
