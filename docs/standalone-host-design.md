@@ -472,6 +472,32 @@ env 继承。收益是 **0.1s 量级且方差大**：本机交替取样的 rende
 下 DSH 内核经入口、或入口委托 dsh，都在 entry 子进程的 env 里，都会继承）；冻结前画出
 「正在启动 DSH」的静态状态。
 
+可以缓解：**模块图打包（2026-10-10 落地）**。入口首帧前要加载的是本包自己的 867 个 ESM 文件，
+前 1.5s 的 CPU 采样热点是 `compileSourceTextModule`、`internalModuleStat`、`ModuleWrap`、
+`getPackageScopeConfig`、`lstat`、`realpathSync`、`readPackageManifest`——瓶颈是**模块解析与
+链接的次数**，既不是 I/O（ESM load hook 实测 887 个模块的读取合计只有 72ms）也不是编译。
+`pnpm compile` 于是在 `tsc` 之后就地打包 `lib/types`（`scripts/bundle-lib.mjs`）：每个能从外部
+**按路径**加载的模块都登记为 rollup 入口（`exports` 全部子路径、启动器与 `scripts/` 里出现的
+`lib/types/**.js`、`ink/sixel-worker.js`、`dsh-adapter/host-entry.js`），共享模块抽进
+`lib/types/chunks/`，被折叠进 chunk 的原文件删除。本包文件 1747 → 217（113 入口 + 104 chunk），
+首帧前加载的本包模块 566 → 158，`lib/types` 7.68MB。**入口与插件行必须共享同一份 chunk**：
+入口若单独内联、插件行仍读旧文件，同一批模块就有两份实例，表现为
+`dsh: startup failed: 1 required plugin did not activate`（`row-apply`/`entry-dsh-attach`/
+`startup-adopted` 全部缺失）——这正是「把每个可外部加载的路径都做成入口」的理由。
+
+**收益按口径读，不要把 ESM load hook 下的差值当真实收益。** hook 对每个模块计时落盘，开销与
+模块数成正比：它给基线（进程内 2322 个模块）叠加约 1.1–2.2s，给打包产物（1705 个）约
+0.6–1.1s，于是同轮 A/B 在 hook 下看起来是 −1.45s（−39%）。去掉 hook、同一时间窗交替测量是
+1555ms → 1223ms（−332ms，−21%）；真实 HOME 下（`DSH_TUI_BOOT_TRACE` + 真实 profile 临时换上
+打包产物）是 render-done **1064ms → 852ms（−212ms，−20%）**，组合期的 `row-apply`、
+`startup-adopted` 不变——打包只动首帧那一段，不改善「可输入」。机器上并行的其它 dsh 会话会
+把绝对数字整体抬高 25% 以上，单次测量不足以下结论，读数要用同轮交替对照。产物体积是这个
+手段的天花板（已是 113 个入口必然带来的 facade 开销，`treeshake` 只省 0.06MB），要再往下压
+只能 minify，代价是崩溃栈失去行号。
+
+首帧的后续诊断与方案（探针冷缓存问题、`lodash-es` barrel 导入、启动器预检、宿主段在首帧路径上的原因）
+见 [首帧启动优化：诊断与方案](first-frame-startup-plan.md)（2026-10-09）。
+
 ### 6.2 其他
 
 - ~~Claude 内核下没有第三方 Cordis 插件扩展（见 5.7），相对今天是用户可见的倒退。后续可选：给

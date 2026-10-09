@@ -297,8 +297,28 @@ pnpm build
 ```
 
 - This removes the complete `lib/` directory, runs `tsc -p tsconfig.json` to
-  emit `src/` into `lib/types/`, and then checks the adapter boundary, upstream
+  emit `src/` into `lib/types/`, then bundles `lib/types` **in place** with
+  `scripts/bundle-lib.mjs`, and finally checks the adapter boundary, upstream
   contract, and patch surface.
+- `lib/types` is a bundle, not the raw `tsc` output. `tsc` emits ~870 module
+  files and the entry has to resolve, link and execute every one of them before
+  the first frame — the largest share of that frame, and neither disk I/O nor
+  compilation. The bundle step registers every module something outside the
+  bundle can reach **by path** as a rollup entry (all `exports` subpaths, the
+  `lib/types/**.js` paths named by the launcher and by `scripts/`,
+  `ink/sixel-worker.js`, `dsh-adapter/host-entry.js`), extracts what they share
+  into `lib/types/chunks/`, and deletes each module it folded into a chunk. A
+  leftover file would put a second instance of that module on the same load
+  path: two Cordis singletons and a plugin row that never activates. Entries
+  stay at their original paths (a shared one becomes a re-export file), so
+  `DSH_TUI_HOST_ENTRY_PATH`, the `exports` map and every path-importing
+  regression script keep working; the `import.meta.url` of a bundled module is
+  rewritten to the **original** module's path, so location arithmetic (spec
+  root probes, packaged presets, companion art, `resolveOwnBin`) keeps its
+  meaning. `lib/types/bundle-manifest.json` records the emitted shape, and
+  `verify:lib-bundle` uses it to reject a tree where `tsc` ran without the
+  bundle step. `.d.ts` stays `tsc`'s, and the `types` conditions still point at
+  the same paths.
 - The vendored builds that compile depends on (`vendor/dsh-std`,
   `vendor/mathjax-tex-svg`) go through `scripts/build-vendor.mjs`: a target is
   skipped only when its inputs (submodule sources, lockfiles, build command,

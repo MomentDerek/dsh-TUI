@@ -5,9 +5,9 @@
 状态：诊断完成（2026-10-09，`feat/standalone-host`，基于工作区里**未提交**的 lib 打包产物——
 `scripts/bundle-lib.mjs`，`lib/types/chunks/` 104 个 chunk）。**3.1（按路径导入 + 门禁规则）与
 3.2（候选 c）已落地到源码并复测**（测量协议见 §4，**实测与复核结论见 §5**：3.1-a 的「≤3」判据
-物理不可达；**结论口径为「方向可信、量级待定（数十毫秒级）」**——独立裁定 I 推翻了早期块级口径
-把 3.2 高估约 2.5 倍的问题，逐轮交替对照给出 3.1 ≈ 126ms、3.2 ≈ 46ms，见 §5.7）；3.3 / 3.4 / 3.5
-未落地，仍是测得的成本或估算。
+物理不可达；**结论口径以逐轮交替对照为准：3.1 ≈ 126ms、3.2 ≈ 46ms，两项合计约 170ms**——独立
+裁定 I 推翻的是早期块级口径对 **3.2 单项**约 2.2–2.5 倍的高估，见 §5.7）；3.3 / 3.4 / 3.5 未落地，
+仍是测得的成本或估算。
 
 ## 1. 范围与口径
 
@@ -170,7 +170,8 @@ warm 下 TUI 模块段的 CPU 热点是**模块解析与链接的次数**（`lst
   `from 'lodash-es'`（import / export-from）、副作用 `import 'lodash-es'`、`require('lodash-es')` 与
   动态 `import('lodash-es')`；按路径写法（`lodash-es/sample.js`）因引号必须紧跟包名而不命中。
   `docs/` 必须豁免：本文 §2.4 与 §3.1 逐字引用旧写法作对照。候选 2（在 `bundle-lib.mjs` 里把
-  lodash-es 等从 external 拿掉、交给 rollup 内联摇树）**删除**：`bundle-lib.mjs:246` 的
+  lodash-es 等从 external 拿掉、交给 rollup 内联摇树）**删除**：`bundle-lib.mjs:246`（该脚本属
+  在途 bundle 改动，截至 `0193f542` 尚未入库）的
   `treeshake: false` 是承重设计（注释已实测 7.68MB → 7.62MB），且内联 CJS 的 semver/diff 还缺
   `@rollup/plugin-commonjs`。
 
@@ -195,16 +196,18 @@ warm 下 TUI 模块段的 CPU 热点是**模块解析与链接的次数**（`lst
     是唯一的活跃句柄，Node 会把这个顶层 await 判成永不结算、以 exit 13 直接终止启动器
     （`verify-launcher` 实测 24 项转红）。探测就是 `dsh --version`，~80ms 自行退出，无需 unref。
   - 附带解掉一个非性能缺陷：现状预检在 profile 副本分支**无条件**先于一切路由执行，使
-    Claude/Codex 内核在无 dsh 的机器上无法启动；异步化后 `host-entry.ts:172` 的
+    Claude/Codex 内核在无 dsh 的机器上无法启动；异步化后 `host-entry.ts` `runInEntry` 的
     `entry-host-unavailable` 降级路径恢复可达。
 - 约束：启动器零 lib 依赖（`/update` 只覆写这一个文件）；`noDsh` 双语文案契约；Windows
   `shell: true`；`dsh --profile` 委托路径（`DSH_TUI_HOST_ENTRY=0` 等）仍需要可用的 dsh。
 - **用户可见变化**：dsh 缺失/损坏时，`--entry host` 的提示**顺序**会改变（先走 entry 的
   `entry-host-unavailable` 降级，而非预检处的 `noDsh` 安装指引；无 dsh + profile 版本错位时
-  先出 `checkProfileAlignment` 诊断、后出 `noDsh`）。**收口已补回缺 dsh 时的安装指引**（见 §5.6）：
-  入口回退到 `dsh --profile` 的 spawn 失败仍打印同一份 `MSG.noDsh`，不再只剩
-  `cannot start dsh (spawn dsh ENOENT)`。正常启动路径无可见变化。
-- 回滚：三处一起撤（helper 两个、`void probeDsh()`、`await requireDsh()`），恢复同步 `spawnSync`。
+  先出 `checkProfileAlignment` 诊断、后出 `noDsh`）。**缺 dsh 时的输出已两轮收口**（见 §5.6）：
+  默认 entry 路由下 DSH 内核找不到 dsh 时，入口直接打印同一份 `MSG.noDsh` 并以 1 退出，不再回退
+  spawn，启动器也不再追加 `profileExited` / `safeHint` / 安全模式询问——最终输出与改前的同步预检
+  一致（只有安装指引两行，退出码 1）。正常启动路径无可见变化。
+- 回滚：四处一起撤（helper 两个、`void probeDsh()`、`await requireDsh()`、entry 分支的缺 dsh
+  早退），恢复同步 `spawnSync`；§5.6 第二轮的 `host-entry.ts` 早退可以保留（对同步预检无害）。
 
 ### 3.3 `/migrate` 懒加载（估算 −50~70ms，待 A/B；**未落地，拆独立小计划**）
 
@@ -230,8 +233,9 @@ warm 下 TUI 模块段的 CPU 热点是**模块解析与链接的次数**（`lst
 ### 3.4 小项（各约 10–15ms，**估算/待实测**；本次均不做）
 
 - `yaml`：`hostEntryRoute.ts` → `tuiSettingsFile.ts` 在 entry 静态图里带进 67 个 yaml 模块。
-  单改 `tuiSettingsFile.ts` 收益≈0——`yaml` 另有静态 import `bundled-presets.ts:7`（经
-  `plugin.ts:50` 静态引，仍属 TUI 首帧图），必须两处同时改；代价是
+  单改 `tuiSettingsFile.ts` 收益≈0——`yaml` 另有两处静态 import 也在 TUI 首帧图里：
+  `bundled-presets.ts:7`（经 `plugin.ts:50`）与 `backends/shared/channel-tokens.ts:32`（经
+  `plugin.ts:17` → `dsh-adapter/backends.ts:18`），必须三处同时改；代价是
   `readProfileTuiSettings → configuredBackend → host-entry.ts:62-63` 的模块顶层同步调用链要引入
   顶层 await，**推迟路由判定**。先做一次 hack 产物的模块数 A/B，确认 yaml 真的掉出首帧图再决定。
 - `semver`：**记录（不拆）**——semver 由渲染器引入（`src/ink/terminal.ts:1` 值 import `coerce`，
@@ -298,7 +302,9 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 ### 4.2 回归门禁
 
 - 在 `pnpm verify:build` 聚合清单内（自动）：`verify:source-hygiene`（§3.1 的新规则）、
-  `verify:spinner-identity`、`verify:lib-bundle`、`verify:boundary`、`verify:initial-prompt`。
+  `verify:spinner-identity`、`verify:boundary`、`verify:initial-prompt`；`verify:lib-bundle` 随在途
+  bundle 改动（`scripts/bundle-lib.mjs`、`scripts/verify-lib-bundle.mjs`）一起入库后才在清单内，
+  截至 `0193f542` 的 `package.json` / `run-verify-build.mjs` 里还没有。
 - **CI required 但不在 `verify:build` 内**，改 `bin/dsh-tui.js` 必须单跑（见
   [contributing.md](contributing.md)）：`verify-launcher`、`verify-safe-mode`、`verify-update`、
   `verify-update-recovery`、`verify-cli-subcommands`、`verify-startup-argv`，以及
@@ -315,7 +321,10 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 > bundle 产物上做的预算实验（§3.1 已就地标注），与本节不可相减。
 >
 > **量级口径的最终修订见 §5.7**：§5.1 的 `−167ms` 是本批次的**块级点估计**，不是「扣掉漂移后的
-> 效应」；可信说法是「方向可信、量级在数十毫秒级」（3.1 ≈ 126ms、3.2 ≈ 46ms）。
+> 效应」；可信说法以逐轮交替对照为准（3.1 ≈ 126ms、3.2 ≈ 46ms，合计约 170ms）。
+>
+> **证据位置**：本节引用的 `implement/report.md`、`.tmp/startup-opt/*`（measure2/3、verify2 的
+> I-ruling 等）都在本地 `.tmp/`，被 `.gitignore` 排除，**不在仓库里**；复核时只能以本文转述为准。
 
 ### 5.1 实测（`implement/report.md` 2.3，`A1 B1 A2 B2` 各 4 轮，每臂 8 轮；**块级口径，量级已由 §5.7 修订**）
 
@@ -378,9 +387,11 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 - 另注：A 臂受工作区**在途 bundle 重构**影响，**不是历史口径基线**，`entry-modules 719` 与 §2.2 的
   「1050 个模块」不可直接对比。
 
-> **量级修订（2026-10-10）**：本节的 `−167ms` 是块级点估计；后续独立裁定 I 与本轮 measure3 的逐轮
-> 交替对照说明它**高估**（块级高估约 2.2–2.5×，3.2 单项真值约 46ms）。本节保留为「同批次块级口径」
-> 的历史读数，**不可再当作可信效应量引用**；最终口径见 §5.7。
+> **量级修订（2026-10-10，同日更正）**：本节的 `−167ms` 是块级点估计，最终口径见 §5.7。此前这里写
+> 「块级高估约 2.2–2.5×」并据此否定 `−167`，**套错了对象**：2.2–2.5× 只是 **3.2 单项**的块级高估
+> （块级 100.5 vs 逐轮 46）；3.1 单项块级只高估约 15%（144.5 vs 126）。两项逐轮值相加
+> 126 + 46 ≈ 172ms，与 `−167` 基本吻合——合并效应的量级并未被推翻，本节其余局限（反号漂移、
+> 无鉴别力的作废规则、`DSH_TUI_THEME` 未受控）仍然成立，引用时用 §5.7 的逐轮口径。
 
 ### 5.4 要补齐的证据（2026-10-10 更新）
 
@@ -425,11 +436,34 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 默认路由断言（中/英各一）；该脚本默认 env 曾把 `DSH_TUI_HOST_ENTRY_DSH` 钉在 `'0'`，此前这条出口
 **无门禁覆盖**。
 
+**第二轮（2026-10-10，验收发现）**：第一轮只补回了指引，没有收住多余输出。实测同一场景的 stderr 是
+`cannot host this launch (no dsh on PATH); starting DSH through dsh --profile` →
+`cannot start dsh (spawn dsh ENOENT)` → 安装指引 → 启动器的 `profileExited`（建议运行一个不存在的
+`dsh --profile dsh-tui`）→ `safeHint`；TTY 下按代码还会弹安全模式询问。另有一个平台缺口：Windows 上
+`delegateToDsh()` 用 `shell: true`，缺 dsh 时 cmd.exe 只是非零退出、没有 `ENOENT`，第一轮的指引
+永远打不出来。
+
+修法（两处，跨平台）：
+
+- `host-entry.ts` `runInEntry`：DSH 内核下宿主查找的原因是 `NO_DSH_ON_PATH`（`host-dsh.ts`
+  `findHostDsh` 导出的常量）时，直接打印 `NO_DSH` 并 `exit(1)`，不再回退 spawn。`NO_DSH` 的声明
+  移到顶层 `await runInEntry(...)` 之前——这条分支在模块求值挂起期间执行，原位置会撞 TDZ。
+  PATH 上有 dsh 但宿主形状不对（找得到、用不了）时仍照旧回退 `dsh --profile`。
+- `bin/dsh-tui.js` entry 分支：结果是非零 `exit`、`launchKernel() === 'dsh'` 且异步探测为 false
+  时直接以该退出码退出，跳过 `profileExited` / `safeHint` / `askSafeEntry`。Claude/Codex 内核不套
+  这个条件。已知边界：profile 的 Config 行把内核改钉为非 DSH 时，`launchKernel()` 判断不到，可能
+  误吞一次 `profileExited`，可接受。
+
+防回归：`verify-launcher.mjs` 第 5.1 节再加两条——缺 dsh 时不出现 `cannot start dsh` /
+`cannot host this launch`（没有回退 spawn），也不出现 `dsh profile exited` / `dsh-tui safe`。
+用 HEAD 版启动器配新 lib 跑，后一条确实转红。
+
 ### 5.7 独立裁定 I 与本轮干净对照（measure3，2026-10-10）
 
 > §5.1–§5.4 是落实批次自己的块级测量与复核 D 的局限判定。此后独立裁定 I 又复核了 measure2（H），
 > 收口执行人 J 构造两套预构建 lib 做了逐轮交替对照。本节是**量级口径的最终修订**：§5.1 的 `−167ms`
-> 是块级点估计，**不构成「扣掉漂移后的效应」**；可信说法是「**方向可信、量级待定（数十毫秒级）**」。
+> 是块级点估计，**不构成「扣掉漂移后的效应」**；可信说法是逐轮交替对照的单项值（3.1 ≈ 126ms、
+> 3.2 ≈ 46ms），两项合计约 170ms。
 
 #### 5.7.1 独立裁定 I：推翻 H 的量级（不是方向）
 
