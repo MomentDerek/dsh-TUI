@@ -100,7 +100,7 @@ import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMult
 import { addProcessErrorAbsorber, fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
 import { CHANNEL_UI_LIFETIME_ENDED } from '../adapter/channel/ui.js'
 import { lastBootMark, markBoot } from '../utils/bootTrace.js'
-import type { EntrySlot } from './entry-slot.js'
+import type { EntrySlot, HostComposeSeam } from './entry-slot.js'
 import { TERMINATION_SIGNALS, dieBySignal, type ExitRequest, type ExitRequestAnswer, type ProcessExitSeam, type TerminationSignal } from './process-exit.js'
 import { RenderTestFault, readTestFault } from './test-faults.js'
 import { StartupOpenError, type ChannelStartup } from './channel/state.js'
@@ -212,6 +212,14 @@ export interface RuntimeApplyOptions {
    * workspace ownership). Only the standalone entry sets it.
    */
   readonly entrySlot?: EntrySlot
+  /**
+   * The entry composes the light profile (docs/standalone-host-design.md 5.7)
+   * into this root after the mount on the kernels that have no `dsh-tui` row
+   * (Claude, Codex; `./entry-slot.ts` `HostComposeSeam`): the same first-frame
+   * wait the DSH kernel gets through `entrySlot`, without the DSH hand-off.
+   * Only the standalone entry sets it, and never together with `entrySlot`.
+   */
+  readonly composeSeam?: HostComposeSeam
   /**
    * The kernel the entry routed this launch to (../hostEntryRoute.ts
    * `entryRoute`). The entry decides it with the profile patch's Config row,
@@ -331,6 +339,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // needs DSH's services runs later, in `attachDsh` (see RuntimeApplyOptions).
   const entrySlot = runtimeOptions.entrySlot
   const dshInEntry = entrySlot !== undefined
+  /** The entry's composition seam on the kernels without DSH (see
+   *  `RuntimeApplyOptions.composeSeam`): no slot, the same first-frame wait. */
+  const composeSeam = runtimeOptions.composeSeam
 
   // Modern hosts own a declarative registry; old hosts discover directories.
   // A modern bundle failure must not silently fall back to obsolete files.
@@ -2490,16 +2501,19 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // adoption is flushed. Does nothing on an ordinary boot.
   armFirstFrameAck(process.stdout)
   markBoot('render-start')
-  // The in-process DSH kernel composes right after the mount, and that
-  // freezes the event loop for a while (design 6.1): the entry waits for the
-  // first frame — which says DSH is starting — to reach the terminal first.
-  // (Only there: an ordinary boot waits for nothing and writes nothing.)
+  // The entry composes right after the mount (the DSH profile through the
+  // slot, the light profile through the seam) and that freezes the event loop
+  // for a while (design 6.1): the entry waits for the first frame — which says
+  // a backend is starting — to reach the terminal first. (On any other mount
+  // nothing composes after it: an ordinary boot waits for nothing and writes
+  // nothing.)
+  const awaitsFirstFrame = entrySlot !== undefined || composeSeam !== undefined
   let frameFlushed = (): void => undefined
-  const firstFrame = entrySlot === undefined ? undefined : new Promise<void>(resolve => { frameFlushed = resolve })
+  const firstFrame = awaitsFirstFrame ? new Promise<void>(resolve => { frameFlushed = resolve }) : undefined
   instance = await render(tree, {
     exitOnCtrlC: false,
     terminalImages: bootedTerminalImages,
-    ...(entrySlot === undefined ? {} : { onFrame: () => { frameFlushed() } }),
+    ...(awaitsFirstFrame ? { onFrame: () => { frameFlushed() } } : {}),
   })
   markBoot('render-done')
   const isRecompose = lastBootedFullscreen !== undefined
@@ -2584,27 +2598,45 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     instance?.unmount()
   })
 
+  /**
+   * The first frame's write, then stdout drained (bounded: a renderer that
+   * never draws must not hold the composition back). Both composition
+   * channels hand it out: the DSH kernel's slot below, the light profile's
+   * seam just after.
+   */
+  const flushFirstFrame = async (): Promise<void> => {
+    await Promise.race([firstFrame ?? Promise.resolve(), new Promise<void>(resolve => { setTimeout(resolve, 1000).unref() })])
+    await new Promise<void>(resolve => { process.stdout.write('', () => { resolve() }) })
+  }
+  /**
+   * Services composed after the mount (the in-process DSH kernel's profile
+   * through the slot's `attachDsh`, the light profile through the seam's
+   * `composeSucceeded`): what the mounted screen took as values at mount time
+   * is read again — Chat's extension stores and theme host (one re-render;
+   * React keeps Chat's state), the toast sink, and the TUI's own /settings
+   * section moves to the composition's sections service, where the channel
+   * then reads it. The channel's own host seams are read per use.
+   */
+  const refreshHostServices = (): void => {
+    rehomeSettingsSection()
+    bindToastSink()
+    if (!exited) instance?.rerender(buildTree())
+  }
+  if (composeSeam !== undefined) {
+    // The kernels without a dsh-tui row (the light profile composes there
+    // after the mount too, host-entry.ts): same wait, no row hand-off.
+    composeSeam.firstFrameFlushed = flushFirstFrame
+    // No `dsh-tui` row applies on these kernels, so nothing else would bring
+    // the mounted screen level with what the composition mounted. Without it
+    // the runtime theme a plugin registers is never drawn and this package's
+    // /settings section stays on the pre-composition registry, which the
+    // channel no longer reads once the composed service is up.
+    composeSeam.composeSucceeded = () => { refreshHostServices() }
+  }
+
   if (entrySlot !== undefined) {
-    /**
-     * Services composed after the mount (the in-process DSH kernel's
-     * profile): what the mounted screen took as values at mount time is read
-     * again — Chat's extension stores and theme host (one re-render; React
-     * keeps Chat's state), the toast sink, and the TUI's own /settings
-     * section moves to the composition's sections service, where the channel
-     * then reads it. The channel's own host seams are read per use.
-     */
-    const refreshHostServices = (): void => {
-      rehomeSettingsSection()
-      bindToastSink()
-      if (!exited) instance?.rerender(buildTree())
-    }
     entrySlot.composeWarning = line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }
-    // The first frame's write, then stdout drained (bounded: a renderer that
-    // never draws must not hold the composition back).
-    entrySlot.firstFrameFlushed = async () => {
-      await Promise.race([firstFrame, new Promise<void>(resolve => { setTimeout(resolve, 1000).unref() })])
-      await new Promise<void>(resolve => { process.stdout.write('', () => { resolve() }) })
-    }
+    entrySlot.firstFrameFlushed = flushFirstFrame
     entrySlot.composeSucceeded = () => { settleComposition(true) }
     entrySlot.composeFailed = (error, logPath) => {
       settleComposition(false)

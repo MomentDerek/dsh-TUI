@@ -508,7 +508,18 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     async composeLite(warn, stopping = () => false) {
       if (options.dsh) throw new Error('dsh-tui: this root was prepared for DSH; compose the whole profile instead')
       const plan = liteProfilePlan(profile)
-      if (!plan.trimmed) throw new Error(`dsh-tui: the ${options.profile} profile has none of ${plan.excludedBundles.join(', ')} to leave out`)
+      if (!plan.trimmed) {
+        // Nothing to trim: the profile lists none of `excludedBundles` (one
+        // that does not carry dsh-base at all). Its layers are the whole
+        // profile then, so composing them IS the full composition the caller
+        // would otherwise reuse (./lite-profile.ts `trimmed`), and
+        // `rowDisables` is empty: no working row is disabled. This must not be
+        // fatal — the screen is already mounted and the exit is loud (exit 1),
+        // which a launcher turns into its safe-mode prompt: a profile that is
+        // merely whole would cost the kernel its whole plugin ecosystem. Warn
+        // on the caller's sink and compose it.
+        warn(`dsh-tui: light profile: ${options.profile} lists none of ${plan.excludedBundles.join(', ')}; composing it whole\n`)
+      }
       // What was left out, on the caller's warning sink: the composition is
       // otherwise silent, and the row list is the reviewable half of the
       // decision (./lite-profile.ts). Before the mount, so nothing may write

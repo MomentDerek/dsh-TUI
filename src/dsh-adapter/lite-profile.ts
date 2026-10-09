@@ -11,13 +11,19 @@
  * package's own bundle plus the profile's declared third-party bundles, with
  * `dsh-base` — DSH's agent / llm / tools / workspace core rows — left out.
  *
- * Why trim already-loaded layers instead of composing a second root. The two
- * shapes were measured by `scripts/spike-lite-profile-roots.mjs`: with a
- * second root the plugins stay pending forever unless every entry service is
- * copied over, and their effects need a second dispose point; on the entry
- * root they inject the entry's services directly (`tuiWorkspaces` …) and one
- * `root.fiber.dispose()` takes everything. Composing here also keeps one
- * `cordis` and one `react` (verified by `scripts/spike-lite-profile-compose.mjs`).
+ * Why trim already-loaded layers instead of composing a second root. On the
+ * entry root this package's rows and the profile's third-party rows share one
+ * context: a plugin row injecting `tuiWorkspaces` … activates there, and one
+ * `root.fiber.dispose()` takes everything with it. That shape is what the
+ * checked-in probe measures on the real implementation path
+ * (`scripts/probe-lite-profile-claude.mjs`: round A mounts a third-party row
+ * that injects `tuiPanels`/`tuiThemes`, registers a panel and lands in the
+ * composition's effect ledger, then disposes the root once; rounds B–E cover
+ * the trim table, the DSH kernel's prepare face, an unresolvable bundle and
+ * the real profile's bundle list). One `cordis` and one `react` come with the
+ * same shape. A second root is the alternative this module rejects: its rows
+ * stay pending unless every entry service is copied over, and its effects need
+ * a second dispose point.
  *
  * Two facts drive the trim:
  *

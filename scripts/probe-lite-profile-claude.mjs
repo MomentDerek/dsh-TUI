@@ -11,8 +11,9 @@
  *     实际目标（插件生态桥接）；
  *  3. `./src/dsh-adapter/lite-profile.ts` 的裁剪表（`LITE_PROFILE_ROW_DISABLES`）
  *     与实测的 pending 行**逐条对上**吗（这是「依据缺失符号裁剪」的可复现证据）；
- *  4. 组合的 effect 归属：一次 `ctx.fiber.dispose()` 是否覆盖全部（形状 A 的
- *     退出漏斗前提，spike-lite-profile-roots.mjs 已量过，这里用真实组合复核）。
+ *  4. 组合的 effect 归属：一次 `ctx.fiber.dispose()` 是否覆盖全部。这是单根形状的
+ *     退出漏斗前提，量在**真实组合**上——就是这里的第 4 点自身，不依赖仓库外的
+ *     一次性脚本，所以它随本脚本一起入库并持续复核。
  *
  * 隔离：`DSH_HOME` 指向临时目录，profile 的 `bundles` 只写
  * `@deepseek-harness-tui/dsh-tui` 与 `dsh-tui-exit-banner`，`node_modules` 全部

@@ -16,6 +16,11 @@
  * row load this package through one module graph today, but a profile that
  * resolves the row from another copy must still meet the entry here.
  * Dependency-free, so the row module can read it cheaply.
+ *
+ * {@link HostComposeSeam} is the same hand-off for the kernels that have no
+ * row at all (Claude, Codex: the entry composes the light profile itself,
+ * ./lite-profile.ts): the entry passes it in, so it needs neither a symbol nor
+ * a second reader.
  */
 
 /** What the row does in the entry's place. */
@@ -46,6 +51,39 @@ export interface EntrySlot {
    *  starting) has been written to the terminal: the entry awaits it before
    *  the composition's synchronous stretch. Filled by the entry's runtime. */
   firstFrameFlushed?: () => Promise<void>
+}
+
+/**
+ * The entry's composition seam where there is no {@link EntrySlot}: the entry
+ * composes the light profile into the root it mounted the screen on when the
+ * kernel is Claude or Codex (docs/standalone-host-design.md 5.7), and those
+ * kernels have no `dsh-tui` row to hand the screen over to. Not a global
+ * symbol: only one process's entry and runtime are involved, so the entry
+ * passes the object in (`RuntimeApplyOptions.composeSeam`) and the runtime
+ * fills it — no second process-wide identity, and no ordering problem about
+ * who publishes first.
+ */
+export interface HostComposeSeam {
+  /**
+   * Resolves once the mounted screen's first frame has been written to the
+   * terminal: the entry awaits it before the composition's stretch, exactly as
+   * it does through the slot on the DSH kernel. Filled by the runtime.
+   */
+  firstFrameFlushed?: () => Promise<void>
+  /**
+   * The light composition settled and was audited: the services it mounted
+   * (the `tui*` rows, third-party plugin rows) are up, so everything the
+   * mounted screen took as a value at mount time is read again — the runtime
+   * re-homes this package's `/settings` section onto the composition's
+   * sections service and re-renders once. Without it the screen keeps the
+   * values it resolved before the composition existed: a runtime theme
+   * registers but is never drawn, and `/settings` shows no `dsh-tui` section
+   * on a kernel with no `dsh-tui` row. The DSH kernel has the equivalent
+   * through the slot's {@link EntrySlot.composeSucceeded}. Filled by the
+   * runtime; the entry calls it after `composeLite` returned (host-entry.ts
+   * composeLiteRoot), so it never runs on a failed composition.
+   */
+  composeSucceeded?: () => void
 }
 
 export const ENTRY_SLOT_KEY = Symbol.for('@deepseek-harness-tui/dsh-tui:host-entry')

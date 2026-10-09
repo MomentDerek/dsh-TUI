@@ -22,12 +22,18 @@
  *     session opened (`deferBackendOpen`): the dsh-tui Config row is rebuilt
  *     from the environment the way cordis.patch.yml's row reads it, the
  *     TUI's settings come from ~/.dsh-tui/settings.json;
- *  3. DSH only: the dsh-tui profile is composed into the same root. Its
- *     dsh-tui row finds the mounted screen (./entry-slot.ts), opens the DSH
- *     session and hands it to the channel, which adopts it.
- * The Claude and Codex kernels stop after 2 (no profile, no `tui*`
- * services): the runtime resolves the kernel itself, as on the
- * `dsh --profile` path.
+ *  3. compose into the same root. DSH: the dsh-tui profile; its dsh-tui row
+ *     finds the mounted screen (./entry-slot.ts), opens the DSH session and
+ *     hands it to the channel, which adopts it. The Claude and Codex kernels:
+ *     the light profile (./lite-profile.ts, design 5.7) — this package's rows
+ *     and the profile's declared third-party bundles, with `dsh-base` left
+ *     out and the rows that only its services can activate disabled — so the
+ *     plugin ecosystem is there without DSH. Those kernels have no row to hand
+ *     the screen over to: the first-frame wait travels through
+ *     `HostComposeSeam` instead of the slot, and a composition failure ends
+ *     the process loudly instead of landing in the screen (no DSH session to
+ *     report it in the place of). The runtime resolves the kernel itself, as
+ *     on the `dsh --profile` path.
  * This process owns its signals and its exit (./process-exit.ts): SIGTERM,
  * SIGHUP and SIGINT go through the TUI's exit funnel (terminal restored,
  * root and DSH session disposed) and end the process by the signal.
@@ -42,6 +48,7 @@ import { logForDebugging } from '../utils/debug.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
 import { HostComposeError, loadHostDsh, prepareHostRoot, type HostRoot } from './host-dsh.js'
+import type { HostComposeSeam } from './entry-slot.js'
 import { installEntrySignals, type ProcessExitSeam } from './process-exit.js'
 import { disposeRootSettled, trackComposition } from './root-dispose.js'
 
@@ -205,19 +212,25 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     where: lastBootMark,
   })
   // 2. Mount the screen. On DSH the slot tells the profile's dsh-tui row
-  // that this screen exists (and receives the DSH side from the runtime).
+  // that this screen exists (and receives the DSH side from the runtime); on
+  // the other kernels the seam carries the one thing the composition needs
+  // from the mount (the first frame's write — there is no row to hand the
+  // screen over to).
   const slot = kernel === 'dsh' && root !== undefined ? publishEntrySlot() : undefined
+  const composeSeam: HostComposeSeam | undefined = slot === undefined && root !== undefined && kernel !== 'dsh' ? {} : undefined
   // DSH's plugins use root capabilities while they activate; the TUI's guard
   // on them arrives with the profile's first TUI row, as on the profile path
-  // (armed below), or once the profile has composed at the latest.
-  const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)
+  // (armed below), or once the profile has composed at the latest. The light
+  // composition's rows activate the same way on the other kernels, so the
+  // guard is held back across their mount as well.
+  const releaseRootGuard = slot !== undefined || composeSeam !== undefined ? deferRootCapabilityGuard(ctx) : undefined
   try {
     // The route this process took goes in as well (`entryKernel`): the runtime
     // must not resolve the kernel chain again — its rebuilt Config lacks the
     // profile patch's Config row this decision was based on — so the
     // placeholder session (and the status line naming it) is the kernel this
     // launch was routed to.
-    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, entryKernel: kernel, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(hostNotice === undefined ? {} : { hostNotice }) })
+    await apply(ctx, config, ctx, { deferBackendOpen: true, profile, entryKernel: kernel, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(composeSeam === undefined ? {} : { composeSeam }), ...(hostNotice === undefined ? {} : { hostNotice }) })
   } catch (error) {
     handleStartupError(ctx, error)
     return
@@ -229,10 +242,66 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // the guard (DSH_TUI_NO_185_PROCESS_GUARD=1) fail-loud stays.
   if (root !== undefined && processGuardActive()) root.uninstallFailLoud()
   armProcessTestFault(readTestFault(), () => ctx.get('appExit' as never) as ((code: number) => void) | undefined)
-  if (slot === undefined || root === undefined) return
-  // 3. Compose the profile into this root. Past the mount nothing may write
-  // to the terminal: host warnings go to the debug log, and a failure lands
-  // in the screen (the startup notice) instead of ending the process.
+  /**
+   * 3a. Compose the light profile into this root (design 5.7): this package's
+   * own rows plus the profile's declared third-party bundles, `dsh-base` left
+   * out (./host-dsh.ts `composeLite`). These kernels have no `dsh-tui` row, so
+   * what the DSH kernel below does through the slot happens here through the
+   * seam: wait for the first frame, then compose into the root the screen is
+   * already mounted on. A failure ends the process loudly instead of landing
+   * in the screen — there is no DSH session for the screen to report it in the
+   * place of, and a kernel whose plugin ecosystem silently did not come up
+   * must not pass as a boot. `handleStartupError` (./plugin.ts) restores the
+   * terminal, disposes the root and exits 1; the composition's saved startup
+   * report travels on `HostComposeError` and is named in the line.
+   */
+  const composeLiteRoot = async (hostRoot: HostRoot): Promise<void> => {
+    // As on the DSH kernel: the frame that says a session is starting must
+    // reach the terminal before the composition's stretch.
+    await composeSeam?.firstFrameFlushed?.()
+    markBoot('entry-first-frame-flushed')
+    markBoot('entry-compose-start')
+    // Rows activating after the first TUI row are guarded (third-party rows
+    // land there), as on the profile path.
+    armRootCapabilityGuard(ctx)
+    // A root dispose from here on (a signal, /quit) lets the Loader settle
+    // first: the light composition mounts its own Loader include, and HMR
+    // deadlocks when disposed while its watchers start (./root-dispose.ts).
+    const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
+    const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
+    let failed = false
+    let failure: unknown
+    try {
+      await hostRoot.composeLite(line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }, () => composition.disposing)
+    } catch (error) {
+      failed = true
+      failure = error
+    } finally {
+      composition.done()
+      releaseRootGuard?.()
+    }
+    markBoot('entry-compose-end')
+    if (!failed) {
+      // Composed and audited: bring the mounted screen level with what the
+      // composition mounted (the runtime re-reads the services it resolved at
+      // mount time — plugin.ts `refreshHostServices`: the theme host, the
+      // extension stores, this package's /settings section). On the DSH kernel
+      // the `dsh-tui` row does this through the slot; no such row exists here.
+      composeSeam?.composeSucceeded?.()
+      return
+    }
+    const reason = failure instanceof HostComposeError && failure.logPath !== undefined
+      ? `${failure.message} — startup report: ${failure.logPath}`
+      : failure
+    handleStartupError(ctx, reason)
+  }
+  if (slot === undefined || root === undefined) {
+    if (root !== undefined && kernel !== 'dsh') await composeLiteRoot(root)
+    return
+  }
+  // 3b. DSH: compose the profile into this root. Past the mount nothing may
+  // write to the terminal: host warnings go to the debug log, and a failure
+  // lands in the screen (the startup notice) instead of ending the process.
   // The screen says DSH is starting (6.1): make sure that frame reached the
   // terminal before the composition's synchronous stretch freezes the loop.
   await slot.firstFrameFlushed?.()

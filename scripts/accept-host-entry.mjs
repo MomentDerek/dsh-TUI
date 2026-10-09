@@ -112,6 +112,13 @@
  *                          SIGTERM after CLOSE_GRACE_MS) passes;
  *                          `codex-kernel-remembered` is the same through
  *                          `kernel.json` with no DSH_TUI_BACKEND at all
+ *   plugins-light-claude   5.7 (end of this file): the same three fixtures on
+ *                          the Claude kernel, where the entry composes the
+ *                          light profile itself (no `dsh-tui` row at all) —
+ *                          the runtime theme, the panel (identity, per-plugin
+ *                          budget, storage), the `tui/input` and
+ *                          `tui/session-switch` decisions, and this package's
+ *                          own `/settings` section
  *
  * Every case checks the terminal state after exit (alt screen left, cursor
  * shown, bracketed paste, focus reporting and mouse tracking off) and, on
@@ -1092,6 +1099,10 @@ const fileUrl = path => new URL(`file://${path}`).href
 // The running dsh-tui copy's adapter module (one instance with the TUI's).
 const ADAPTER_URL = fileUrl(join(launcher, '..', '..', 'lib', 'types', 'dsh-adapter', 'plugin-host.js'))
 const PLUGIN_PATHS = { entry: {}, profile: { DSH_TUI_HOST_ENTRY_DSH: '0' } }
+// The non-DSH kernels are deliberately not a third entry here: they have no
+// `dsh-tui` row at all (the entry composes the light profile itself), and most
+// assertions below are about the DSH row's hand-off. They run as
+// `plugins-light-<kernel>` with their own assertions (5.7, end of this file).
 /** The patch layer inserting `rows` ([id, fixture, extra config]). */
 const pluginPatch = (rows, report) => `- insert:\n${rows.map(([id, fixture, config = {}]) =>
   `    - id: ${id}\n      name: ${JSON.stringify(fileUrl(join(PLUGIN_FIXTURES, fixture)))}\n      config: ${JSON.stringify({ report, adapter: ADAPTER_URL, ...config })}\n`).join('')}`
@@ -1325,7 +1336,8 @@ for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) await runCase(`plugin-hold
 // opened whatever kernel it remembered — so `DSH_TUI_BACKEND=codex` painted
 // a DSH session (deepseek-flash) and never even probed for a `codex`
 // executable. The route hands `runInEntry` the kernel it found, so only DSH
-// composes the profile; the Codex session is opened by the runtime itself,
+// composes the DSH profile (the other kernels compose the light one, 5.7);
+// the Codex session is opened by the runtime itself,
 // and the process-wide codex hub (src/backends/codex/rpc/hub.ts) has to be
 // closed on the way out.
 //
@@ -1354,15 +1366,28 @@ const codexNotes = (run, log) => [
   `marks: ${run.marks().map(entry => entry.mark).join(', ')}`,
   `fake codex log:\n${readLines(log).join('\n')}`,
 ].join('\n')
-/** The composed-profile marks only the DSH route produces. */
-const composedProfile = run => run.marks().map(entry => entry.mark).filter(mark => mark.startsWith('entry-compose'))
+/**
+ * Whether the full DSH profile ran on this launch: the profile's own
+ * `dsh-tui` Config row applied (`src/dsh-adapter/index.ts` `apply`). This —
+ * not `entry-compose-*` — is what separates the routes now: since 5.7 the
+ * non-DSH kernels compose the *light* profile into the same entry root
+ * (`src/dsh-adapter/host-entry.ts` `composeLiteRoot`), and that plan disables
+ * the `dsh-tui` row (`src/dsh-adapter/lite-profile.ts`). A Codex launch that
+ * took the DSH route shows this mark — such a launch painted a DSH session
+ * and never probed for `codex`, which is what these cases guard against.
+ */
+const dshProfileRowApplied = run => run.traced('row-apply')
+/** The light composition ran on this launch and settled (either non-DSH kernel). */
+const lightProfileComposed = run =>
+  run.traced('entry-first-frame-flushed') && run.traced('entry-compose-start') && run.traced('entry-compose-end')
 
 await runCase('codex-in-entry', async ({ check, launch }) => {
   const log = join(root, 'codex-entry.log')
   const run = await launch({ backend: 'codex', landing: false, env: codexEnv(log) })
   check('the Codex session is up in the entry', await until(async () => (await run.screen()).includes('gpt-fixture'), 60000), lines(await run.screen()).slice(-8).join('\n'))
   check('the entry ran itself, not `dsh --profile`', run.traced('entry-start') && run.traced('entry-hijacked'), codexNotes(run, log))
-  check('the DSH profile was not composed for a Codex launch', composedProfile(run).length === 0, codexNotes(run, log))
+  check('the DSH profile was not composed for a Codex launch',
+    !dshProfileRowApplied(run) && await until(() => lightProfileComposed(run), 30000), codexNotes(run, log))
   check('the session was adopted', run.traced('startup-adopted'), codexNotes(run, log))
   const handshake = readLines(log)
   check('the app-server was probed and handshaken with (initialize, thread/start)',
@@ -1405,9 +1430,98 @@ await runCase('codex-kernel-remembered', async ({ check, launch }) => {
   // what lets kernel.json decide.
   const run = await launch({ backend: undefined, landing: false, env: { ...codexEnv(log), HOME: home, DSH_TUI_BACKEND: undefined } })
   check('the remembered Codex kernel is up in the entry', await until(async () => (await run.screen()).includes('gpt-fixture'), 60000), lines(await run.screen()).slice(-8).join('\n'))
-  check('the DSH profile was not composed', composedProfile(run).length === 0, codexNotes(run, log))
+  check('the DSH profile was not composed',
+    !dshProfileRowApplied(run) && await until(() => lightProfileComposed(run), 30000), codexNotes(run, log))
   await run.command('/quit')
   await checkExit(run, check, { code: 0 })
+})
+
+// ── 5.7: the plugin ecosystem on a non-DSH kernel ────────────────────────
+// Nothing about the plugin ecosystem may depend on the DSH route. On Claude
+// and Codex no `dsh-tui` row exists at all: the entry composes the light
+// profile into the root the screen is already mounted on (`host-entry.ts`
+// composeLiteRoot), and that composition is the only reason a third-party
+// plugin comes up on those kernels. The same three fixtures the DSH paths run
+// have to work here — the runtime theme, the panel, the `tui/input` decision —
+// and `/settings` has to still list this package's own section: the runtime
+// moves it onto the composed sections service (plugin.ts
+// `rehomeSettingsSection`, reached through the seam's `composeSucceeded`).
+// Without that the user cannot change this package's settings at all on this
+// kernel (language, theme, fullscreen, status line, shortcuts).
+//
+// The theme is forced through DSH_TUI_THEME rather than a persisted
+// ~/.dsh-tui/theme.json. Persisted-theme is what the DSH paths assert, but on
+// this kernel it is the wrong probe: `BRAND_THEMES` (branding.ts) gives the
+// claude and codex brands a default theme pair, and a persisted-preference
+// request is deliberately not a lock — the brand default wins until the user
+// picks through `/theme` or the environment. Measured on this fixture: with
+// only theme.json the screen keeps the brand palette (0 cells of #ab12cd) on
+// Claude, while a DSH kernel (the deepseek brand is not in BRAND_THEMES) draws
+// the runtime theme (451). DSH_TUI_THEME is an explicit wish, so the brand
+// default yields there — and what the assertion then measures is exactly 5.7's
+// seam: the theme can only be resolved and drawn once the composition has
+// settled and handed the live theme host to the mounted screen (the runtime's
+// `refreshHostServices`, reached through `composeSucceeded`). With that call
+// removed the screen stays on the detection palette (measured 0 cells).
+for (const kernel of ['claude']) await runCase(`plugins-light-${kernel}`, async ({ check, launch }) => {
+  const report = join(root, `report-plugins-light-${kernel}.jsonl`)
+  rmSync(report, { force: true })
+  const home = pluginHome(`plugins-light-${kernel}`, { 'theme.json': { theme: 'accept-theme' }, 'extension-grants.json': GRANTS })
+  await withProfilePatch(pluginPatch([['accept-theme', 'theme.mjs'], ['accept-panels', 'panels.mjs'], ['accept-guard', 'guard.mjs']], report), async () => {
+    const run = await launch({ backend: kernel, landing: false, cols: 150, rows: 36, env: { HOME: home, DSH_TUI_THEME: 'accept-theme' } })
+    await run.t.getByText(PROMPT).expect({ timeout: 60000 })
+    check('adopted', await until(() => run.traced('startup-adopted'), 60000), timeline(run))
+    check('the light profile composed, not the DSH one (no dsh-tui row on this kernel)',
+      await until(() => lightProfileComposed(run), 30000) && !dshProfileRowApplied(run), timeline(run))
+    const entries = () => readReport(report)
+    const find = (plugin, event) => entries().find(entry => entry.plugin === plugin && entry.event === event)
+    // (1) the runtime theme, registered by a plugin row of the light profile
+    check('theme registered', find('theme', 'registered')?.ok === true, JSON.stringify(entries()))
+    check('the runtime theme is drawn after the composition settled', await until(async () => (await themedCells(run)) > 20, 8000), `themed cells: ${await themedCells(run)}`)
+    // (2) the panel, under the plugin's own identity. All four of these are
+    // the admission + panel/store half of block 2.7, which no kernel takes
+    // part in: the identity comes from the plugin's own manifest, the budget
+    // from the panel store, the namespace file from the storage contract.
+    await until(() => find('panels', 'opened') !== undefined || find('panels', 'open-failed') !== undefined, 20000)
+    check('panels plugin admitted as accept-panels', find('panels', 'admitted')?.componentId === 'accept-panels', JSON.stringify(entries()))
+    const panels = find('panels', 'registered')
+    check('panel id carries the plugin id (no act<N> fallback)', JSON.stringify(panels?.ids) === '["accept-panels:demo"]', JSON.stringify(panels))
+    const budget = find('panels', 'budget')
+    check('panel budget counted per plugin: 3 more fit, a 5th is refused', budget?.accepted === 3 && budget?.fifthRefused === true, JSON.stringify(budget))
+    check('storage write under the plugin identity', find('panels', 'storage')?.ok === true && existsSync(join(home, '.dsh-tui', 'plugin-storage', 'accept-panels.json')), JSON.stringify(entries().filter(entry => entry.plugin === 'panels')))
+    check('panel opened', find('panels', 'opened') !== undefined, JSON.stringify(entries().filter(entry => entry.plugin === 'panels')))
+    check('panel shown', await until(async () => (await run.screen()).includes('ACCEPT-PANEL-BODY'), 8000), lines(await run.screen()).join('\n'))
+    await run.t.press('Escape')
+    await sleep(300)
+    // (3) decisions against the same entry root: the channel's dispatch is
+    // the same one the DSH paths run, both points included. (The DSH paths
+    // additionally assert the input *rewrite*'s delivered text and a
+    // transport failure: those two need a model request, which on this kernel
+    // goes to the real Claude backend — the offline `llm-deepseek` row those
+    // cases patch in is part of the DSH profile the light composition leaves
+    // out, so they stay off this kernel.)
+    check('guard admitted as accept-guard and subscribed', await until(() => find('guard', 'subscribed')?.componentId === 'accept-guard', 20000), JSON.stringify(entries().filter(entry => entry.plugin === 'guard')))
+    await run.clear()
+    await run.t.type('accept-veto this line')
+    await sleep(300)
+    await run.t.press('Enter')
+    check('tui/input veto: the reason is on screen', await until(async () => (await run.screen()).includes('ACCEPT-VETOED'), 8000), lines(await run.screen()).slice(-10).join('\n'))
+    check('the guard saw the input as accept-guard', entries().some(entry => entry.event === 'input' && entry.text === 'accept-veto this line' && entry.componentId === 'accept-guard'))
+    await run.clear()
+    await run.command('/new')
+    check('tui/session-switch veto: the reason is on screen', await until(async () => (await run.screen()).includes('ACCEPT-SWITCH-VETOED'), 8000), lines(await run.screen()).slice(-10).join('\n'))
+    check('the guard saw the /new', entries().some(entry => entry.event === 'session-switch' && entry.kind === 'new'))
+    await run.clear()
+    // (4) this package's own settings section, on this kernel
+    await run.command('/settings')
+    check('/settings lists the dsh-tui section', await until(async () => (await run.screen()).includes('dsh-tui (dsh-tui)'), 8000), lines(await run.screen()).slice(0, 8).join('\n'))
+    await run.t.press('Escape')
+    await sleep(300)
+    await run.clear()
+    await run.command('/quit')
+    await checkExit(run, check, { code: 0 })
+    check('no crash in restart.log', !homeRestartLog(home).some(line => / pid=\d+ crash /.test(line)), homeRestartLog(home).join('\n'))
+  })
 })
 
 const failed = results.filter(result => result.status === 'fail').length
