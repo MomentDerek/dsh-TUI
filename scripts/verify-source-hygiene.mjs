@@ -35,6 +35,11 @@ const rules = [
   // the quote must follow the package name. `docs/` is exempt because the plan
   // document quotes the retired form as the "before" side of the fix.
   ['lodash-es barrel import', /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)['"]lodash-es['"]/, ['docs/']],
+  // Same for `semver`: its root requires all 46 modules, a per-function path
+  // (`semver/functions/gt.js`) about a dozen. src/update.ts and
+  // src/ink/terminal.ts load before the first frame. Only `src/` ships, so
+  // maintainer scripts keep the root import.
+  ['semver barrel import', /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)['"]semver['"]/, ['docs/', 'scripts/']],
 ]
 const files = ['src', 'scripts', 'docs'].flatMap(name => collect(resolve(root, name)))
   .filter(path => /\.(?:[cm]?[jt]sx?|md)$/.test(path) && path !== ownPath)

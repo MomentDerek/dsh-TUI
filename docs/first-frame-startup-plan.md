@@ -7,7 +7,8 @@
 3.2（候选 c）已落地到源码并复测**（测量协议见 §4，**实测与复核结论见 §5**：3.1-a 的「≤3」判据
 物理不可达；**结论口径以逐轮交替对照为准：3.1 ≈ 126ms、3.2 ≈ 46ms，两项合计约 170ms**——独立
 裁定 I 推翻的是早期块级口径对 **3.2 单项**约 2.2–2.5 倍的高估，见 §5.7）；3.3 / 3.4 / 3.5 未落地，
-仍是测得的成本或估算。
+仍是测得的成本或估算。**3.7（更新检查让出首帧 + `semver` 按路径导入）已落地并 A/B**（2026-10-10，§5.8：渲染段
+−26ms、16/16 同号）。
 
 ## 1. 范围与口径
 
@@ -240,8 +241,24 @@ warm 下 TUI 模块段的 CPU 热点是**模块解析与链接的次数**（`lst
   顶层 await，**推迟路由判定**。先做一次 hack 产物的模块数 A/B，确认 yaml 真的掉出首帧图再决定。
 - `semver`：**记录（不拆）**——semver 由渲染器引入（`src/ink/terminal.ts:1` 值 import `coerce`，
   `ink.tsx:46` 静态引 `./terminal.js`），不是 `update.ts` 经 `logRestartEvent` 带进去的；拆
-  `logRestartEvent` 收益为 0。
+  `logRestartEvent` 收益为 0。**后续**：不拆模块，改按函数路径导入，已随 3.7 落地（46 → 13 个模块）。
 - DSH 内核首帧后加载 claude-agent-sdk：查是谁触发（后端注册表的预备？），按内核按需加载。
+
+### 3.7 更新检查让出首帧 + `semver` 按路径导入（**已落实**，A/B 见 §5.8）
+
+- **更新检查**：`checkForTuiUpdate()` 有两个调用方，都在首帧渲染期间触发：`Chat.tsx` 落地页的
+  `useEffect`（Ink 的 `renderSync` 会在首帧内同步执行掉 passive effect），以及 `plugin.ts` 挂载后的
+  后台检查。进程里第一次 `fetch()` 会**同步**加载 Node 内置的 undici，CPU profile 里约 37ms
+  （`__require undici`、`compileForInternalLoader`、`isIPv6`），全部落在 `render-done` 之前。
+  注释说的「registry 延迟不拖慢首帧」只对网络等待成立，对这段同步初始化不成立。改法：
+  `checkForTuiUpdate()` 开头先 `await setImmediate`，两个调用方都不用改。代价是这段开销挪到
+  首帧之后，`startup-adopted` 不变（是挪走，不是消掉）。
+- **`semver`**：`src/update.ts`（`gt`/`gte`/`lt`/`valid`）和 `src/ink/terminal.ts`（`coerce`）改为
+  `semver/functions/*.js`，加载的模块数从 46 降到 13。`scripts/verify-source-hygiene.mjs` 加一条
+  `semver barrel import` 规则，写法照 3.1 的 `lodash-es`，豁免 `docs/`、`scripts/`（维护脚本
+  不随包分发，`verify-alpha-source.mjs` 仍用包根导入）。dsh 自己那份 semver（dsh-app-boot 在宿主
+  准备段加载）是上游的，不受影响。
+- 回滚：两处 import 改回包根导入，删掉 `setImmediate` 那一行和门禁规则。
 
 ### 3.5 长期：首帧不依赖宿主（约 −135ms 再减 30ms，结构性改动；**不在本次范围，拆独立计划**）
 
@@ -555,3 +572,76 @@ B 态 = `import sample from 'lodash-es/sample.js'`。本轮各自 `pnpm compile`
 
 **未超出证据的边界**：以上区间都取自**同一台机、同一时段**；3.2 的 `render-done` 区间上界受后段
 漂移影响较宽；屏幕侧可见帧、真实终端 OSC 11 口径与跨机器复现仍缺（见 §5.4）。
+
+### 5.8 分段剖析与 3.7 的 A/B（measure4，2026-10-10）
+
+**环境**：这台机器同时在跑游戏开发任务（Windows 侧的 `urhoxruntime` 等），WSL 内看不到这部分负载，
+所以每轮都另用 `typeperf` 采 Windows 总 CPU（1s 粒度），同时采 WSL 内 `/proc` 的 busy/steal 和
+其他进程的占用。口径同 §4.1：`--entry host --backend dsh`、热编译缓存、`DSH_TUI_THEME=dark`；
+每轮开始前空闲 3s，作为背景负载的读数。脚本是一次性的，未入库：
+`.tmp/first-frame-cpu/{measure,preload,analyze,ab-stats}.mjs`。
+
+#### 5.8.1 基线分段（当时工作区的 lib，即随后以 `82af3c44` 提交的打包态；10 轮，不剖析）
+
+| 段 | 均值 | 中位 | 标准差 |
+| --- | --- | --- | --- |
+| spawn → entry 进程 | 42 | 42 | 4 |
+| → `entry-start` | 63 | 63 | 6 |
+| → `entry-hijacked` | 164 | 164 | 13 |
+| → `entry-modules` | 330 | 329 | 40 |
+| → `render-start` | 30 | 29 | 3 |
+| → `render-done` | 101 | 100 | 5 |
+| **`render-done` 累计** | **729** | 733 | 63 |
+| → `entry-first-frame-flushed` | 86 | 90 | 6 |
+| compose-start → compose-end（首帧后） | 925 | 929 | 94 |
+| → `startup-adopted`（累计 2207） | 466 | 479 | 39 |
+
+Windows 总 CPU：首帧期间平均 36%，启动前 39%；WSL 内其他进程 4–12%（单核）。`render-done` 与
+首帧期间 Windows CPU 的相关系数是 0.61（n=10，1s 采样粒度粗，只作参考）。
+
+#### 5.8.2 CPU profile 归因（`node:inspector` 每 250µs 采样，6 轮 Windows CPU < 45% 的平均）
+
+剖析会把整体拉慢约 1.2 倍，下面只看占比和排序。各段主线程 idle≈0，都是纯 CPU 时间。
+
+- **宿主 dsh 准备**（剖析 187ms）：`prepareHostRoot` 100（`createRuntimeResolution` 76，其中
+  `collectInstallationScopePackages` 55；`PluginPackages` 33；`installRuntimeInterception` 32），
+  cordis `_reload` 41，`loadHostDsh` 18。大约一半是文件系统调用：`lstat` 24、`realpath` 14、
+  `existsSync` 9、`readPackageManifest` 16。
+- **TUI 模块加载**（剖析 384ms）：node 模块加载器自身 135（`compileSourceTextModule` 45.5），
+  node 内置 52；经解析劫持（`wrapped`/`adapted`）的解析共 146，其中路由逻辑（`routeUrl`）34；
+  `contract.ts` 的版本校验 9；`string-width` 顶层执行 11.6。加载 455 个模块、10.6MB：`zod` 95
+  （经 `@deepseek-ai/dsh-user-questions`，`plugin.ts` 的 `mountDshQuestionSeams` 同步挂载它，
+  要挪出首帧得改 DSH 的挂载时序，没做）、本包 chunks 85、`semver` 46（profile 里那份，3.7 处理）、
+  `lodash-es` 43、`diff` 19。
+- **apply**（剖析 36ms）：`plugin.ts` 的 `apply` 30，其中 `createChannel` 12。
+- **渲染首帧**（剖析 123ms）：React 93；**`checkForTuiUpdate` → `fetchLatestVersion` 37**
+  （→ 3.7）。
+
+#### 5.8.3 3.7 的 A/B
+
+两套预构建 lib：A 是 HEAD `08342019` 重新编译的，B 是 3.7 改完的。两臂共用同一个隔离 profile，
+每轮只切 `lib/`、不重编译，各用一份热编译缓存。按 ABBA 逐轮交替跑 16 对，每臂先各预热 2 轮。
+差值 = A − B，正数表示 B 更快。
+
+| 指标 | A 中位 | B 中位 | 配对中位差 | bootstrap 95% CI | B 更快 | 精确置换 p |
+| --- | --- | --- | --- | --- | --- | --- |
+| **render-start → render-done** | 100.5 | 70.5 | **26** | **[22.5, 37]** | **16/16** | — |
+| entry-hijacked → entry-modules | 332 | 312 | 8 | [−14, 24.5] | 9/16 | — |
+| `render-done` | 713 | 678 | 31.5 | [−4, 58] | 11/16 | 0.14 |
+| `render-done`（剔除首帧期间 Windows CPU > 60% 的 1 对） | 717 | 675 | 37 | [−4, 71] | 11/15 | 0.016 |
+| `prompt` | 716.5 | 679.5 | 33.5 | [−3, 58.5] | 11/16 | 0.13 |
+| render-done → `entry-first-frame-flushed` | 87 | 81.5 | −0.5 | [−8, 9] | 7/16 | — |
+| `startup-adopted` | 2158 | 2156.5 | 24.5 | [−101, 85] | 9/16 | 0.73 |
+
+- **更新检查让出首帧**：效果确定，渲染段 −26ms，16/16 同号，置信区间远离 0。挪走的开销没有冒到
+  首帧写出之后（render-done → fff 差 ≈0）。
+- **`semver`**：模块数确定少了 33 个，但耗时（+8ms）在本机噪声里分不出来，只能算方向正确。
+- **`render-done` 总计**：中位快 32–37ms，与渲染段的收益一致；前几段配对差的噪声有 ±30ms，
+  16 对下全量还不显著（p=0.14）。
+- **CPU 负载两臂相当**：首帧期间 Windows 总 CPU，A 臂平均 39.5%、B 臂 36.2%；WSL 内其他进程
+  两臂都约 5%。只有一对的 B 轮撞上 60% 负载（823ms），也就是被剔除的那一对。
+- **测试修复**：`verify-update.mjs` 自 `82af3c44`（lib 打包）起就坏了。它手工列了要镜像的文件，
+  但没包括 `chunks/`；另外 3 个按 `export async function …` 定位的源码文本断言，在打包后的产物里
+  找不到锚点。现改为镜像整棵 `lib/types` 的 `.js`，锚点改用不带 `export` 的函数声明。
+  `verify-update-checksum.tsx` 的两条「无界流超上限中断」断言在 HEAD 上也失败，而且时有时无
+  （和时序相关），不在本次范围内。

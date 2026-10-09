@@ -4,7 +4,12 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSy
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { gte, gt, lt, valid } from 'semver'
+// Per-function paths: the `semver` root pulls in all 46 of its modules, and
+// this file loads before the first frame (docs/first-frame-startup-plan.md).
+import gt from 'semver/functions/gt.js'
+import gte from 'semver/functions/gte.js'
+import lt from 'semver/functions/lt.js'
+import valid from 'semver/functions/valid.js'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
 import { stripResumeArgs } from './sessionHistory.js'
@@ -1002,6 +1007,11 @@ export async function resolveTuiUpdateTarget(): Promise<TuiUpdateTarget> {
  * or blocks the interactive TUI.
  */
 export async function checkForTuiUpdate(): Promise<TuiUpdateInfo | undefined> {
+  // Both callers start this during the first render (a passive effect that
+  // Ink flushes synchronously, and right after mount). The first `fetch()`
+  // in a process loads Node's bundled undici synchronously (~30ms), so yield
+  // first: that cost then lands after the frame instead of before it.
+  await new Promise<void>(resolve => setImmediate(resolve))
   const target = await resolveTuiUpdateTarget()
   return target.kind === 'update'
     ? {
