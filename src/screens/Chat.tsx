@@ -162,7 +162,7 @@ import { Launchpad, launchpadVisible, type LaunchpadAction } from './Launchpad.j
 import { resolveLaunchpadActions } from '../components/launchpadActions.js'
 import { Onboarding } from './Onboarding.js'
 import { appendHistory } from '../history.js'
-import { isBootSafeCommand, isHiddenCommandName, isLocalCommandName, parseCommandName } from '../commands.js'
+import { isBootSafeCommand, isHiddenCommandName, isLocalCommandName, isUnavailableLocalCommand, parseCommandName } from '../commands.js'
 import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/trajectory/index.js'
 import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
 import { readTrajectorySeen, writeTrajectorySeen } from '../trajectoryPrefs.js'
@@ -1176,14 +1176,17 @@ export function Chat({
   // A placeholder still starting has no roster to ask (it would answer
   // "not supported" into the Tips row): wait for the adopted session.
   const presetsReady = channel.ready !== false
+  // A kernel without /preset (Claude, Codex) has no roster either: the
+  // refusal would land as a "not supported: preset" toast on every launch.
+  const presetsServed = !isUnavailableLocalCommand('preset', channel.backendCapabilities as Channel['backendCapabilities'] | undefined)
   React.useEffect(() => {
-    if (!launchpadShown || presetOptions.length > 0 || !presetsReady) return
+    if (!launchpadShown || presetOptions.length > 0 || !presetsReady || !presetsServed) return
     let cancelled = false
     channel.listPresets()
       .then(list => { if (!cancelled && list.length > 0) setPresetOptions(list) })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [launchpadShown, presetOptions.length, channel, presetsReady])
+  }, [launchpadShown, presetOptions.length, channel, presetsReady, presetsServed])
   /** `/effort` adapter levels: load async before the slider opens. */
   const [effortOptions, setEffortOptions] = React.useState<readonly EffortOption[]>([])
   /** True when those levels are the CLI-standard compatibility ladder (the

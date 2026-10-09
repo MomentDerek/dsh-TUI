@@ -1279,9 +1279,17 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
   // 桩口径与真机 claude 会话一致：backendCapabilities.backendId = 'claude'
   // （Chat 的 kernelCurrentId 只认这一处——右下角内核区的 ▸ 与入口名都跟着它）。
   const claudeCaps = { backendId: 'claude', backendLabel: 'Claude', commands: [] }
-  const chat = await mountChat({ launchpadOnBoot: true }, { backendCapabilities: claudeCaps })
+  // 真机 claude 会话的 listPresets 是拒绝桩（action-readiness 的
+  // 「当前内核不支持：preset」提示）：记下调用，Y1b 断言启动页不去碰它。
+  const presetReads: string[] = []
+  const chat = await mountChat({ launchpadOnBoot: true }, {
+    backendCapabilities: claudeCaps,
+    listPresets: async () => { presetReads.push('listPresets'); return [] },
+  })
   check('Y1 claude 内核全新启动先落启动页（Launchpad 盖在最上层）',
     await settled(() => chat.screen().includes('说点什么')), chat.screen().slice(0, 200))
+  check('Y1b 内核不提供 /preset 时启动页不预读 preset 名册（否则每次启动都弹不支持）',
+    presetReads.length === 0, JSON.stringify(presetReads))
   check('Y2 内核角标把 claude 记为当前内核（▸ 在 Claude 行，不在 DSH 行）',
     await settled(() => /▸\s*Claude/.test(chat.screen()) && !/▸\s*DSH/.test(chat.screen())),
     chat.screen().slice(-320))
