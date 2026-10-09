@@ -365,6 +365,10 @@ r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'zh' })
 check('entry route: a missing dsh prints the install guidance (Chinese)', r.status === 1 && r.stderr.includes('未检测到 dsh CLI'))
 r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'en' })
 check('entry route: a missing dsh prints the install guidance (English)', r.status === 1 && r.stderr.includes('dsh CLI not found'))
+// 入口自己给出指引后就停：不回退去 spawn 一个不存在的 dsh，启动器也不再追加
+// 指向 `dsh --profile` 的 profileExited / safeHint。
+check('entry route: a missing dsh is not delegated to a dsh spawn', !r.stderr.includes('cannot start dsh') && !r.stderr.includes('cannot host this launch'))
+check('entry route: a missing dsh adds no profile/safe-mode hints', !r.stderr.includes('dsh profile exited') && !r.stderr.includes('dsh-tui safe'))
 
 // --- 7. 内核分流（docs/standalone-host-design.md 5.8）---------------------------
 // 判定为 Claude 的启动走本包入口 lib/types/dsh-adapter/host-entry.js，不再

@@ -121,7 +121,8 @@ const cmd = (command, args) =>
 // dsh CLI 预检的异步形态。探测照旧真的跑 `dsh --version`（经 cmd()/shellOpt，
 // Windows 交给 cmd.exe 按 PATHEXT 解析 dsh.cmd），只是不再占着关键路径等它：
 // 本包入口（DSH 内核在进程内组合、或非 DSH 内核）根本不需要 dsh CLI。
-// `requireDsh()` 是唯一消费点，文案与退出码与原来的同步预检逐字一致。
+// 消费点两处：`dsh --profile` 出口的 `requireDsh()`（文案与退出码与原来的同步
+// 预检逐字一致），以及入口路由非零退出时判断是否因缺 dsh 而跳过排查提示。
 // stdio 用 'ignore' 而不是 'pipe'：成功路径永不 await 这个 Promise，'pipe' 会把
 // 两条管道挂在这一轮的启动上。这里**不能** unref：`requireDsh()` 会在起 dsh 前
 // await 它，届时如果这个子进程是唯一的活跃句柄，Node 会把这个顶层 await 判成
@@ -1511,8 +1512,9 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // ─── profile 副本（或源码运行）：完整启动逻辑 ─────────────────────────────
   // dsh CLI 预检（缺失时给安装指引）。探测异步起、结果在**真正要起 dsh 的出口**
   // 才消费（见文件末尾路由的 `await requireDsh()`）：本包入口不需要 dsh CLI，让
-  // 这次探测留在关键路径上白等 ~80ms 没有意义。文案、退出码与自举/更新/救援
-  // 路径的提示全部不变。
+  // 这次探测留在关键路径上白等 ~80ms 没有意义。入口路由下缺 dsh 时由入口自己
+  // 打印同一份 noDsh 并以 1 退出，这里只用探测结果跳过后续的排查提示。文案、
+  // 退出码与自举/更新/救援路径的提示不变。
   void probeDsh()
 
   let installedVersion
@@ -1688,7 +1690,12 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   noteLaunchChain()
   if (hostEntryEnabled && hostArgs.length === 0 && (dshInEntry || launchKernel() !== 'dsh')) {
     // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
-    settleFirstResult(await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env), firstArgs)
+    const result = await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env)
+    // DSH 内核下没有 dsh CLI：入口已打印同一份 noDsh 指引并以 1 退出（host-entry.ts
+    // runInEntry）。这里不再追加 profileExited / safeHint / 安全模式询问——它们
+    // 指向一个不存在的 `dsh --profile`。预检的结果正是在这里用上。
+    if (result.kind === 'exit' && result.code !== 0 && launchKernel() === 'dsh' && !(await probeDsh())) process.exit(result.code)
+    settleFirstResult(result, firstArgs)
   } else {
     // 唯一消费预检的出口：这条分支下面就是 `dsh --profile`（含 dsh 自己的
     // --version/--dump-config* 这类 hostArgs，以及 DSH_TUI_HOST_ENTRY=0 与

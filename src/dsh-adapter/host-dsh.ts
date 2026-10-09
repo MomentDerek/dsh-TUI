@@ -136,6 +136,9 @@ export type HostDshLocation =
   | { readonly packageDir: string; readonly launcher: string; readonly via: 'link' | 'shim' | 'beside' | 'volta' }
   | { readonly reason: string }
 
+/** `findHostDsh`'s reason when PATH has no `dsh` at all (host-entry.ts tells it apart). */
+export const NO_DSH_ON_PATH = 'no dsh on PATH'
+
 /**
  * Find the installed host package from the first `dsh` on PATH, following
  * what a launch would run: a link (npm on Unix) by its realpath, an npm /
@@ -168,7 +171,7 @@ export function findHostDsh(env: NodeJS.ProcessEnv = process.env, platform: Node
       return followLauncher(candidate, real, env, platform)
     }
   }
-  return { reason: 'no dsh on PATH' }
+  return { reason: NO_DSH_ON_PATH }
 }
 
 /** The host package containing `path`, walking up. */

@@ -47,12 +47,26 @@ import { HOST_NOTICE_ENV, type KernelBackendId } from '../kernelPrefs.js'
 import { logForDebugging } from '../utils/debug.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
-import { HostComposeError, loadHostDsh, prepareHostRoot, type HostRoot } from './host-dsh.js'
+import { HostComposeError, loadHostDsh, NO_DSH_ON_PATH, prepareHostRoot, type HostRoot } from './host-dsh.js'
 import type { HostComposeSeam } from './entry-slot.js'
 import { installEntrySignals, type ProcessExitSeam } from './process-exit.js'
 import { disposeRootSettled, trackComposition } from './root-dispose.js'
 
 markBoot('entry-start')
+/**
+ * The launcher's missing-dsh guidance, verbatim and with the same language
+ * rule (bin/dsh-tui.js `MSG.noDsh`: `DSH_TUI_LANG=en`, Chinese otherwise).
+ * The launcher's own pre-check (its async `requireDsh()`) only speaks at its
+ * `dsh --profile` exit; on the entry route this process says it itself — when
+ * the host lookup finds no dsh on PATH (`runInEntry`), and when a delegated
+ * `dsh --profile` spawn finds none (`delegateToDsh`). Declared before the
+ * top-level await below: `runInEntry` reads it while this module's evaluation
+ * is still suspended there.
+ */
+const NO_DSH = {
+  en: '[dsh-tui] dsh CLI not found. Install the official client first:\n  npm install -g @deepseek-ai/dsh',
+  zh: '[dsh-tui] 未检测到 dsh CLI。请先安装官方客户端：\n  npm install -g @deepseek-ai/dsh',
+}
 // Diagnostic reports without the network section: DSH's native flock loader
 // reads `process.report.getReport()` for the libc flavor, and with sockets
 // already open (the screen mounts before DSH opens its session here) the
@@ -63,19 +77,6 @@ const profile = hostProfile()
 const route = entryRoute(entryKernel(process.env, { configured: configuredBackend(profile) }))
 if (route.kind === 'entry') await runInEntry(route.kernel)
 else delegateToDsh()
-
-/**
- * The launcher's missing-dsh guidance, verbatim and with the same language
- * rule (bin/dsh-tui.js `MSG.noDsh`: `DSH_TUI_LANG=en`, Chinese otherwise).
- * The launcher's own pre-check (its async `requireDsh()`) only speaks at its
- * `dsh --profile` exit; the entry's fallback is the one path that reaches
- * `delegateToDsh()` with no dsh at all, so this process has to carry the same
- * guidance itself instead of only naming the spawn failure.
- */
-const NO_DSH = {
-  en: '[dsh-tui] dsh CLI not found. Install the official client first:\n  npm install -g @deepseek-ai/dsh',
-  zh: '[dsh-tui] 未检测到 dsh CLI。请先安装官方客户端：\n  npm install -g @deepseek-ai/dsh',
-}
 
 /** Hand the launch to `dsh --profile <profile> -- <app args>` and mirror its exit. */
 function delegateToDsh(): void {
@@ -187,6 +188,14 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     markBoot('entry-hijacked')
   } catch (error) {
     markBoot('entry-host-unavailable')
+    // No dsh at all: `dsh --profile` cannot start either, so say what to
+    // install and stop here instead of delegating into a spawn failure (on
+    // Windows `shell: true` turns that into a bare non-zero exit with no
+    // ENOENT to recognise). The launcher reads the same probe and adds nothing.
+    if (kernel === 'dsh' && error instanceof Error && error.message === NO_DSH_ON_PATH) {
+      process.stderr.write(`${NO_DSH[process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh']}\n`)
+      process.exit(1)
+    }
     hostNotice = noteHostUnavailable(kernel, error)
     if (kernel === 'dsh') {
       delegateToDsh()
