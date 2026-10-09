@@ -64,6 +64,19 @@ const route = entryRoute(entryKernel(process.env, { configured: configuredBacken
 if (route.kind === 'entry') await runInEntry(route.kernel)
 else delegateToDsh()
 
+/**
+ * The launcher's missing-dsh guidance, verbatim and with the same language
+ * rule (bin/dsh-tui.js `MSG.noDsh`: `DSH_TUI_LANG=en`, Chinese otherwise).
+ * The launcher's own pre-check (its async `requireDsh()`) only speaks at its
+ * `dsh --profile` exit; the entry's fallback is the one path that reaches
+ * `delegateToDsh()` with no dsh at all, so this process has to carry the same
+ * guidance itself instead of only naming the spawn failure.
+ */
+const NO_DSH = {
+  en: '[dsh-tui] dsh CLI not found. Install the official client first:\n  npm install -g @deepseek-ai/dsh',
+  zh: '[dsh-tui] 未检测到 dsh CLI。请先安装官方客户端：\n  npm install -g @deepseek-ai/dsh',
+}
+
 /** Hand the launch to `dsh --profile <profile> -- <app args>` and mirror its exit. */
 function delegateToDsh(): void {
   // As the launcher builds it: dsh's `--` only when there are app arguments.
@@ -89,6 +102,10 @@ function delegateToDsh(): void {
   for (const [signal, forward] of forwarders) process.on(signal, forward)
   child.on('error', error => {
     process.stderr.write(`dsh-tui: cannot start dsh (${error.message})\n`)
+    // No dsh on PATH: the spawn failure alone does not say what to do about
+    // it. Same install guidance as the launcher's `dsh --profile` exit, which
+    // this path bypassed.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') process.stderr.write(`${NO_DSH[process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh']}\n`)
     process.exit(1)
   })
   child.on('exit', (code, signal) => {

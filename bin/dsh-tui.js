@@ -118,6 +118,31 @@ const shellOpt = isWin ? { shell: true } : {}
 const cmd = (command, args) =>
   isWin ? [`${command} ${shellQuote(args).join(' ')}`, []] : [command, args]
 
+// dsh CLI 预检的异步形态。探测照旧真的跑 `dsh --version`（经 cmd()/shellOpt，
+// Windows 交给 cmd.exe 按 PATHEXT 解析 dsh.cmd），只是不再占着关键路径等它：
+// 本包入口（DSH 内核在进程内组合、或非 DSH 内核）根本不需要 dsh CLI。
+// `requireDsh()` 是唯一消费点，文案与退出码与原来的同步预检逐字一致。
+// stdio 用 'ignore' 而不是 'pipe'：成功路径永不 await 这个 Promise，'pipe' 会把
+// 两条管道挂在这一轮的启动上。这里**不能** unref：`requireDsh()` 会在起 dsh 前
+// await 它，届时如果这个子进程是唯一的活跃句柄，Node 会把这个顶层 await 判成
+// 永不结算、以 exit 13 直接终止启动器（verify-launcher 实测）。探测就是
+// `dsh --version`，~80ms 内自行退出，不需要 unref。
+let dshProbe
+const probeDsh = () => {
+  dshProbe ??= new Promise(resolve => {
+    const child = spawn(...cmd('dsh', ['--version']), { stdio: 'ignore', ...shellOpt })
+    child.on('error', () => resolve(false))
+    child.on('exit', code => resolve(code === 0))
+  })
+  return dshProbe
+}
+
+const requireDsh = async () => {
+  if (await probeDsh()) return
+  console.error(msg('noDsh'))
+  process.exit(1)
+}
+
 // 内联 semver（解析 + 严格大于）：启动器可能在依赖不完整的环境里被执行
 // （迁移、半损坏安装、测试沙箱），零外部依赖是自保底线。覆盖 semver 的
 // 核心-先行版比较规则：先行版标识符逐段比（数字段按数值、小于字母段），
@@ -1484,14 +1509,11 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   forwardExit(child)
 } else {
   // ─── profile 副本（或源码运行）：完整启动逻辑 ─────────────────────────────
-  // dsh CLI 预检（缺失时给安装指引，先于一切 profile 逻辑）。
-  {
-    const probe = spawnSync(...cmd('dsh', ['--version']), { stdio: 'pipe', ...shellOpt })
-    if (probe.error || probe.status !== 0) {
-      console.error(msg('noDsh'))
-      process.exit(1)
-    }
-  }
+  // dsh CLI 预检（缺失时给安装指引）。探测异步起、结果在**真正要起 dsh 的出口**
+  // 才消费（见文件末尾路由的 `await requireDsh()`）：本包入口不需要 dsh CLI，让
+  // 这次探测留在关键路径上白等 ~80ms 没有意义。文案、退出码与自举/更新/救援
+  // 路径的提示全部不变。
+  void probeDsh()
 
   let installedVersion
   try {
@@ -1668,6 +1690,10 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
     settleFirstResult(await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env), firstArgs)
   } else {
+    // 唯一消费预检的出口：这条分支下面就是 `dsh --profile`（含 dsh 自己的
+    // --version/--dump-config* 这类 hostArgs，以及 DSH_TUI_HOST_ENTRY=0 与
+    // HOST_ENTRY_DSH=0 的非默认路径）。
+    await requireDsh()
     settleFirstResult(await startDshSession(firstArgs), firstArgs)
   }
 }

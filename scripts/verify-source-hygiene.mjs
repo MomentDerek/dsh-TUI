@@ -25,6 +25,16 @@ const rules = [
   ['compiler-generated component input', /(?:from\s*|import\s*\()['"]react\/compiler-runtime['"]|react\.early_return_sentinel|react\.memo_cache_sentinel/],
   ['retired helper namespace', /(?:src\/|\.\.\/|types\/)cc\/|cc\.d\.ts/],
   ['product comparison wording', /Claude Code[- ](?:style|风格)|mirroring Claude Code|ported CC|\bCC[- ](?:style|parity)|Claude-Code-identical/],
+  // The barrel import drags all 640 lodash-es modules into the first frame
+  // (docs/first-frame-startup-plan.md 3.1). Per-path imports keep it out —
+  // src/ink/ink.tsx already imports lodash-es/noop.js and
+  // lodash-es/throttle.js by path. Every form that names the package root is
+  // caught: `from 'lodash-es'` (import/export), the side-effect
+  // `import 'lodash-es'`, `require('lodash-es')` and the dynamic
+  // `import('lodash-es')`; a per-path specifier still does not match, since
+  // the quote must follow the package name. `docs/` is exempt because the plan
+  // document quotes the retired form as the "before" side of the fix.
+  ['lodash-es barrel import', /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)['"]lodash-es['"]/, ['docs/']],
 ]
 const files = ['src', 'scripts', 'docs'].flatMap(name => collect(resolve(root, name)))
   .filter(path => /\.(?:[cm]?[jt]sx?|md)$/.test(path) && path !== ownPath)

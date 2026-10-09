@@ -355,6 +355,17 @@ check('i18n: DSH_TUI_LANG=zh prints Chinese', r.stderr.includes('未检测到 ds
 r = runBin([], envNoDsh)
 check('i18n: default (unset) prints Chinese', r.stderr.includes('未检测到 dsh CLI'))
 
+// --- 5.1 默认路由（entry）缺 dsh（F1 回归）：DSH_TUI_HOST_ENTRY_DSH 未设时启动
+// 器走本包入口，入口用不了已装 dsh 就回退到 `dsh --profile`——那条 spawn 同样
+// 没有 dsh 可用，安装指引必须重新出现（host-entry.ts 的 delegateToDsh 带同一份
+// `MSG.noDsh`）。默认 env 把 DSH_TUI_HOST_ENTRY_DSH 钉在 '0'，本节的三条断言都
+// 落在 `dsh --profile` 出口，故这里显式让它取默认值。
+const entryNoDsh = { ...envNoDsh, DSH_TUI_HOST_ENTRY_DSH: undefined }
+r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'zh' })
+check('entry route: a missing dsh prints the install guidance (Chinese)', r.status === 1 && r.stderr.includes('未检测到 dsh CLI'))
+r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'en' })
+check('entry route: a missing dsh prints the install guidance (English)', r.status === 1 && r.stderr.includes('dsh CLI not found'))
+
 // --- 7. 内核分流（docs/standalone-host-design.md 5.8）---------------------------
 // 判定为 Claude 的启动走本包入口 lib/types/dsh-adapter/host-entry.js，不再
 // `dsh --profile`。这里没有 TTY，入口里的运行时按契约以「需要交互终端」失败——
