@@ -2682,14 +2682,19 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         const rowDefault = (dshCtx.get('agentDefaultModel') as {
           currentSelection?(): { provider?: unknown; model?: unknown }
         } | undefined)?.currentSelection?.()
-        const rowStartupRoute = resolveModelRoute(rowRoute, readModelPref(),
-          typeof rowDefault?.provider === 'string' && rowDefault.provider.length > 0
-            && typeof rowDefault.model === 'string' && rowDefault.model.length > 0
-            ? { provider: rowDefault.provider, model: rowDefault.model }
-            : undefined)
+        const rowHarnessDefault = typeof rowDefault?.provider === 'string' && rowDefault.provider.length > 0
+          && typeof rowDefault.model === 'string' && rowDefault.model.length > 0
+          ? { provider: rowDefault.provider, model: rowDefault.model }
+          : undefined
+        const rowStartupRoute = resolveModelRoute(rowRoute, readModelPref(), rowHarnessDefault)
+        // What a rejected preference falls back to on this row — the same
+        // startup/deployment split the plugin's own boot makes (issue #67), so
+        // an unusable pick lands on the deployment default and never on the
+        // lock it replaced.
+        const rowDeploymentRoute = resolveModelRoute(rowRoute, undefined, rowHarnessDefault)
         // `/new` after a failed startup open: DSH's create path on this row.
         openDshSession = async cwd => {
-          const created = await resolveAgent(dshCtx, undefined, rowRoute, rowStartupRoute, { cwd }, rowConfig.preset)
+          const created = await resolveAgent(dshCtx, undefined, rowRoute, rowStartupRoute, rowDeploymentRoute, { cwd }, rowConfig.preset)
           agent = created.agent
           await attachWorkspaceOwnership(dshCtx, created.agent)
           rowFacts.route = created.route ?? rowStartupRoute
@@ -2713,6 +2718,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs),
           rowRoute,
           rowStartupRoute,
+          rowDeploymentRoute,
           startupMeta,
           rowConfig.preset,
         )
