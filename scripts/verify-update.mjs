@@ -23,7 +23,7 @@
  *
  * Run: node scripts/verify-update.mjs
  */
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -73,55 +73,21 @@ check(
     && launcherKernelIds.elements.every(ts.isStringLiteral)
     && JSON.stringify(launcherKernelIds.elements.map(element => element.text)) === JSON.stringify(BUILTIN_BACKEND_IDS),
 )
-const compiledModulePath = fileURLToPath(new URL('../lib/types/update.js', import.meta.url))
-const compiledShellQuotePath = fileURLToPath(new URL('../lib/types/utils/shellQuote.js', import.meta.url))
-const compiledPathsPath = fileURLToPath(new URL('../lib/types/utils/paths.js', import.meta.url))
-// update.js imports stripResumeArgs from here (a kernel switch must not hand
-// the replacement this kernel's --resume flags) — the scratch mirror has to
-// carry it or the copy fails to link.
-const compiledSessionHistoryPath = fileURLToPath(new URL('../lib/types/sessionHistory.js', import.meta.url))
-// update.js imports KERNEL_SWITCH_HANDOFF_ENV from here (the kernel-switch
-// handoff is one-shot) — the scratch mirror has to carry it or the copy
-// fails to link.
-const compiledKernelPrefsPath = fileURLToPath(new URL('../lib/types/kernelPrefs.js', import.meta.url))
-// kernelPrefs.js imports the backend id rule (isBackendIdSyntax) from the neutral
-// manifest contract (P0 D1/D2) — the mirror has to carry it or the copy fails to link.
-const compiledBackendManifestPath = fileURLToPath(new URL('../lib/types/agent/backend-manifest.js', import.meta.url))
-// update.js imports the kernel-switch transition events (S05 MVE) from
-// handoffEvents.js, which in turn pulls kernelCatalog.js (display names)
-// and i18n.js (bilingual copy). The scratch mirrors must carry all of
-// them or the copy fails to link; npm deps (chalk, semver) resolve via
-// the scratch node_modules junction below.
-const compiledHandoffEventsPath = fileURLToPath(new URL('../lib/types/handoffEvents.js', import.meta.url))
-// update.js imports the ACK protocol (S05 完整版) from handoffAck.js and
-// EXIT_ALT_SCREEN from the ink dec sequences — both must ride the mirror.
-const compiledHandoffAckPath = fileURLToPath(new URL('../lib/types/handoffAck.js', import.meta.url))
-const compiledTermioDir = fileURLToPath(new URL('../lib/types/ink/termio', import.meta.url))
-const compiledKernelCatalogPath = fileURLToPath(new URL('../lib/types/components/kernelCatalog.js', import.meta.url))
-const compiledI18nPath = fileURLToPath(new URL('../lib/types/i18n.js', import.meta.url))
+const compiledRoot = fileURLToPath(new URL('../lib/types', import.meta.url))
+const compiledModulePath = join(compiledRoot, 'update.js')
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 
 /**
- * Mirror compiled update module and its dependencies into a scratch directory.
+ * Mirror the compiled update module and everything it links into a scratch
+ * directory. lib/types is bundled (scripts/bundle-lib.mjs): update.js imports
+ * shared `chunks/` whose names and split move with every build, so the whole
+ * tree's `.js` files ride along rather than a hand-kept list. Bare specifiers
+ * (semver, chalk) resolve through the scratch node_modules link below.
  *
  * @param {string} dstDir - Destination directory to receive the modules.
  */
 function copyUpdateModule(dstDir) {
-  mkdirSync(join(dstDir, 'utils'), { recursive: true })
-  mkdirSync(join(dstDir, 'components'), { recursive: true })
-  mkdirSync(join(dstDir, 'agent'), { recursive: true })
-  cpSync(compiledModulePath, join(dstDir, 'update.js'))
-  cpSync(compiledShellQuotePath, join(dstDir, 'utils', 'shellQuote.js'))
-  cpSync(compiledPathsPath, join(dstDir, 'utils', 'paths.js'))
-  cpSync(compiledSessionHistoryPath, join(dstDir, 'sessionHistory.js'))
-  cpSync(compiledKernelPrefsPath, join(dstDir, 'kernelPrefs.js'))
-  cpSync(compiledBackendManifestPath, join(dstDir, 'agent', 'backend-manifest.js'))
-  cpSync(compiledHandoffEventsPath, join(dstDir, 'handoffEvents.js'))
-  cpSync(compiledHandoffAckPath, join(dstDir, 'handoffAck.js'))
-  // dec.js 拉着 csi/ansi 的序列常量链——整个 termio 目录随镜像走。
-  cpSync(compiledTermioDir, join(dstDir, 'ink', 'termio'), { recursive: true })
-  cpSync(compiledKernelCatalogPath, join(dstDir, 'components', 'kernelCatalog.js'))
-  cpSync(compiledI18nPath, join(dstDir, 'i18n.js'))
+  cpSync(compiledRoot, dstDir, { recursive: true, filter: source => source.endsWith('.js') || statSync(source).isDirectory() })
 }
 
 // ---- installedTuiVersion: compiled layout is this module's own real layout
@@ -740,8 +706,10 @@ try {
 // install removal must be reachable from the shared install half (updateTui,
 // which updateTuiAndRestart delegates to), and the /update restart tail must
 // ride the hardened restartTui handoff (#483).
-const updateFnStart = compiledSource.indexOf('export async function updateTui')
-const restartFnStart = compiledSource.indexOf('export async function restartTui')
+// The bundled lib lists exports at the end of the file, so the anchors are the
+// bare declarations (`export ` no longer precedes them).
+const updateFnStart = compiledSource.indexOf('async function updateTui(')
+const restartFnStart = compiledSource.indexOf('async function restartTui(')
 const updateSegment = compiledSource.slice(updateFnStart, restartFnStart)
 check(
   'recovery: EEXIST failure routes to the stale-install removal (#479)',
