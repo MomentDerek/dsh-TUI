@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Phase 1 acceptance for the standalone host (docs/standalone-host-design.md,
- * the checklist at the end of "Phase 1 第 3 块"), driven in a real terminal
+ * Acceptance for the standalone host (docs/standalone-host-design.md), driven
+ * in a real terminal
  * emulator: @microsoft/tui-test runs this checkout's launcher in a PTY whose
  * screen model answers terminal queries (DA1 and friends) like a real one.
  * The launcher runs inside an isolated copy of the installed profile
@@ -53,7 +53,7 @@
  *                          root), the DSH session is adopted and its model
  *                          named, /quit restores the terminal
  *   dsh-in-entry-quit-early the same, /quit as soon as the screen is up
- *   (Phase 2.4, the DSH kernel in the entry by default:)
+ *   (the DSH kernel in the entry by default:)
  *   dsh-default-starting   no switch set: DSH runs in the entry; the first
  *                          frame says "Starting DSH…" and reached the
  *                          terminal before the composition froze the loop
@@ -79,7 +79,7 @@
  *   live-send              DSH_TUI_CLAUDE_LIVE=1 only: one prompt round-trip
  *   live-initial-prompt    DSH_TUI_CLAUDE_LIVE=1 only: a command-line prompt
  *                          is sent once the session is adopted
- *   dsh-entry-*            block 2.5, the DSH kernel in the entry
+ *   dsh-entry-*            the DSH kernel in the entry
  *                          (DSH_TUI_HOST_ENTRY_DSH=1 set per case): SIGTERM /
  *                          SIGHUP / SIGINT while starting and after the
  *                          adoption (ends by the signal), a second signal,
@@ -92,7 +92,7 @@
  *                          teardown time. Faults and appExit come from the
  *                          test-only DSH_TUI_TEST_FAULT
  *                          (src/dsh-adapter/test-faults.ts).
- *   plugin-*               block 2.7, third-party test plugins
+ *   plugin-*               third-party test plugins
  *                          (scripts/fixtures/host-entry-plugins/) as rows of
  *                          the profile's patch layer: a runtime theme the
  *                          user had persisted, a side panel, input /
@@ -589,7 +589,7 @@ if (live) {
   })
 }
 
-// ── 6. Phase 2.4: the DSH kernel in the entry by default ─────────────────
+// ── 6. the DSH kernel in the entry by default ─────────────────────────
 // No DSH_TUI_HOST_ENTRY_DSH in these runs unless a case sets one.
 const STARTING = 'Starting DSH'
 const pidOf = (run, mark) => run.marks().find(entry => entry.mark === mark)?.pid
@@ -789,8 +789,8 @@ await runCase('dsh-open-failed-new', async ({ check, launch }) => {
   await checkExit(run, check, { code: 0 })
 })
 
-// ── 7. process ownership with the DSH kernel in the entry (block 2.5) ────
-// docs/standalone-host-design.md 2.5 and src/dsh-adapter/process-exit.ts:
+// ── 7. process ownership with the DSH kernel in the entry ────────────────
+// docs/standalone-host-design.md 5.5 and src/dsh-adapter/process-exit.ts:
 // signals, `ctx.appExit` and fatal errors go through the TUI's exit funnel;
 // a termination signal ends the process by that signal. Every case sets
 // DSH_TUI_HOST_ENTRY_DSH=1 itself (replacements inherit it) and checks the
@@ -1085,7 +1085,7 @@ await runCase('dsh-entry-row-activation-fails', async ({ check, launch }) => {
   }
 })
 
-// ── 8. third-party plugins with DSH in the entry (block 2.7) ─────────────
+// ── 8. third-party plugins with DSH in the entry ─────────────────────────
 // Test plugins (scripts/fixtures/host-entry-plugins/, not shipped) as rows of
 // the isolated profile's own patch layer — inserted after the TUI's rows, as
 // a third-party row lands. Each case runs on both paths: `entry` (the
@@ -1214,8 +1214,7 @@ for (const [path, pathEnv] of Object.entries(PLUGIN_PATHS)) await runCase(`plugi
 // first TUI row: a row activating after it (here: one that injects a TUI
 // service) is refused, one activating before it (no inject: it applies as
 // soon as its module loads) is not. The entry arms the same point
-// (host-access.ts armRootCapabilityGuard); before block 2.7 it guarded no
-// row while the profile composed.
+// (host-access.ts armRootCapabilityGuard) while the profile composes.
 const overreachEarly = {}
 for (const [path, pathEnv] of Object.entries(PLUGIN_PATHS)) await runCase(`plugin-overreach-${path}`, async ({ check, launch }) => {
   const report = join(root, `report-overreach-${path}.jsonl`)
@@ -1250,7 +1249,7 @@ for (const [path, pathEnv] of Object.entries(PLUGIN_PATHS)) await runCase(`plugi
 // A third-party row failing, on the entry path: in its apply while the
 // profile composes (DSH's audit reports it; the TUI does not crash, the
 // session opens), or later from a timer / an unhandled rejection — then the
-// TUI's crash funnel is the one exit (block 2.5): one crash line, crash.log,
+// TUI's crash funnel is the one exit: one crash line, crash.log,
 // terminal restored, exit 1 (the launcher offers safe mode).
 const launchPluginCase = async (launch, name, rows, report, env = {}) => {
   rmSync(report, { force: true })
@@ -1479,7 +1478,7 @@ for (const kernel of ['claude']) await runCase(`plugins-light-${kernel}`, async 
     check('theme registered', find('theme', 'registered')?.ok === true, JSON.stringify(entries()))
     check('the runtime theme is drawn after the composition settled', await until(async () => (await themedCells(run)) > 20, 8000), `themed cells: ${await themedCells(run)}`)
     // (2) the panel, under the plugin's own identity. All four of these are
-    // the admission + panel/store half of block 2.7, which no kernel takes
+    // the admission + panel/store half of the plugin acceptance, which no kernel takes
     // part in: the identity comes from the plugin's own manifest, the budget
     // from the panel store, the namespace file from the storage contract.
     await until(() => find('panels', 'opened') !== undefined || find('panels', 'open-failed') !== undefined, 20000)

@@ -1,6 +1,6 @@
 /**
  * The standalone entry's host contract (src/dsh-adapter/host-contract.ts,
- * docs/standalone-host-design.md block 2.6). Part of `verify:contract`:
+ * ADAPTER.md). Part of `verify:contract`:
  *
  *  1. the contract's packages are blessed, optional at run time, and every
  *     module it loads belongs to a declared package;

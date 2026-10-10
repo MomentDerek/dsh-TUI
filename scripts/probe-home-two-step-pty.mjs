@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Measures the DSH home's two-step appearance in a real PTY
- * (docs/standalone-host-design.md 2.4: "接管后约 1–2s 才弹 home，待确认").
+ * Measures the DSH home's two-step appearance in a real PTY (the home shows
+ * 1–2s after the adoption; docs/standalone-host-design.md, ruling 3 of 2026-10-09).
  *
  * On the entry-hosted DSH kernel the screen mounts on a placeholder session
  * (`channel.ready === false`), so Chat holds the two DSH boot screens

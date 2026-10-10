@@ -1,6 +1,6 @@
 /**
  * Test-only fault injection for the entry's exit paths
- * (scripts/accept-host-entry.mjs, docs/standalone-host-design.md block 2.5).
+ * (scripts/accept-host-entry.mjs, docs/standalone-host-design.md 5.5).
  * Off unless `DSH_TUI_TEST_FAULT` is set; never set it outside a test.
  *
  * `DSH_TUI_TEST_FAULT=<kind>[@<ms>]`, the delay counted from the mount

@@ -6,8 +6,8 @@
 `scripts/bundle-lib.mjs`，诊断时尚未提交、现已入库；`lib/types/chunks/` 104 个 chunk）。**3.1（按路径导入 + 门禁规则）与
 3.2（候选 c）已落地到源码并复测**（测量协议见 §4，**实测与复核结论见 §5**：3.1-a 的「≤3」判据
 物理不可达；**结论口径以逐轮交替对照为准：3.1 ≈ 126ms、3.2 ≈ 46ms，两项合计约 170ms**——独立
-裁定 I 推翻的是早期块级口径对 **3.2 单项**约 2.2–2.5 倍的高估，见 §5.7）；3.3 / 3.4 / 3.5 未落地，
-仍是测得的成本或估算。**3.7（更新检查让出首帧 + `semver` 按路径导入）已落地并 A/B**（2026-10-10，§5.8：渲染段
+裁定 I 推翻的是早期块级口径对 **3.2 单项**约 2.2–2.5 倍的高估，见 §5.1）；3.3 / 3.4 / 3.5 未落地，
+仍是测得的成本或估算。**3.7（更新检查让出首帧 + `semver` 按路径导入）已落地并 A/B**（2026-10-10，§5.1：渲染段
 −26ms、16/16 同号）。
 
 ## 1. 范围与口径
@@ -244,7 +244,7 @@ warm 下 TUI 模块段的 CPU 热点是**模块解析与链接的次数**（`lst
   `logRestartEvent` 收益为 0。**后续**：不拆模块，改按函数路径导入，已随 3.7 落地（46 → 13 个模块）。
 - DSH 内核首帧后加载 claude-agent-sdk：查是谁触发（后端注册表的预备？），按内核按需加载。
 
-### 3.7 更新检查让出首帧 + `semver` 按路径导入（**已落实**，A/B 见 §5.8）
+### 3.7 更新检查让出首帧 + `semver` 按路径导入（**已落实**，A/B 见 §5.1）
 
 - **更新检查**：`checkForTuiUpdate()` 有两个调用方，都在首帧渲染期间触发：`Chat.tsx` 落地页的
   `useEffect`（Ink 的 `renderSync` 会在首帧内同步执行掉 passive effect），以及 `plugin.ts` 挂载后的
@@ -319,9 +319,8 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 ### 4.2 回归门禁
 
 - 在 `pnpm verify:build` 聚合清单内（自动）：`verify:source-hygiene`（§3.1 的新规则）、
-  `verify:spinner-identity`、`verify:boundary`、`verify:initial-prompt`；`verify:lib-bundle` 随在途
-  bundle 改动（`scripts/bundle-lib.mjs`、`scripts/verify-lib-bundle.mjs`）一起入库后才在清单内，
-  截至 `0193f542` 的 `package.json` / `run-verify-build.mjs` 里还没有。
+  `verify:spinner-identity`、`verify:boundary`、`verify:initial-prompt`、`verify:lib-bundle`（打包产物，
+  `scripts/bundle-lib.mjs`）。
 - **CI required 但不在 `verify:build` 内**，改 `bin/dsh-tui.js` 必须单跑（见
   [contributing.md](contributing.md)）：`verify-launcher`、`verify-safe-mode`、`verify-update`、
   `verify-update-recovery`、`verify-cli-subcommands`、`verify-startup-argv`，以及
@@ -334,314 +333,97 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 
 ## 5. 落实后的实测与复核（2026-10-10）
 
-> 本节是「§3.1 / §3.2 已落地并复测」的**唯一实测口径**。§1–§3 里的 700 / 586 / 665 是**落实前**在
-> bundle 产物上做的预算实验（§3.1 已就地标注），与本节不可相减。
->
-> **量级口径的最终修订见 §5.7**：§5.1 的 `−167ms` 是本批次的**块级点估计**，不是「扣掉漂移后的
-> 效应」；可信说法以逐轮交替对照为准（3.1 ≈ 126ms、3.2 ≈ 46ms，合计约 170ms）。
->
-> **证据位置**：本节引用的测量报告（`implement/report.md`、measure2/3、verify2 的 I-ruling 等）
-> 都是本地一次性产物，**不在仓库里**；复核时只能以本文转述为准。
+> 本节是「3.1 / 3.2 / 3.7 已落地」的**唯一实测口径**，只留结论、判据与仍缺的证据。§1–§3 里的
+> 700 / 586 / 665 是**落实前**在 bundle 产物上做的预算实验，与本节不可相减。测量报告（`implement/report.md`、
+> measure2–4、独立裁定 I 等）与一次性测量脚本都是本地产物，**不在仓库里**；完整过程（各轮原始表、
+> 复核往来）见本文件的 git 历史。
 
-### 5.1 实测（`implement/report.md` 2.3，`A1 B1 A2 B2` 各 4 轮，每臂 8 轮；**块级口径，量级已由 §5.7 修订**）
+### 5.1 结论口径
 
-| 指标 | A 臂（改前等价源码态） | B 臂（改后） | 合并差 | pair_1 | pair_2 |
-| --- | --- | --- | --- | --- | --- |
-| `render-done` | **819.5** | **652.5** | **−167** | −131.5 | −208.5 |
-| `entry-first-frame-flushed` | 886.5 | 724 | −162.5 | −126.5 | −205.5 |
-| `entry-start` | 146.5 | 84 | −62.5 | −56 | −68 |
-| `entry-modules` | 719 | 548 | −171 | −137.5 | −206.5 |
-| `at_prompt` | 825.5 | 658.5 | −167 | −133 | −207 |
+量级以**逐轮交替对照**为准（同一台机、同一时段；`render-done` 的配对中位差，bootstrap 95% CI）：
 
-首帧前模块总数 **1238 → 641**；`lodash-es` **640 → 43（−93.3%）**。
+| 项 | 量级 | 同号 | 备注 |
+| --- | --- | --- | --- |
+| 3.1 `lodash-es` 按路径导入 | **≈126ms [92, 144]** | 16/16 | `entry-start` / `dsh-process` 配对差≈0：只动 entry 段内的模块加载 |
+| 3.2 去掉启动器同步预检 | **≈46ms [27, 136]** | 13/16 | 启动器段 `dsh-process` −79ms（16/16），传到 `render-done` 衰减为 ~46ms |
+| 3.7 更新检查让出首帧 | 渲染段 **−26ms [22.5, 37]** | 16/16 | `render-done` 总计中位快 32–37ms，16 对下不显著（p=0.14） |
 
-**口径差（务必区分）**：§1.1 / §2.1 的 warm `render-done ≈ 700` 是**诊断期**探针读数；本节 A 臂的
-**819.5** 是另一套 harness（本节用 §4.1 的 `A1 B1 A2 B2` 协议、外部固定 `NODE_COMPILE_CACHE` +
-`DSH_TUI_THEME=dark`，测量窗口里还有常驻 dsh 会话抬高绝对值）。两者不是同一次测量，跨口径只能比
-**配对差**，不能把 700 与 819.5 相减、也不能把 586 与 652.5 相减。
+- 3.1 + 3.2 合计约 170ms；首帧前模块总数 **1238 → 641**，`lodash-es` **640 → 43**。
+- 落实批次最早的块级读数（`A1 B1 A2 B2` 各 4 轮）是 `render-done` 819.5 → 652.5（−167ms），与两项
+  逐轮值之和吻合；块级口径会把单项高估（3.2 约 2.2×、3.1 约 15%），**不要**单独引用块级的单项值。
+- 3.7 的 `semver` 按路径导入少了 33 个模块，耗时（+8ms）在本机噪声里分不出来，只算方向正确。
 
 ### 5.2 判据状态：Partially PASS
 
-| 判据（spec ③-3） | 实测 | 结论 |
-| --- | --- | --- |
-| 3.1-a `lodash-es` 640 → **≤3** | **43** | **未达（判据预期错误）** |
-| 3.1-b `entry-modules` 下降 ≥90ms | −171（pair −137.5 / −206.5） | 达成 |
-| 3.2-a `render-done` 下降 ≥50ms | −167（pair −131.5 / −208.5） | 达成 |
-| 3.2-b `entry-start` 与 `entry-modules − entry-start` 漂移 ±15ms 内 | −62.5 / −106.5 | **判据设计错误** |
-| 共同-a `entry-first-frame-flushed` 不劣化 | −162.5 | 达成 |
-| 共同-b `at_prompt` 不劣化 | −167 | 达成 |
+时间判据全部达成（`entry-modules` −171、`render-done` −167、`entry-first-frame-flushed` 与 `at_prompt`
+不劣化）。两条未达的是**判据本身设计错误**，不是改动失败：
 
-- **3.1-a「≤3」物理不可达**：按路径导入后仍有 43 个 `lodash-es` 模块，而唯一来源
-  `lodash-es/sample.js` 的子图**独立实测就是 35 个**（复核 `verify-d/lodash-subgraph.mjs`）。落实
-  报告曾记为「37 + 既有 6 = 43」，复核更正为 **35 + 8 = 43**（多出的 8 个是
-  `noop`/`throttle`/`debounce`/`now`/`toNumber`/`_baseTrim`/`_trimmedEndIndex`/`isSymbol`），且原
-  「6」里的 `_root.js`/`_freeGlobal.js` 已含在 sample 子图内（重复计数）。正确口径是 **640 → 43**。
-  **总判定 Partially PASS**：时间收益全部达成，模块数判据是 spec 的预期错误而非改动失败。
-- **3.2-b 的两条 ±15ms 判据是设计错误**：复核用恒等式证明 `entry-start ≡ dsh_process + entry 进程内
-  耗时`，并实测 `med(dsh_process)` A=95.5 → B=33（−62.5），而 `med(entry-start − dsh_process)`
-  A=B=**50.5**（差 0）。即 `entry-start` 的下降 100% 来自 3.2 要动的启动器段，entry 进程内部耗时逐位
-  不变。该判据把「3.2 的收益本身」误设成「不应变化的量」，两项同改时必然失败；替代判据见 §5.4-6。
+- **3.1-a `lodash-es` ≤3** 物理不可达：唯一来源 `lodash-es/sample.js` 的子图独立实测就是 35 个，
+  另 8 个是 `throttle`/`debounce` 等既有依赖，正确口径 640 → 43。可检验的替代：「≤45 且 `sample.js`
+  子图是唯一新增来源」。
+- **3.2-b 两条 ±15ms 漂移**：`entry-start ≡ dsh_process + entry 进程内耗时`，而 3.2 改的正是
+  `dsh_process`（A 95.5 → B 33），entry 进程内耗时两臂都是 50.5。替代判据：「`dsh_process` 下降
+  ≥50ms 且 `entry-start − dsh_process` 漂移 ≤±10ms」。
 
-### 5.3 测量局限（复核 D 的诚实性记录）
+### 5.3 分段剖析（measure4，3.7 落地前的打包态，10 轮）
 
-**`−167ms` 这一「点估计」不可信，方向性收益可信。** 逐条：
+| 段 | 中位 ms |
+| --- | --- |
+| spawn → entry 进程 | 42 |
+| → `entry-start` | 63 |
+| → `entry-hijacked` | 164 |
+| → `entry-modules` | 329 |
+| → `render-start` | 29 |
+| → `render-done`（累计 733） | 100 |
+| → `entry-first-frame-flushed` | 90 |
+| compose-start → compose-end（首帧后） | 929 |
+| → `startup-adopted`（累计约 2207） | 479 |
 
-- **两臂段漂移反号**：`render-done` 的 A2−A1 = **+49**、B2−B1 = **−28**。反号漂移下合并中位数不是
-  稳健估计；**pair_2（−208.5）叠了「B 臂第二段系统更快」的偏置**，诚实区间是
-  **pair_1 −131.5ms（保守下界）～ pair_2 −208.5ms**。
-- **作废规则未真正实现**：`measure.mjs` 只记录不判定，「16 轮零作废」不是判据执行的结果；`loadavg`
-  阈值 `0.5 × 16 = 8` 从未接近，**无鉴别力**（复核在 loadavg 0.58 下仍测到 +222ms）。
-- **探针进程泄漏**：`measure.mjs` 的进程排除规则没有滤掉 `/tmp/dsh-tui-baseline-*`，探针自身的残留
-  进程被计成「外部并行 dsh」；`/tmp` 下留了 18 个 root 目录（最大 52MB）。这是可修复的方法缺陷。
-- **A/B 分离未被独立重现**：复核用**同一 B 臂产物**独立跑 8 轮，`render-done` 跨 **667–1085**
-  （中位数 875/876），落进报告的 A 臂区间 `[777, 862]`。测量系统的环境敏感性（418ms）**大于**声称
-  的效应量（167ms）。
-- **未受控变量 `DSH_TUI_THEME=dark`**：同一 B 臂下它使 `render-done` 慢 **127–208ms**（与效应量同
-  量级）——它是**改变被测路径**，不只是「摘掉主题往返」。真实用户默认口径（无 `theme.json`、无该变量）
-  的完整读数仍然缺失。
-- **唯一硬证据**：pair_1 中 B1 的 `loadavg`（0.98–1.06）**高于** A1（0.72–0.84）却快 131.5ms——
-  收益**逆负载方向**成立，不能被负载解释。
-- 另注：A 臂受工作区**在途 bundle 重构**影响，**不是历史口径基线**，`entry-modules 719` 与 §2.2 的
-  「1050 个模块」不可直接对比。
+CPU profile 归因（`node:inspector`，只看占比与排序）：
 
-> **量级修订（2026-10-10，同日更正）**：本节的 `−167ms` 是块级点估计，最终口径见 §5.7。此前这里写
-> 「块级高估约 2.2–2.5×」并据此否定 `−167`，**套错了对象**：2.2–2.5× 只是 **3.2 单项**的块级高估
-> （块级 100.5 vs 逐轮 46）；3.1 单项块级只高估约 15%（144.5 vs 126）。两项逐轮值相加
-> 126 + 46 ≈ 172ms，与 `−167` 基本吻合——合并效应的量级并未被推翻，本节其余局限（反号漂移、
-> 无鉴别力的作废规则、`DSH_TUI_THEME` 未受控）仍然成立，引用时用 §5.7 的逐轮口径。
+- **宿主 dsh 准备**：`prepareHostRoot` 为主（`createRuntimeResolution` 里的
+  `collectInstallationScopePackages` 最大），约一半是文件系统调用（`lstat`、`realpath`、`existsSync`、
+  manifest 读取）。
+- **TUI 模块加载**：首帧前 455 个模块、10.6MB；大头是 `zod` 95 个（经 `@deepseek-ai/dsh-user-questions`，
+  `mountDshQuestionSeams` 同步挂载，挪出首帧要改 DSH 的挂载时序，未做）、本包 chunks 85、`semver` 46
+  （3.7 已处理）、`lodash-es` 43、`diff` 19；解析劫持的路由逻辑约占 1/10。
+- **渲染首帧**：React 为主；`checkForTuiUpdate` → `fetchLatestVersion` 一项约 37ms，即 3.7 的来源。
 
-### 5.4 要补齐的证据（2026-10-10 更新）
+### 5.4 方法学要点与证据边界
 
-> §5.1–§5.3 的「待补清单」中已有两项在本批次后续完成：**单变量臂**（measure2 的 A31/A32 + 本轮
-> 逐轮对照）与**屏幕侧读数**（measure2 `screen-probe.mjs`）。下列是**仍然缺**的。
+- 启动绝对时间有**分钟级的块尺度漂移**（同一产物块间测到 +115ms，足以抹平效应量）。块级设计把
+  「臂」和「时间块」混在一起，只有逐轮交替（相邻 gap 约 5–10s）的配对差可读。
+- 统计量须显式声明（本文用配对差中位数），p 值用精确置换（配对：符号翻转 `2^n`；不配对：可枚举时
+  枚举 `C(2n,n)`），**绝不用 `2/C(2n,n)`**——早期报告因此把 p 值算小了 70–250 倍。
+- `DSH_TUI_THEME=dark` 会改变被测路径（同一产物下 `render-done` 差 127–208ms），它是协议的一部分，
+  不是无害的去噪；作废规则（loadavg 阈值）实测无鉴别力。
+- 以上区间都来自**同一台机、同一时段**，结论的有效范围限于此。
 
-1. **真实终端 OSC 11 应答口径**：measure2 的屏幕读数与打点都在「探针不应答 OSC 11」的条件下取得，
-   真实用户的终端**会**应答（探测几毫秒返回），可见首帧的真实绝对值仍未取得；`no-theme` 组还叠了
-   「无主题覆盖 + 终端不应答」的复合伪影。
-2. **跨机器 / 跨环境的独立复现**：§5.7 的全部数据与 I/H 一致，来自同一台机、同一时段；块级漂移与
-   绝对水平都随机器/时段改变，跨机器复现是唯一能把结论推出「本机窗口」的路径。
-3. **漂移的物理来源**：I 观察到同产物块间漂移 +115ms，且与 `loadavg` 反向相关；本轮 3.2 后段
-   （loadavg 降到 0.6 时）读数反而升高、持续时间变长，同向印证。需要一次「固定产物、只变时间」的
-   长时间序列才能把漂移建模（周期项 / FS 缓存项），而不是当噪声。
-4. **屏幕侧可见帧的逐轮交替读数**：measure2 的屏幕段是块级 5×2，仍需与 §5.7 同等口径的逐轮交替，
-   才能给出屏幕侧的可信区间。
-5. **判据改可检验形式**（推荐，未强制）：3.1-a 从「≤3」改「≤45 且 `sample.js` 子图是唯一新增来源」；
-   3.2-b 的两条 ±15ms 改「`dsh_process` 下降 ≥50ms **且** `entry-start − dsh_process` 漂移 ≤±10ms」。
-6. **`docs/standalone-host-design.md` 6.1 的过时数字重标**（P1 待办，见 §5.5）。
+### 5.5 仍缺的证据与待办
 
-### 5.5 未做项与待办
-
-- **`startDshSession` 补 `withCompileCache`：记录，不做**（见 §3.6）。
-- **P1 待办：`docs/standalone-host-design.md` 6.1 未修订**。spec ⑤.5 的禁改 `docs/*` 与 ⑦ 的复核
-  建议冲突，按禁令处置、未触碰该文件；判为**可接受的已知不一致**，但必须作为下一批次高优先级待办。
-  该文件 `:468-469` 的 `render-done −80ms / −143ms` 大概率出自缓存被擦的探针，需重标为「缓存被擦
-  条件下的测量」；`:471`「两个非默认开关不受益」需扩为「`startDshSession` 路径全部无缓存」
-  （`--entry profile`、默认路径的 `/restart` 与 `/kernel` 替身、安全模式重试、救援、safe 菜单）。
-- 其余 `docs/*`（`contributing*`、`README*`、`README_ZH*`、`architecture*`）复核后**无需改动**；
-  本文件属内部诊断文档，**不触发** `AGENTS.md` 的双语文档同步规则。
+1. 真实终端（会应答 OSC 11）下的可见首帧绝对值；探针不应答 OSC 11。
+2. 跨机器 / 跨时段的独立复现。
+3. 漂移的物理来源：一次「固定产物、只变时间」的长时间序列。
+4. 屏幕侧可见帧的逐轮交替读数（现有屏幕读数是块级）。
+5. **P1**：`standalone-host-design.md` 6.1 的过时数字重标——`render-done −80ms / −143ms` 大概率出自
+   缓存被擦的探针；「两个非默认开关不受益」应扩为「`startDshSession` 路径全部无缓存」（`--entry profile`、
+   `/restart` 与 `/kernel` 替身、安全模式重试、救援、safe 菜单）。
+6. `startDshSession` 补 `withCompileCache`：记录，不做（§3.6）。
 
 ### 5.6 收口：entry 降级路径补回安装指引（F1）
 
-复核 E 实测：默认 entry 路由（`DSH_TUI_HOST_ENTRY_DSH` 未设）在 PATH 无 dsh 时，`未检测到 dsh CLI`
-安装指引**不再出现**，只剩 `the installed dsh cannot host this launch (no dsh on PATH)` +
-`cannot start dsh (spawn dsh ENOENT)`。根因是预检异步化后唯一消费点在启动器 `else` 分支，而 entry
-路由不经那里；`host-entry.ts` 的 `delegateToDsh()` 的 spawn 失败分支没有安装指引。
+问题：3.2 把预检异步化后，安装指引只在启动器的 spawn 分支里消费；默认 entry 路由在 PATH 无 dsh 时
+不再出现 `未检测到 dsh CLI` 指引，反而依次打出回退提示、`spawn dsh ENOENT`、`profileExited` 与
+`safeHint`（TTY 下还会弹安全模式询问）；Windows 上 `shell: true` 的 spawn 没有 `ENOENT`，指引永远打不出来。
 
-**已修（2026-10-10）**：`src/dsh-adapter/host-entry.ts` 的 `delegateToDsh()` 在 spawn `ENOENT` 时
-打印与 `bin/dsh-tui.js` `MSG.noDsh` 逐字相同的双语指引（同一语言规则：`DSH_TUI_LANG=en`，否则中文）。
-`DSH_TUI_HOST_ENTRY_DSH=0` 出口文案逐字不变。防回归：`scripts/verify-launcher.mjs` 第 5.1 节新增两条
-默认路由断言（中/英各一）；该脚本默认 env 曾把 `DSH_TUI_HOST_ENTRY_DSH` 钉在 `'0'`，此前这条出口
-**无门禁覆盖**。
+修法（跨平台）：
 
-**第二轮（2026-10-10，验收发现）**：第一轮只补回了指引，没有收住多余输出。实测同一场景的 stderr 是
-`cannot host this launch (no dsh on PATH); starting DSH through dsh --profile` →
-`cannot start dsh (spawn dsh ENOENT)` → 安装指引 → 启动器的 `profileExited`（建议运行一个不存在的
-`dsh --profile dsh-tui`）→ `safeHint`；TTY 下按代码还会弹安全模式询问。另有一个平台缺口：Windows 上
-`delegateToDsh()` 用 `shell: true`，缺 dsh 时 cmd.exe 只是非零退出、没有 `ENOENT`，第一轮的指引
-永远打不出来。
+- `host-entry.ts` `runInEntry`：DSH 内核下宿主查找的原因是 `NO_DSH_ON_PATH` 时，直接打印与
+  `bin/dsh-tui.js` `MSG.noDsh` 逐字相同的双语指引并 `exit(1)`，不再回退 spawn（`NO_DSH` 声明在顶层
+  `await runInEntry(...)` 之前，避免 TDZ）。PATH 上有 dsh 但宿主形状不对时仍回退 `dsh --profile`。
+- `bin/dsh-tui.js` entry 分支：非零退出、`launchKernel() === 'dsh'` 且异步探测为 false 时直接以该
+  退出码退出，跳过 `profileExited` / `safeHint` / `askSafeEntry`。已知边界：profile 的 Config 行把
+  内核改钉为非 DSH 时判断不到，可能误吞一次 `profileExited`，可接受。
 
-修法（两处，跨平台）：
-
-- `host-entry.ts` `runInEntry`：DSH 内核下宿主查找的原因是 `NO_DSH_ON_PATH`（`host-dsh.ts`
-  `findHostDsh` 导出的常量）时，直接打印 `NO_DSH` 并 `exit(1)`，不再回退 spawn。`NO_DSH` 的声明
-  移到顶层 `await runInEntry(...)` 之前——这条分支在模块求值挂起期间执行，原位置会撞 TDZ。
-  PATH 上有 dsh 但宿主形状不对（找得到、用不了）时仍照旧回退 `dsh --profile`。
-- `bin/dsh-tui.js` entry 分支：结果是非零 `exit`、`launchKernel() === 'dsh'` 且异步探测为 false
-  时直接以该退出码退出，跳过 `profileExited` / `safeHint` / `askSafeEntry`。Claude/Codex 内核不套
-  这个条件。已知边界：profile 的 Config 行把内核改钉为非 DSH 时，`launchKernel()` 判断不到，可能
-  误吞一次 `profileExited`，可接受。
-
-防回归：`verify-launcher.mjs` 第 5.1 节再加两条——缺 dsh 时不出现 `cannot start dsh` /
-`cannot host this launch`（没有回退 spawn），也不出现 `dsh profile exited` / `dsh-tui safe`。
-用 HEAD 版启动器配新 lib 跑，后一条确实转红。
-
-### 5.7 独立裁定 I 与本轮干净对照（measure3，2026-10-10）
-
-> §5.1–§5.4 是落实批次自己的块级测量与复核 D 的局限判定。此后独立裁定 I 又复核了 measure2（H），
-> 收口执行人 J 构造两套预构建 lib 做了逐轮交替对照。本节是**量级口径的最终修订**：§5.1 的 `−167ms`
-> 是块级点估计，**不构成「扣掉漂移后的效应」**；可信说法是逐轮交替对照的单项值（3.1 ≈ 126ms、
-> 3.2 ≈ 46ms），两项合计约 170ms。
-
-#### 5.7.1 独立裁定 I：推翻 H 的量级（不是方向）
-
-H（measure2 的报告）在四臂块级设计上给出 `A−B render-done = −306.5ms`
-（95% CI [262,361]，两臂「完全不重叠」，置换检验 `p = 7.4e-7`），并给出「跨 harness 保守下界 ≥167ms」。
-独立裁定 I（verify2 的 I-ruling）逐条复核后**推翻其量级**：
-
-- **置换检验 p 值算错 250×**：H 用 `2/C(24,12) = 7.4e-7`；该式**只在统计量取两个值时**成立。
-  I 对 **中位数差**统计量精确枚举 `C(24,12) = 2,704,156` 全部组合，`ge = 504`，真实 **p = 1.86e-4**。
-- **块级设计使量级高估约 2.5×**：H 的块级配对在第二个 cycle 里 gap 达 158–214s（跨了 A31/A32 两个
-  整块），配对差里混进块级时间漂移（I 复现同一产物块间漂移 **+115ms**）。I 的逐轮 ABBA 交替
-  （只切 `bin/`，不重编译）给出 **3.2 单项 = 44–55ms**，不是 138.5ms。
-- **D 的「不可重现」有其窗口污染**：D 的 `load-sample.txt` 显示其窗口内 **55–60 个并发 node 进程**，
-  而 H 的窗口只有 7 个；D 用「B 臂绝对值落进 A 臂区间」论证分离失效，是**跨批次比绝对值**，且未
-  报告自己的负载事实。
-- **屏幕侧口径**：见 §1 的修订——`entry-first-frame-flushed` 与可见首帧**不矛盾**，H 的「与 §1 相反」
-  是过度解读。
-
-H 的**算术、卫生、还原、臂定义、模块快照**经 I 复核全部成立（`lodash-es` 640→43、`lib/` 无 barrel
-残留、段级哈希一致等）；被推翻的**只是统计口径与量级解释**。H 的 48 轮四臂数据此后仍可作
-**「同批次块级设计下的上界」**引用，但必须标注口径：**块级、配对差含块级漂移**，不能当扣掉漂移的效应。
-
-#### 5.7.2 本轮 3.1 干净逐轮对照（关键补测）
-
-要干净分离 **3.1**，需要**两套预构建 lib 并存**：A 态 = barrel `import { sample } from 'lodash-es'`；
-B 态 = `import sample from 'lodash-es/sample.js'`。本轮各自 `pnpm compile` 出整套 `lib/` 保存
-（只差 `chunks/Chat-*.js` 及其 facade 引用），测量时**逐轮 `cp` 切换 lib、不重编译**；两态的
-`bin/dsh-tui.js` 都用最终态，以排除 3.2。顺序为随机化平衡块（每块 2 A + 2 B），n = 16/臂；配对在
-块内按出现次序（`A_i` ↔ `B_i`，gap 1–2 轮）。
-
-| 指标 | A 中位 | B 中位 | 配对中位差 | bootstrap 95% CI | 同号 |
-| --- | --- | --- | --- | --- | --- |
-| `render-done` | 872.5 | 775 | **126** | **[92, 144]** | **16/16** |
-| `entry-first-frame-flushed` | 954.5 | 862.5 | 130 | [93.5, 146] | 16/16 |
-| `prompt` | 877 | 782 | 128 | [94, 146] | 16/16 |
-| `entry-modules` | 751 | 657.5 | 114.5 | [93, 143] | 16/16 |
-| `entry-start` | 94 | 101 | −4.5 | [−8, −1] | 2+/13−（≈0） |
-| `dsh-process` | 38 | 39.5 | −1.5 | [−5, 1] | 4+/9−（≈0） |
-
-- **`entry-start` / `dsh-process` 配对差≈0** 证明 3.1 只动 entry 段内的模块加载，**不污染启动器段**
-  ——这是 §5.2 恒等式的独立实验确认。
-- 精确配对置换检验（枚举 `2^16 = 65,536` 个符号模式，统计量 = 配对差均值）：`render-done p = 3.05e-5`；
-  精确符号检验同值。
-- **块级对照**：同样的两套 lib 换成连续块 `B5 A5 B5 A5`，pooled 中位差 **144.5ms**，相邻块差
-  `+122 / −128 / +172`（第三次被块内漂移抬高）。即本窗口下块级口径高估约 15%（144.5 vs 126）；
-  漂移更大的窗口里会更高。
-- **H 的教训（统计量定义）**：对同一份块级数据，H 的写法 `2/C(20,10) = 1.08e-5` 与**精确枚举**
-  `C(20,10) = 184,756`（统计量 = 中位数差）得到的 `p = 7.58e-4` **差 70×**。`2/C(2n,n)` 只在统计量
-  取两个值时成立；「值域完全不重叠」不是 p 值依据。
-
-#### 5.7.3 本轮 3.2 逐轮口径复测
-
-用 I 的方法（A31 = `bin/` 还原为 `git show HEAD:` 的同步预检态；B = 最终异步预检态；两态 `lib/`
-逐字节相同）逐轮交替，n = 16/臂：
-
-| 指标 | A31 中位 | B 中位 | 配对中位差 | bootstrap 95% CI | 同号 |
-| --- | --- | --- | --- | --- | --- |
-| `render-done` | 869 | 807.5 | **46** | **[27, 136]** | 13/16 |
-| `entry-first-frame-flushed` | 958 | 902.5 | 49 | [18, 132] | 13/16 |
-| `entry-start` | 174.5 | 108 | 74 | [64, 81] | 16/16 |
-| `dsh-process` | 117 | 41.5 | 79 | [70, 82] | 16/16 |
-| `entry-modules` | 742.5 | 675 | 60.5 | [34, 122] | 16/16 |
-
-- 精确配对置换检验：`render-done p = 5.19e-4`；`entry-start p = 3.05e-5`。
-- **独立确认 I 的量级**：3.2 单项在 `render-done` 上约 **46ms（CI [27,136]）**，与 I 的 **44–55ms**
-  吻合；最干净的 `dsh-process`（79ms，16/16）说明启动器段的收益是 ~79ms，传到 `render-done` 后衰减
-  为 ~46ms。
-- **块级对照**：连续块 `A5 B5 A5 B5`，pooled 中位差 **100.5ms**，相邻块差 `−149 / +98 / −21`
-  ——同一测量里块级高估约 **2.2×**。这直接解释了 H 的 138.5ms 从何而来。
-- 诚实标注：本轮 3.2 的 `render-done` 配对差有 3 对为负（后段漂移最大的几轮），故 CI 上界较宽；
-  点估计取中位数 46ms，区间 [27,136]。
-
-#### 5.7.4 结论口径与可信区间
-
-| 项 | 口径 | 可信说法 |
-| --- | --- | --- |
-| **方向** | 3.1 与 3.2 均同向为正 | **可信**（3.1：16/16 同号；3.2：`entry-start` 16/16、`render-done` 13/16） |
-| **3.1 量级**（`render-done`） | 逐轮配对中位差 | **≈126ms [92,144]**（块级口径 144.5ms） |
-| **3.2 量级**（`render-done`） | 逐轮配对中位差 | **≈46ms [27,136]**（启动器段 ~79ms；块级口径 100.5ms） |
-| **H 的 −306.5 / −138.5 / p=7.4e-7** | 块级口径 | **已被独立裁定推翻**（见 §5.7.1） |
-| **「跨 harness 下界 ≥167ms」** | 跨 harness | **不成立**（I 的逐轮对照给出 3.2 单项 44–55ms） |
-| **H 的 48 轮四臂数据** | 同批次块级设计 | 可作**上界**引用，须标「块级口径、含漂移」 |
-
-**方法学要点（为什么逐轮交替比块级可信）**：启动绝对时间存在**分钟级块尺度漂移**（I 测到同产物
-块间 +115ms，足以抹平效应量）。块级设计把「臂」与「时间块」**混淆**，配对差里混入块漂移；逐轮交替让
-每个 A 与相邻（gap 1–2 轮 ≈ 5–10s）的 B 配对，把漂移压到块内，残余效应才可读。统计量须显式声明：
-本轮用**配对差中位数**，并以**精确置换**定 p（配对：符号翻转 `2^n`；不配对：标签排列 `C(2n,n)`；
-块级数据里 `C(2n,n)` 可枚举时才用枚举，不可枚举用大样本随机置换，**绝不用 `2/C(2n,n)`**）。
-
-**未超出证据的边界**：以上区间都取自**同一台机、同一时段**；3.2 的 `render-done` 区间上界受后段
-漂移影响较宽；屏幕侧可见帧、真实终端 OSC 11 口径与跨机器复现仍缺（见 §5.4）。
-
-### 5.8 分段剖析与 3.7 的 A/B（measure4，2026-10-10）
-
-**环境**：这台机器同时在跑游戏开发任务（Windows 侧的 `urhoxruntime` 等），WSL 内看不到这部分负载，
-所以每轮都另用 `typeperf` 采 Windows 总 CPU（1s 粒度），同时采 WSL 内 `/proc` 的 busy/steal 和
-其他进程的占用。口径同 §4.1：`--entry host --backend dsh`、热编译缓存、`DSH_TUI_THEME=dark`；
-每轮开始前空闲 3s，作为背景负载的读数。脚本是一次性的，未入库
-（measure / preload / analyze / ab-stats 四个）。
-
-#### 5.8.1 基线分段（当时工作区的 lib，即随后以 `82af3c44` 提交的打包态；10 轮，不剖析）
-
-| 段 | 均值 | 中位 | 标准差 |
-| --- | --- | --- | --- |
-| spawn → entry 进程 | 42 | 42 | 4 |
-| → `entry-start` | 63 | 63 | 6 |
-| → `entry-hijacked` | 164 | 164 | 13 |
-| → `entry-modules` | 330 | 329 | 40 |
-| → `render-start` | 30 | 29 | 3 |
-| → `render-done` | 101 | 100 | 5 |
-| **`render-done` 累计** | **729** | 733 | 63 |
-| → `entry-first-frame-flushed` | 86 | 90 | 6 |
-| compose-start → compose-end（首帧后） | 925 | 929 | 94 |
-| → `startup-adopted`（累计 2207） | 466 | 479 | 39 |
-
-Windows 总 CPU：首帧期间平均 36%，启动前 39%；WSL 内其他进程 4–12%（单核）。`render-done` 与
-首帧期间 Windows CPU 的相关系数是 0.61（n=10，1s 采样粒度粗，只作参考）。
-
-#### 5.8.2 CPU profile 归因（`node:inspector` 每 250µs 采样，6 轮 Windows CPU < 45% 的平均）
-
-剖析会把整体拉慢约 1.2 倍，下面只看占比和排序。各段主线程 idle≈0，都是纯 CPU 时间。
-
-- **宿主 dsh 准备**（剖析 187ms）：`prepareHostRoot` 100（`createRuntimeResolution` 76，其中
-  `collectInstallationScopePackages` 55；`PluginPackages` 33；`installRuntimeInterception` 32），
-  cordis `_reload` 41，`loadHostDsh` 18。大约一半是文件系统调用：`lstat` 24、`realpath` 14、
-  `existsSync` 9、`readPackageManifest` 16。
-- **TUI 模块加载**（剖析 384ms）：node 模块加载器自身 135（`compileSourceTextModule` 45.5），
-  node 内置 52；经解析劫持（`wrapped`/`adapted`）的解析共 146，其中路由逻辑（`routeUrl`）34；
-  `contract.ts` 的版本校验 9；`string-width` 顶层执行 11.6。加载 455 个模块、10.6MB：`zod` 95
-  （经 `@deepseek-ai/dsh-user-questions`，`plugin.ts` 的 `mountDshQuestionSeams` 同步挂载它，
-  要挪出首帧得改 DSH 的挂载时序，没做）、本包 chunks 85、`semver` 46（profile 里那份，3.7 处理）、
-  `lodash-es` 43、`diff` 19。
-- **apply**（剖析 36ms）：`plugin.ts` 的 `apply` 30，其中 `createChannel` 12。
-- **渲染首帧**（剖析 123ms）：React 93；**`checkForTuiUpdate` → `fetchLatestVersion` 37**
-  （→ 3.7）。
-
-#### 5.8.3 3.7 的 A/B
-
-两套预构建 lib：A 是 HEAD `08342019` 重新编译的，B 是 3.7 改完的。两臂共用同一个隔离 profile，
-每轮只切 `lib/`、不重编译，各用一份热编译缓存。按 ABBA 逐轮交替跑 16 对，每臂先各预热 2 轮。
-差值 = A − B，正数表示 B 更快。
-
-| 指标 | A 中位 | B 中位 | 配对中位差 | bootstrap 95% CI | B 更快 | 精确置换 p |
-| --- | --- | --- | --- | --- | --- | --- |
-| **render-start → render-done** | 100.5 | 70.5 | **26** | **[22.5, 37]** | **16/16** | — |
-| entry-hijacked → entry-modules | 332 | 312 | 8 | [−14, 24.5] | 9/16 | — |
-| `render-done` | 713 | 678 | 31.5 | [−4, 58] | 11/16 | 0.14 |
-| `render-done`（剔除首帧期间 Windows CPU > 60% 的 1 对） | 717 | 675 | 37 | [−4, 71] | 11/15 | 0.016 |
-| `prompt` | 716.5 | 679.5 | 33.5 | [−3, 58.5] | 11/16 | 0.13 |
-| render-done → `entry-first-frame-flushed` | 87 | 81.5 | −0.5 | [−8, 9] | 7/16 | — |
-| `startup-adopted` | 2158 | 2156.5 | 24.5 | [−101, 85] | 9/16 | 0.73 |
-
-- **更新检查让出首帧**：效果确定，渲染段 −26ms，16/16 同号，置信区间远离 0。挪走的开销没有冒到
-  首帧写出之后（render-done → fff 差 ≈0）。
-- **`semver`**：模块数确定少了 33 个，但耗时（+8ms）在本机噪声里分不出来，只能算方向正确。
-- **`render-done` 总计**：中位快 32–37ms，与渲染段的收益一致；前几段配对差的噪声有 ±30ms，
-  16 对下全量还不显著（p=0.14）。
-- **CPU 负载两臂相当**：首帧期间 Windows 总 CPU，A 臂平均 39.5%、B 臂 36.2%；WSL 内其他进程
-  两臂都约 5%。只有一对的 B 轮撞上 60% 负载（823ms），也就是被剔除的那一对。
-- **测试修复**：`verify-update.mjs` 自 `82af3c44`（lib 打包）起就坏了。它手工列了要镜像的文件，
-  但没包括 `chunks/`；另外 3 个按 `export async function …` 定位的源码文本断言，在打包后的产物里
-  找不到锚点。现改为镜像整棵 `lib/types` 的 `.js`，锚点改用不带 `export` 的函数声明。
-  `verify-update-checksum.tsx` 的两条「无界流超上限中断」断言在 HEAD 上也失败，而且时有时无
-  （和时序相关），不在本次范围内。
+防回归：`scripts/verify-launcher.mjs` 第 5.1 节的默认路由断言（中 / 英指引各一；缺 dsh 时不出现
+`cannot start dsh` / `cannot host this launch` / `dsh profile exited` / `dsh-tui safe`）。

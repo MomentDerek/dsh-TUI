@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Probe: this package's entry with the Codex kernel
- * (docs/standalone-host-design.md, the "Codex 内核与入口" open item).
+ * (docs/standalone-host-design.md 5.7).
  *
  * Runs the real launcher in a PTY with `DSH_TUI_BACKEND=codex` and a fake
  * `codex` (scripts/fixtures/codex/fake-app-server-child.ts through

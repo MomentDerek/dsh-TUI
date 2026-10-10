@@ -3,8 +3,8 @@
  * own fallback in ./host-entry.ts) while the profile may still be composing
  * into it, and the diagnostics for a dispose that does not settle.
  *
- * Why a dispose waits for the composition (docs/standalone-host-design.md,
- * Phase 2 block 2.5 "启动期信号偶发释放根卡满 5s"). @deepseek-ai/dsh-hmr
+ * Why a dispose waits for the composition (a signal during the composition
+ * used to stall the root dispose for the full 5s). @deepseek-ai/dsh-hmr
  * 0.2.0-rc.2 deadlocks when its fiber is disposed while its service init is
  * still starting the profile's config watchers: a watcher's initial `add`
  * starts a refresh that waits for application readiness, the watcher setup

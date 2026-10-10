@@ -1,7 +1,7 @@
 /**
  * A child-process stand-in for the `codex` executable, for the acceptance
  * that runs this package's entry with `DSH_TUI_BACKEND=codex`
- * (docs/standalone-host-design.md, the "Codex 内核与入口" open item). It
+ * (docs/standalone-host-design.md 5.7). It
  * answers `--version` the way the real CLI does and speaks the app-server's
  * newline-delimited JSON-RPC over stdio, driven by the in-process fake
  * (scripts/lib/codex-fake-app-server.ts) — so `resolveCodexExecutable`, the

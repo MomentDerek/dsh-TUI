@@ -1,6 +1,6 @@
 /**
  * The standalone entry's process ownership (docs/standalone-host-design.md
- * block 2.5, src/dsh-adapter/process-exit.ts), headless. Each case runs in a
+ * 5.5, src/dsh-adapter/process-exit.ts), headless. Each case runs in a
  * child process (it ends by a signal) that installs the entry's signal
  * handling with a scripted exit seam, then receives a signal from here:
  *

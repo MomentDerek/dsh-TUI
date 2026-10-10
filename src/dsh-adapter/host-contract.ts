@@ -1,6 +1,6 @@
 /**
  * The host contract of this package's own entry (docs/standalone-host-design.md
- * Phase 2, block 2.6): what the entry needs from the installed `dsh` and what
+ * 5.4, ADAPTER.md): what the entry needs from the installed `dsh` and what
  * it reproduces of it. One list, read by both sides:
  *
  *  - ./host-dsh.ts `loadHostDsh` imports {@link HOST_MODULES} from the host's
@@ -46,8 +46,8 @@ export interface HostModuleSpec {
 }
 
 /**
- * The host modules the entry loads, all from one installation (design 2.2
- * C(c)). Order is load order.
+ * The host modules the entry loads, all from one installation. Order is load
+ * order.
  */
 export const HOST_MODULES = [
   { key: 'cordis', specifier: '@deepseek-ai/cordis', via: 'host', exports: ['Context'] },
@@ -123,7 +123,7 @@ export const HOST_DEVIATIONS: readonly { readonly id: string; readonly what: str
   { id: 'startup-report-always', what: 'bin.js saves a report for a StartupError only and lets other startup errors crash; the entry saves one for every composition failure (HostComposeError carries the path) because the screen stays up' },
   { id: 'startup-report-no-terminal', what: 'reportStartupFailure\'s terminal half is not reproduced: the screen is up, the failure row names the report' },
   { id: 'no-overlays', what: '--patch overlays, --from-default-profile and resolvedProfile are not reproduced (the launcher passes none)' },
-  { id: 'defer-root-guard', what: 'deferRootCapabilityGuard(root) (host-access.ts) keeps the TUI\'s root-capability guard off during the whole composition and releases it in compose()\'s finally; on the profile path the guard arrives mid-composition (design 2.3 note 1, 2.7)' },
-  { id: 'report-exclude-network', what: 'host-entry.ts sets process.report.excludeNetwork = true for the process: DSH\'s flock libc probe (process.report.getReport) otherwise blocked ~10s on reverse lookups of sockets the mounted screen already opened (design 2.3 note 2)' },
-  { id: 'hijack-before-tui', what: 'the host\'s PluginPackages resolution is installed before any TUI module loads, for both kernels (design 2.2 C(a)); runProfile installs it inside boot()\'s prepare' },
+  { id: 'defer-root-guard', what: 'deferRootCapabilityGuard(root) (host-access.ts) keeps the TUI\'s root-capability guard off during the whole composition and releases it in compose()\'s finally; on the profile path the guard arrives mid-composition' },
+  { id: 'report-exclude-network', what: 'host-entry.ts sets process.report.excludeNetwork = true for the process: DSH\'s flock libc probe (process.report.getReport) otherwise blocked ~10s on reverse lookups of sockets the mounted screen already opened' },
+  { id: 'hijack-before-tui', what: 'the host\'s PluginPackages resolution is installed before any TUI module loads, for both kernels; runProfile installs it inside boot()\'s prepare' },
 ]

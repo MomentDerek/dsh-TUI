@@ -33,7 +33,7 @@ The root README lists what ships; the details live here. Chinese files have no s
 | --- | --- | --- | --- |
 | 架构与限制 / Architecture & limitations | [architecture.md](architecture.md) | [architecture.en.md](architecture.en.md) | 运行链路、性能、安全边界与已知限制。 |
 | 会话挂载运行时 / Session mount runtime | [session-mount-runtime.md](session-mount-runtime.md) | [session-mount-runtime.en.md](session-mount-runtime.en.md) | 多 TUI 占用规则与本机账本。 |
-| 独立宿主设计 / Standalone host design | [standalone-host-design.md](standalone-host-design.md) | — | 本包自持入口与组装根、DSH 进程内加载的方案、分期、决策与施工记录。 |
+| 独立宿主设计 / Standalone host design | [standalone-host-design.md](standalone-host-design.md) | — | 本包自持入口与组装根、DSH 进程内加载的方案、分期与决策。 |
 | 首帧启动优化 / First-frame startup | [first-frame-startup-plan.md](first-frame-startup-plan.md) | — | 首帧耗时的诊断、各项优化的 A/B 结论与测量协议。 |
 | 多后端架构 / Agent backends | [agent-backend-design.md](agent-backend-design.md) | — | 后端中立层、DSH/Claude/Codex 的实现与接入新后端。 |
 | Codex 后端方案 / Codex backend design | [codex-backend-design.md](codex-backend-design.md) | — | Codex（app-server）原生后端的技术方案与分期实施手册。 |

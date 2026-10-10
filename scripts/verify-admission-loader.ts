@@ -1,5 +1,5 @@
 /**
- * Admission-loader regression (docs/standalone-host-design.md §2.7 遗留 1).
+ * Admission-loader regression (docs/standalone-host-design.md 5.7).
  *
  * Before this loader existed, nothing in the product called
  * `getHostAdmission`: a third-party row activated without any manifest, so

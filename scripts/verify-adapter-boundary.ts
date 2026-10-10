@@ -43,7 +43,7 @@
  *   native.dsh    only inside src/dsh-adapter/**
  *   native.codex  only inside src/backends/codex/**
  *
- * The standalone entry's host loading (docs/standalone-host-design.md 2.6):
+ * The standalone entry's host loading (ADAPTER.md, host contract):
  *
  *   '@deepseek-ai/…' as any string literal (a specifier handed to a
  *                  `createRequire` / `import()` built at run time, not only a
@@ -379,7 +379,7 @@ for (const file of files) {
     if (under(path, CORE_DIR)) {
       // The core is built against ChannelHost (channel/channel-host.ts), so
       // a host that owns the process can compose it without a Cordis root
-      // (docs/standalone-host-design.md, Phase 0).
+      // (docs/standalone-host-design.md 5.1).
       if (ref.specifier.startsWith('@deepseek-ai/')) {
         violations.push(`${where} imports '${ref.specifier}'; channel core must not import @deepseek-ai/* (take host services through ChannelHost)`)
       }
