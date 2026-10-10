@@ -115,6 +115,32 @@ sourcePaths['@deepseek-ai/dsh-session-persistence-jsonl'] = [
   if (newest !== undefined) sourcePaths['@deepseek-ai/dsh-session-format'] = [newest.declaration]
 }
 
+// The standalone entry's host types (src/dsh-adapter/host-dsh.ts, `import type`
+// only) describe the host line in src/dsh-adapter/host-contract.ts. An older
+// line never runs the entry: its capability probe fails and the launcher falls
+// back to `dsh --profile`. Checking an older line therefore pins those
+// packages to the installed declarations, like the persistence pins above;
+// the contract's own line keeps them source-authoritative.
+{
+  const contract = readFileSync(join(tuiRoot, 'src/dsh-adapter/host-contract.ts'), 'utf8')
+  const hostLine = /export const HOST_REPLICA_VERSION = '([^']+)'/.exec(contract)?.[1]
+  const typeBlock = /export const HOST_TYPE_PACKAGES = \[([\s\S]*?)\] as const/.exec(contract)?.[1]
+  if (hostLine === undefined || typeBlock === undefined) {
+    console.error('host-contract.ts: HOST_REPLICA_VERSION or HOST_TYPE_PACKAGES not found')
+    process.exit(1)
+  }
+  if (rcompare(EXPECTED_UPSTREAM_VERSION, hostLine) > 0) {
+    for (const [, name] of typeBlock.matchAll(/'(@deepseek-ai\/dsh-[^']+)'/g)) {
+      const declaration = join(tuiRoot, 'node_modules', name, 'lib/types/index.d.ts')
+      if (!existsSync(declaration)) {
+        console.error(`host type package not installed: ${name}`)
+        process.exit(1)
+      }
+      sourcePaths[name] = [declaration]
+    }
+  }
+}
+
 // HMR is an indirect settings dependency, not a TUI-owned implementation.
 // Compile it with upstream's strict options: our renderer's noImplicitAny=false
 // changes its evolving empty arrays into never[]. Keep the declarations
