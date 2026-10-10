@@ -1,5 +1,5 @@
 /**
- * `ThemeProvider` 的 `theme` prop 三态回归（取代 tmp-theme-prop-probe.tsx）。
+ * `ThemeProvider` 的 `theme` prop 三态回归。
  *
  * 被保护的那条改动是 ThemeProvider 里「prop 的**变化**」那个 effect：`theme` prop
  * 可能挂载后才到（独立入口先挂载、profile 装配完的那次 rerender 才把定好的主题
@@ -16,8 +16,7 @@
  *      语义，也是它 vs 恢复 effect 的分界线，所以用真 Cordis `TuiThemeRuntime`
  *      做 oracle，而不是只看名字没变。
  *
- * 判别力：`verify-theme-prop-late.mjs` 的姊妹门禁（B）之外，这条脚本在 effect
- * 缺席时的行为已实测（见提交说明）：状态 1 与 3b 会红。
+ * 判别力：去掉该 effect 时状态 1 与 3b 会红。
  *
  * Run: node --import tsx/esm scripts/verify-theme-prop-late.tsx
  * 退出码：0 = 全部通过；1 = 有断言失败（逐条打印）。

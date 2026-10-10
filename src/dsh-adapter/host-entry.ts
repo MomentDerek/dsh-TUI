@@ -1,42 +1,13 @@
 /**
- * This package's own entry (docs/standalone-host-design.md 5.8, Phase 1 and
- * Phase 2): the TUI on a Cordis root of its own. The launcher starts it as
- * `node lib/types/dsh-adapter/host-entry.js <app args>` instead of
- * `dsh --profile <profile> -- <app args>` for both kernels (bin/dsh-tui.js;
- * `DSH_TUI_HOST_ENTRY_DSH=0` keeps DSH on `dsh --profile`,
- * `DSH_TUI_HOST_ENTRY=0` switches all of it off).
- *
- * It decides the kernel again with the profile patch's Config row and routes
- * it (../hostEntryRoute.ts `entryRoute`). A launch that lands on DSH while
- * `DSH_TUI_HOST_ENTRY_DSH=0`, or whose installed dsh the entry cannot use
- * (said on stderr and in the delegated screen), is handed to
- * `dsh --profile <profile>` unchanged: env, stdio and the kernel-switch ACK
- * pipe (fd 3) pass through, and this process only forwards the exit.
- *
- * Otherwise, in this order (Phase 2 "hijack, mount, compose"):
- *  1. the installed dsh's modules by realpath, its root and module
- *     resolution (./host-dsh.ts) — before any TUI module is imported, so the
- *     TUI resolves react and the `@deepseek-ai/*` peers the way the DSH
- *     plugins will;
- *  2. the TUI runtime (./plugin.ts) mounts on that root before any backend
- *     session opened (`deferBackendOpen`): the dsh-tui Config row is rebuilt
- *     from the environment the way cordis.patch.yml's row reads it, the
- *     TUI's settings come from ~/.dsh-tui/settings.json;
- *  3. compose into the same root. DSH: the dsh-tui profile; its dsh-tui row
- *     finds the mounted screen (./entry-slot.ts), opens the DSH session and
- *     hands it to the channel, which adopts it. The Claude and Codex kernels:
- *     the light profile (./lite-profile.ts, design 5.7) — this package's rows
- *     and the profile's declared third-party bundles, with `dsh-base` left
- *     out and the rows that only its services can activate disabled — so the
- *     plugin ecosystem is there without DSH. Those kernels have no row to hand
- *     the screen over to: the first-frame wait travels through
- *     `HostComposeSeam` instead of the slot, and a composition failure ends
- *     the process loudly instead of landing in the screen (no DSH session to
- *     report it in the place of). The runtime resolves the kernel itself, as
- *     on the `dsh --profile` path.
- * This process owns its signals and its exit (./process-exit.ts): SIGTERM,
- * SIGHUP and SIGINT go through the TUI's exit funnel (terminal restored,
- * root and DSH session disposed) and end the process by the signal.
+ * This package's own entry (docs/standalone-host-design.md 5.2, 5.8): the TUI
+ * on a Cordis root of its own, started by bin/dsh-tui.js for every kernel.
+ * A launch routed back to DSH (`DSH_TUI_HOST_ENTRY_DSH=0`, or an installed dsh
+ * the entry cannot use) is handed to `dsh --profile` unchanged. Otherwise:
+ * take over the installed dsh's root and module resolution before any TUI
+ * module loads (./host-dsh.ts), mount the runtime on it (./plugin.ts), then
+ * compose — the dsh-tui profile for DSH (handed over through ./entry-slot.ts),
+ * the light profile for the other kernels (./lite-profile.ts, design 5.7).
+ * Signals and exit are owned here (./process-exit.ts, design 5.5).
  */
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
@@ -54,24 +25,16 @@ import { disposeRootSettled, trackComposition } from './root-dispose.js'
 
 markBoot('entry-start')
 /**
- * The launcher's missing-dsh guidance, verbatim and with the same language
- * rule (bin/dsh-tui.js `MSG.noDsh`: `DSH_TUI_LANG=en`, Chinese otherwise).
- * The launcher's own pre-check (its async `requireDsh()`) only speaks at its
- * `dsh --profile` exit; on the entry route this process says it itself — when
- * the host lookup finds no dsh on PATH (`runInEntry`), and when a delegated
- * `dsh --profile` spawn finds none (`delegateToDsh`). Declared before the
- * top-level await below: `runInEntry` reads it while this module's evaluation
- * is still suspended there.
+ * The launcher's missing-dsh guidance verbatim (bin/dsh-tui.js `MSG.noDsh`).
+ * Declared before the top-level await below: `runInEntry` reads it while this
+ * module's evaluation is still suspended there.
  */
 const NO_DSH = {
   en: '[dsh-tui] dsh CLI not found. Install the official client first:\n  npm install -g @deepseek-ai/dsh',
   zh: '[dsh-tui] 未检测到 dsh CLI。请先安装官方客户端：\n  npm install -g @deepseek-ai/dsh',
 }
-// Diagnostic reports without the network section: DSH's native flock loader
-// reads `process.report.getReport()` for the libc flavor, and with sockets
-// already open (the screen mounts before DSH opens its session here) the
-// report's reverse lookups of their endpoints blocked the event loop for
-// ~10s. Reports are not otherwise used in this process.
+// DSH's native flock loader reads `process.report.getReport()`; with sockets
+// already open, the network section's reverse lookups block the event loop.
 if (process.report !== undefined) (process.report as { excludeNetwork?: boolean }).excludeNetwork = true
 const profile = hostProfile()
 const route = entryRoute(entryKernel(process.env, { configured: configuredBackend(profile) }))
@@ -80,11 +43,9 @@ else delegateToDsh()
 
 /** Hand the launch to `dsh --profile <profile> -- <app args>` and mirror its exit. */
 function delegateToDsh(): void {
-  // As the launcher builds it: dsh's `--` only when there are app arguments.
   const appArgs = process.argv.slice(2)
   const args = ['--profile', profile, ...(appArgs.length > 0 ? ['--', ...appArgs] : [])]
-  // A kernel-switch replacement carries the ACK pipe on fd 3 (src/handoffAck.ts):
-  // the dsh process is the one that adopts the screen, so it gets the pipe.
+  // A kernel-switch replacement's ACK pipe (fd 3) goes to dsh, which adopts the screen.
   const ack = process.env[HANDOFF_ACK_FD_ENV] === '3'
   const windows = process.platform === 'win32'
   const child = spawn('dsh', windows ? args.map(quoteForCmd) : args, {
@@ -103,9 +64,6 @@ function delegateToDsh(): void {
   for (const [signal, forward] of forwarders) process.on(signal, forward)
   child.on('error', error => {
     process.stderr.write(`dsh-tui: cannot start dsh (${error.message})\n`)
-    // No dsh on PATH: the spawn failure alone does not say what to do about
-    // it. Same install guidance as the launcher's `dsh --profile` exit, which
-    // this path bypassed.
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') process.stderr.write(`${NO_DSH[process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh']}\n`)
     process.exit(1)
   })
@@ -122,14 +80,11 @@ function delegateToDsh(): void {
 }
 
 /**
- * The installed dsh cannot host this launch (none on PATH, a launcher that
- * cannot be followed, a module that does not load, a missing export): say
- * so, then the caller falls back. Before anything renders, so stderr is
- * still the terminal's: the line stays above the screen that follows (the
- * delegated dsh's, or the entry's own). A kernel-switch replacement draws
- * over the old screen without a gap, so it only gets the notice. The notice
- * reaches the screen: in this process through `RuntimeApplyOptions`, in the
- * delegated dsh through the environment (plugin.ts reads it once).
+ * Say why the installed dsh cannot host this launch; the caller falls back.
+ * Runs before anything renders, so the stderr line stays above the next
+ * screen (skipped for a kernel-switch replacement, which draws without a
+ * gap); the screen gets it as a notice (`RuntimeApplyOptions` here, the
+ * environment for a delegated dsh).
  */
 function noteHostUnavailable(kernel: KernelBackendId, error: unknown): string {
   const reason = (error instanceof Error ? error.message : String(error)).split('\n')[0] ?? ''
@@ -149,15 +104,10 @@ function quoteForCmd(arg: string): string {
 }
 
 /**
- * Dispose the root without the funnel (`installEntrySignals`' fallback: no
- * owner yet, or one that refused) and close what the funnel's own teardown
- * closes on its way out (`plugin.ts disposeRootAndThen`'s
- * `.finally(unloadBackends)`) — a signal that lands before the runtime
- * fills `exitSeam.request` (the funnel, plugin.ts) takes this path instead,
- * and a codex hub is a process-wide pool (src/backends/codex/rpc/hub.ts) that
- * no session's own `dispose` closes. Closing twice is harmless (the registry
- * forgets each hook once it ran). The import stays dynamic: this
- * module's load surface and the entry's start-up order must not gain a
+ * `installEntrySignals`' fallback when the funnel is not up (or refused):
+ * dispose the root and close what the funnel's teardown closes — the codex
+ * hub pool is process-wide and no session's dispose closes it. Closing twice
+ * is harmless. The import stays dynamic so the entry's load surface gains no
  * backend.
  */
 async function disposeEntryRoot(ctx: Context): Promise<void> {
@@ -175,11 +125,9 @@ async function disposeEntryRoot(ctx: Context): Promise<void> {
 
 async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // 1. The host's root and module resolution, before any TUI module loads.
-  // Without a usable installed dsh (none on PATH, an unexpected shape) the
-  // DSH kernel goes back to `dsh --profile`, and the other kernels to the
-  // Phase 1 entry: this package's own cordis, no host resolution.
+  // Without a usable dsh, DSH delegates to `dsh --profile`; the other kernels
+  // run on this package's own cordis.
   let root: HostRoot | undefined
-  /** Why the installed dsh is not used (shown in the screen; non-DSH kernels). */
   let hostNotice: string | undefined
   // The runtime's exit funnel fills it once mounted (signals, `ctx.appExit`).
   const exitSeam: ProcessExitSeam = {}
@@ -188,10 +136,8 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     markBoot('entry-hijacked')
   } catch (error) {
     markBoot('entry-host-unavailable')
-    // No dsh at all: `dsh --profile` cannot start either, so say what to
-    // install and stop here instead of delegating into a spawn failure (on
-    // Windows `shell: true` turns that into a bare non-zero exit with no
-    // ENOENT to recognise). The launcher reads the same probe and adds nothing.
+    // No dsh at all: stop with the install guidance rather than delegate into
+    // a spawn failure (on Windows `shell: true` hides the ENOENT).
     if (kernel === 'dsh' && error instanceof Error && error.message === NO_DSH_ON_PATH) {
       process.stderr.write(`${NO_DSH[process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh']}\n`)
       process.exit(1)
@@ -214,9 +160,8 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
   markBoot('entry-modules')
   const ctx: Context = root?.ctx ?? new (await import('@deepseek-ai/cordis')).Context()
   const env = process.env
-  // The dsh-tui row of cordis.patch.yml, as a DSH composition would build it
-  // from the same environment. The editable fields come from the TUI's own
-  // settings document on top (./tui-settings.ts).
+  // cordis.patch.yml's dsh-tui row, rebuilt from the same environment; the
+  // editable fields come from ./tui-settings.ts on top.
   const config = Config({
     provider: 'deepseek-official',
     fullscreen: true,
@@ -227,72 +172,40 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     ...(env.DSH_TUI_RESUME_SESSION === undefined ? {} : { sessionId: env.DSH_TUI_RESUME_SESSION }),
     ...(env.DSH_TUI_BACKEND === undefined ? {} : { backend: env.DSH_TUI_BACKEND as TuiConfig['backend'] }),
   })
-  // Signals (./process-exit.ts): through the TUI's exit funnel once it is up,
-  // else a bounded dispose of the root; either way the process then dies by
-  // the signal (a numeric 143/129/130 reads as a crash to the launcher). A
-  // second signal forces the exit.
   installEntrySignals({
     seam: exitSeam,
     disposeRoot: () => disposeEntryRoot(ctx),
     log: logRestartEvent,
     where: lastBootMark,
   })
-  // 2. Mount the screen. On DSH the slot tells the profile's dsh-tui row
-  // that this screen exists (and receives the DSH side from the runtime); on
-  // the other kernels the seam carries the one thing the composition needs
-  // from the mount (the first frame's write — there is no row to hand the
-  // screen over to).
+  // 2. Mount the screen. DSH hands it to the profile's dsh-tui row through the
+  // slot; the other kernels have no such row and use the compose seam.
   const slot = kernel === 'dsh' && root !== undefined ? publishEntrySlot() : undefined
   const composeSeam: HostComposeSeam | undefined = slot === undefined && root !== undefined && kernel !== 'dsh' ? {} : undefined
-  // DSH's plugins use root capabilities while they activate; the TUI's guard
-  // on them arrives with the profile's first TUI row, as on the profile path
-  // (armed below), or once the profile has composed at the latest. The light
-  // composition's rows activate the same way on the other kernels, so the
-  // guard is held back across their mount as well.
+  // Plugins use root capabilities while they activate: hold the TUI's guard
+  // back until composition arms it (./host-access.ts).
   const releaseRootGuard = slot !== undefined || composeSeam !== undefined ? deferRootCapabilityGuard(ctx) : undefined
   try {
-    // The route this process took goes in as well (`entryKernel`): the runtime
-    // must not resolve the kernel chain again — its rebuilt Config lacks the
-    // profile patch's Config row this decision was based on — so the
-    // placeholder session (and the status line naming it) is the kernel this
-    // launch was routed to.
+    // `entryKernel`: the runtime must not re-resolve the kernel — its rebuilt
+    // Config lacks the profile patch's row this route was decided on.
     await apply(ctx, config, ctx, { deferBackendOpen: true, profile, entryKernel: kernel, exitSeam, ...(slot === undefined ? {} : { entrySlot: slot }), ...(composeSeam === undefined ? {} : { composeSeam }), ...(hostNotice === undefined ? {} : { hostNotice }) })
   } catch (error) {
     handleStartupError(ctx, error)
     return
   }
-  // One owner of a fatal error from here on: the TUI's process guard routes
-  // it into the exit funnel (terminal restored, crash line, resume markers,
-  // exit 1). DSH's fail-loud, installed first, would otherwise exit 1 before
-  // the funnel ran and shadow the guard's absorbers (Phase 1 fix I). Without
-  // the guard (DSH_TUI_NO_185_PROCESS_GUARD=1) fail-loud stays.
+  // One owner of a fatal error: with the TUI's process guard up, DSH's
+  // fail-loud would exit 1 before the exit funnel ran.
   if (root !== undefined && processGuardActive()) root.uninstallFailLoud()
   armProcessTestFault(readTestFault(), () => ctx.get('appExit' as never) as ((code: number) => void) | undefined)
-  /**
-   * 3a. Compose the light profile into this root (design 5.7): this package's
-   * own rows plus the profile's declared third-party bundles, `dsh-base` left
-   * out (./host-dsh.ts `composeLite`). These kernels have no `dsh-tui` row, so
-   * what the DSH kernel below does through the slot happens here through the
-   * seam: wait for the first frame, then compose into the root the screen is
-   * already mounted on. A failure ends the process loudly instead of landing
-   * in the screen — there is no DSH session for the screen to report it in the
-   * place of, and a kernel whose plugin ecosystem silently did not come up
-   * must not pass as a boot. `handleStartupError` (./plugin.ts) restores the
-   * terminal, disposes the root and exits 1; the composition's saved startup
-   * report travels on `HostComposeError` and is named in the line.
-   */
+  // 3a. Non-DSH kernels: compose the light profile (design 5.7) through the
+  // seam. A failure ends the process loudly: a kernel whose plugin ecosystem
+  // did not come up must not pass as a boot.
   const composeLiteRoot = async (hostRoot: HostRoot): Promise<void> => {
-    // As on the DSH kernel: the frame that says a session is starting must
-    // reach the terminal before the composition's stretch.
     await composeSeam?.firstFrameFlushed?.()
     markBoot('entry-first-frame-flushed')
     markBoot('entry-compose-start')
-    // Rows activating after the first TUI row are guarded (third-party rows
-    // land there), as on the profile path.
     armRootCapabilityGuard(ctx)
-    // A root dispose from here on (a signal, /quit) lets the Loader settle
-    // first: the light composition mounts its own Loader include, and HMR
-    // deadlocks when disposed while its watchers start (./root-dispose.ts).
+    // A root dispose lets the Loader settle first (./root-dispose.ts).
     const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
     const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
     let failed = false
@@ -308,11 +221,7 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     }
     markBoot('entry-compose-end')
     if (!failed) {
-      // Composed and audited: bring the mounted screen level with what the
-      // composition mounted (the runtime re-reads the services it resolved at
-      // mount time — plugin.ts `refreshHostServices`: the theme host, the
-      // extension stores, this package's /settings section). On the DSH kernel
-      // the `dsh-tui` row does this through the slot; no such row exists here.
+      // The runtime re-reads the services the composition mounted.
       composeSeam?.composeSucceeded?.()
       return
     }
@@ -325,20 +234,15 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     if (root !== undefined && kernel !== 'dsh') await composeLiteRoot(root)
     return
   }
-  // 3b. DSH: compose the profile into this root. Past the mount nothing may
-  // write to the terminal: host warnings go to the debug log, and a failure
-  // lands in the screen (the startup notice) instead of ending the process.
-  // The screen says DSH is starting (6.1): make sure that frame reached the
-  // terminal before the composition's synchronous stretch freezes the loop.
+  // 3b. DSH: compose the profile. Past the mount nothing writes to the
+  // terminal; a failure lands in the screen. The "starting" frame must reach
+  // the terminal before the composition's synchronous stretch (design 6.1).
   await slot.firstFrameFlushed?.()
   markBoot('entry-first-frame-flushed')
   markBoot('entry-compose-start')
-  // Rows activating after the first TUI row are guarded (third-party rows
-  // land there), as on the profile path.
   armRootCapabilityGuard(ctx)
-  // A root dispose from here on (a signal, /quit) lets the Loader settle
-  // first: HMR deadlocks when disposed while its watchers start
-  // (./root-dispose.ts). Once one waits, the composition stops short.
+  // A root dispose lets the Loader settle first: HMR deadlocks when disposed
+  // while its watchers start (./root-dispose.ts).
   const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
   const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
   let composed = false

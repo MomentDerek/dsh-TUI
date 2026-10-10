@@ -1978,6 +1978,11 @@ export function PromptInput({
     channel.notify(t('input-interrupt-immediate'), { timeoutMs: 2500 })
   }
 
+  /** The startup phase's refusal (see `ChannelUi.ready`). */
+  const notifyNotReady = (): void => {
+    channel.notify(t('startup-not-ready', { backend: backendLabel ?? channel.backendCapabilities.backendId }), { color: 'warning', timeoutMs: 2500 })
+  }
+
   /**
    * Execute a slash command (built-in, plugin-registered, or hidden) when
    * the input resolves to one: the name parses as the first token so
@@ -1986,20 +1991,13 @@ export function PromptInput({
    * at all. Hidden commands are recognized even though they are intentionally
    * absent from the suggestion/help catalogs.
    */
-  /** The startup phase's refusal (see `ChannelUi.ready`). */
-  const notifyNotReady = (): void => {
-    channel.notify(t('startup-not-ready', { backend: backendLabel ?? channel.backendCapabilities.backendId }), { color: 'warning', timeoutMs: 2500 })
-  }
   const tryRunCommand = (text: string): boolean => {
     if (!text.startsWith('/')) return false
     const parsed = parseCommandName(text)
     if (parsed === undefined) return false
-    // Startup phase (the standalone entry mounts before its session opens):
-    // only the purely local commands run. Every other one is refused like a
-    // plain prompt — BEFORE dispatch, so nothing clears the draft or lands in
-    // history for a command that never took effect. This is the one
-    // chokepoint for every path that runs a command (Enter, the menu's
-    // selected row, a click on a row, a pasted line).
+    // Startup phase (the entry mounts before its session opens): only local
+    // commands run; the rest are refused before dispatch so the draft stays.
+    // The one chokepoint for every path that runs a command.
     if (channel.ready === false && !isBootSafeCommand(parsed.name)) {
       notifyNotReady()
       return true
@@ -2127,10 +2125,8 @@ export function PromptInput({
         return
       }
     }
-    // Startup phase: nothing can be sent yet. Refuse here — BEFORE any path
-    // that clears the draft — so the text stays exactly where it is; the
-    // notice says why. A boot-safe local command still runs (tryRunCommand
-    // refuses the rest itself).
+    // Startup phase: refuse before any path that clears the draft; a
+    // boot-safe command still runs (tryRunCommand refuses the rest).
     if (channel.ready === false && value.trim() !== '') {
       if (tryRunCommand(value)) return
       notifyNotReady()
@@ -2737,8 +2733,7 @@ export function PromptInput({
         }
       }
       if (tryRunCommand(line)) return
-      // Startup phase: same refusal as handleEnter — keep the line as the
-      // draft instead of submitting it into a channel that cannot send yet.
+      // Startup phase: same refusal as handleEnter, keeping the line as the draft.
       if (channel.ready === false) {
         setInput(line)
         notifyNotReady()

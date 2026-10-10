@@ -738,12 +738,9 @@ export function Chat({
   // 整屏」，浏览器必须提前藏在下面；现在整屏（会话/设置/任务面板）盖在
   // 落地页**之上**、Esc 退回落地页，按需打开即可——boot 时同时为真反而会
   // 让浏览器盖住落地页（渲染顺序见各 early-return）。恢复重挂同样不开它。
-  // A channel still starting its session (the in-process DSH kernel: the
-  // screen mounts before DSH has composed) holds the two DSH boot screens —
-  // the home lists DSH sessions, the guide configures DSH — until the
-  // session is adopted (`ready`), and opens them then (see the effect after
-  // `settingsOpen`). Every other launch is ready on its first frame, so its
-  // seeds below are unchanged.
+  // A channel still starting its session (in-process DSH kernel) holds the two
+  // DSH boot screens (home, guide) until `ready`; the effect after
+  // `settingsOpen` opens them then.
   const heldBootScreensRef = React.useRef(
     channel.ready === false && !recoveryRemountOnBoot
       ? { home: openHomeOnBoot === true && launchpadOnBoot !== true, onboarding: onboardingOnBoot === true }
@@ -1001,9 +998,8 @@ export function Chat({
    *  browser, a screen rather than a panel: it owns its own focus, staged
    *  drafts and keyboard; Chat only opens it. */
   const [settingsOpen, setSettingsOpen] = React.useState(false)
-  // The held boot screens (see `heldBootScreensRef`) open once, when the
-  // session is adopted — unless the user already went to another screen.
-  // A startup that fails never opens them: there is no DSH behind them.
+  // The held boot screens open once the session is adopted, unless the user
+  // went to another screen; a failed startup never opens them.
   const channelReady = channel.ready
   React.useEffect(() => {
     const held = heldBootScreensRef.current
@@ -1048,9 +1044,7 @@ export function Chat({
     // 让开屏先画半秒：弹窗压在介绍动画之上，而不是同抢第一帧。
     const timer = setTimeout(() => {
       // 到点时回合已经开始的仍不弹（channel 是活对象，读到的是当前值）。
-      // 退出漏斗结束 channel 生命周期时不卸这棵树：/restart、/kernel 的旧
-      // 进程留着等替身，从落地页发出时本定时器恰在此后触发，读 channel 会抛
-      // 「lifetime has ended」并让旧进程崩溃——读不到就是不该弹了。
+      // /restart、/kernel 的旧进程不卸这棵树，channel 生命周期结束后读它会抛：读不到就不弹。
       let working: boolean
       try {
         working = channel.working
@@ -1173,11 +1167,9 @@ export function Chat({
    * （Standard/PTC/极简…），名册是异步的——落地页出来时顺手预热一次
    * （空名册不写；失败静默，段缺省不画）。/preset 自己的加载路径不动。
    */
-  // A placeholder still starting has no roster to ask (it would answer
-  // "not supported" into the Tips row): wait for the adopted session.
+  // No roster to ask on a placeholder still starting, nor on a kernel without
+  // /preset (the refusal would land as a "not supported" notice).
   const presetsReady = channel.ready !== false
-  // A kernel without /preset (Claude, Codex) has no roster either: the
-  // refusal would land as a "not supported: preset" toast on every launch.
   const presetsServed = !isUnavailableLocalCommand('preset', channel.backendCapabilities as Channel['backendCapabilities'] | undefined)
   React.useEffect(() => {
     if (!launchpadShown || presetOptions.length > 0 || !presetsReady || !presetsServed) return
@@ -2488,10 +2480,8 @@ export function Chat({
   }
 
   /**
-   * The startup phase's refusal (`ChannelUi.ready`; the standalone entry
-   * mounts before its session opens), shared by every path that reaches a
-   * command or a send without the composer: true when `name` (undefined for
-   * plain text) must wait, after the notice says why.
+   * The startup phase's refusal (`ChannelUi.ready`) for paths that bypass the
+   * composer: true, after a notice, when `name` (undefined: plain text) must wait.
    */
   const refusedAtStartup = (name: string | undefined): boolean => {
     if (channel.ready !== false || (name !== undefined && isBootSafeCommand(name))) return false
@@ -2571,10 +2561,8 @@ export function Chat({
   }
 
   /**
-   * A failed startup open closes the landing page: the failure row and its
-   * `/new` hint live in the transcript the page covers, and a page left up
-   * would only keep refusing input with no reason given. The draft moves to
-   * the composer once it mounts (the effect below waits for its controller).
+   * A failed startup open closes the landing page, uncovering the failure row
+   * and its `/new` hint; the draft moves to the composer once it mounts.
    */
   const launchpadDraftHandoffRef = React.useRef<string | undefined>(undefined)
   const startupFailure = channel.startupFailure
@@ -2608,9 +2596,7 @@ export function Chat({
     rawInput = '',
     images: readonly ComposerImageRef[] = [],
   ): boolean | Promise<boolean> => {
-    // Startup phase: the landing page, the onboarding wizard and the
-    // status-bar shortcuts dispatch here without the composer's
-    // tryRunCommand, so the boot-safe filter repeats at this chokepoint.
+    // Startup phase: paths that bypass the composer's tryRunCommand land here.
     if (refusedAtStartup(name)) return true
     switch (name) {
       case 'activity': {

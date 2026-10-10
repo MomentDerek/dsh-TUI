@@ -517,11 +517,7 @@ export function Launchpad({
   clipboardReader?: () => Promise<ClipboardRead>
   /** Tips 自动轮换间隔（第七版；测试缝，生产用默认 10s）。 */
   tipRotateMs?: number
-  /**
-   * Chat 的最近一条 channel 通知：落地页没有 toast 区，借 Tips 行显示（同粘贴
-   * 提示；粘贴提示优先）。启动期的「还在启动」拒绝等反馈靠它才不静默。过期由
-   * channel 负责，Chat 传 undefined 即撤。
-   */
+  /** Chat 的最近一条 channel 通知：落地页没有 toast 区，借 Tips 行显示（粘贴提示优先）；过期由 channel 负责。 */
   notice?: { readonly text: string; readonly color?: 'error' | 'warning' | 'success' } | undefined
   /** 左下角工作目录铭牌被点击/焦点环 Enter 时交给 Chat（开 /workspace 菜单）。 */
   onOpenWorkspace?: (() => void) | undefined

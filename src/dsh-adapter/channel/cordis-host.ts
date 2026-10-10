@@ -1,8 +1,8 @@
 /**
  * The ChannelHost a Cordis plugin context provides. Root-keyed registries
  * (adapter runtime, decision gate and handlers, local settings sections) stay
- * keyed on the same Cordis root as before, so the extensions row that also
- * installs the gate meets the channel on one registry.
+ * keyed on the Cordis root, so the extensions row that also installs the gate
+ * meets the channel on one registry.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { adapterRuntimeFor } from '../../adapter/kernel/runtime-context.js'
@@ -21,7 +21,7 @@ export function cordisChannelHost(ctx: Context, services: Readonly<Record<string
   }
   return {
     get: name => Object.hasOwn(services, name) ? services[name] : ctx.get(name as never),
-    // Read per use, as the call sites did before.
+    // Read per use.
     get logger() { return ctx.logger },
     runtime: adapterRuntimeFor(ctx),
     // Bare embedders (scripts) mount without the effect capability.

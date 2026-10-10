@@ -215,13 +215,8 @@ export class TuiPluginHostRuntime extends Service implements TuiPluginHost {
       // Defer until after the apply() body has mounted storage/observer
       // siblings, so the live refresh observes the complete production
       // topology.
-      //
-      // The timer is registered as an effect of THIS row's fiber, so the
-      // deferred start is released with the row instead of outliving it.
-      // Unloading the row before the timer fires cancels a start that has not
-      // happened: that is a skip, not a swallowed failure — nothing was
-      // mounted, so there is nothing to report, and the Kernel's own failures
-      // (once it does start) stay as loud as they were.
+      // An effect of this row's fiber: unloading the row first cancels a start
+      // that has not happened (nothing mounted, nothing to report).
       ctx.effect(() => {
         const timer = setTimeout(() => this.startKernelRuntime(), 0)
         return () => clearTimeout(timer)
@@ -241,10 +236,8 @@ export class TuiPluginHostRuntime extends Service implements TuiPluginHost {
   }
 
   /** @internal Start the Kernel after the whole plugin-host row (including
-   * sibling storage/observer services) is mounted. The single trigger is the
-   * fiber-owned deferred effect in the constructor above — never `apply()`,
-   * which runs before this service exists (// the note at the end of
-   * `apply()`). Not part of the public plugin surface. */
+   * sibling storage/observer services) is mounted. Triggered only by the
+   * deferred effect in the constructor (see the end of `apply()`). */
   startKernelRuntime(): void {
     const state = hostStateFor(this)
     const kernelRuntime = state.kernelRuntime
@@ -992,17 +985,7 @@ export function apply(ctx: Context): void {
   // messages.observe (C-042): the grant-gated observation broker the
   // channel publishes mapped session events into.
   ctx.plugin(TuiMessageObserverRuntime)
-  // The Kernel start is deliberately NOT triggered from here. This apply()
-  // body runs inside the row's own fiber, one microtask after `ctx.plugin()`,
-  // so the host service mounted above has not been constructed yet: its
-  // `ctx.provide('tuiPluginHost')` runs during that child fiber's load turn,
-  // and a strict `get` would additionally require the providing fiber to be
-  // ACTIVE. Both `ctx.get('tuiPluginHost')` and
-  // `ctx.get('tuiPluginHost', false)` return undefined at this point
-  // (measured: row fiber still at state LOADING), so a start from here is a
-  // no-op at best and a start on a half-mounted topology — a descriptor with
-  // the sibling contracts missing — at worst.
-  //
-  // The one start trigger is the fiber-owned deferred effect in the constructor
-  // above; it fires only after every sibling service is ACTIVE.
+  // The Kernel start is deliberately NOT triggered here: the host service
+  // above is not constructed yet (`ctx.get('tuiPluginHost')` is undefined).
+  // The constructor's deferred effect starts it once every sibling is ACTIVE.
 }

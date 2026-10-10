@@ -1,16 +1,10 @@
 /**
  * The TUI's own settings document, `~/.dsh-tui/settings.json`
- * (docs/standalone-host-design.md 5.6 (a)): the `/settings` user layer of the
- * `dsh-tui` namespace for every kernel. Before it existed the layer lived in
- * the DSH profile's own patch (`~/.dsh/profiles/<profile>/cordis.patch.yml`,
- * the `dsh-tui` row's `config`), which only a DSH composition can write; the
- * first boot that finds no document imports that row once and records where
- * from. The profile patch is only ever read, never changed.
- *
- * Shape: `{ "version": 1, "values": { …sparse user layer… }, "imported":
- * { "from": "<path or none>", "at": <epoch ms> } }`. Writes go through a temp
- * file + rename. Unlike the other ~/.dsh-tui preferences a failed write
- * throws: the settings screen reports it.
+ * (docs/standalone-host-design.md 5.6): the `/settings` user layer of the
+ * `dsh-tui` namespace for every kernel. A boot that finds no document imports
+ * the DSH profile patch's `dsh-tui` row once; the patch is never written.
+ * Unlike the other ~/.dsh-tui preferences a failed write throws: the settings
+ * screen reports it.
  */
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'

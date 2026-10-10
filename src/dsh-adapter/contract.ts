@@ -101,8 +101,8 @@ export const UPSTREAM_BLESSED_PACKAGES = [
   '@deepseek-ai/dsh-tool-subagent',
   '@deepseek-ai/dsh-user-approval',
   '@deepseek-ai/dsh-user-questions',
-  // The host CLI and the packages the standalone entry's host boot takes
-  // types from (./host-contract.ts; loaded from the host by realpath).
+  // The packages the standalone entry's host boot takes types from
+  // (./host-contract.ts; loaded from the host by realpath).
   ...HOST_TYPE_PACKAGES,
 ] as const
 

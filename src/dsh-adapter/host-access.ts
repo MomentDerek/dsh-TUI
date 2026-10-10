@@ -179,15 +179,10 @@ const deferredGuardRoots = new WeakSet<object>()
 
 /**
  * Hold the root-capability guard back on `root` until the returned release
- * runs. The package's own entry mounts the TUI on its root first and composes
- * the DSH profile into that root afterwards (docs/standalone-host-design.md
- * Phase 2, single root): DSH's own plugins use root capabilities while they
- * activate (`ctx.accessor` effects on the root fiber), which the guard would
- * refuse. On the profile path the TUI only touches the root once the profile
- * rows load, so the guard arrives during the composition; the entry arms it
- * for its composition (`armRootCapabilityGuard`: the first TUI row installs
- * it, as there) and releases it after the composition settles at the latest.
- * Fiber tracking itself starts at once either way.
+ * runs. The entry mounts the TUI before composing the profile into the same
+ * root (docs/standalone-host-design.md 5.7), and DSH's plugins use root
+ * capabilities while they activate, which the guard would refuse. Fiber
+ * tracking starts at once either way.
  */
 export function deferRootCapabilityGuard(root: Context): () => void {
   deferredGuardRoots.add(root as object)
@@ -204,14 +199,10 @@ function releaseDeferredGuard(root: Context): void {
 const armedGuardRoots = new WeakSet<object>()
 
 /**
- * The composition of a deferred root starts: from now on the guard arrives
- * the way it does on the profile path — with the first of the TUI's own rows
- * (the first plugin activation of this root that reaches the TUI's host
- * code, which every `dsh-tui-*` service does as it constructs). DSH's rows
- * that activate before that keep their root capabilities, as there; every
- * row after it, third-party ones included, is guarded. The release returned
- * by `deferRootCapabilityGuard` still installs it once the composition
- * settles, should no TUI row have activated.
+ * The composition of a deferred root starts: the guard now arrives with the
+ * first TUI row's activation, as on the `dsh --profile` path, so every row
+ * after it (third-party ones included) is guarded. The release still installs
+ * it once the composition settles if no TUI row activated.
  */
 export function armRootCapabilityGuard(root: Context): void {
   if (deferredGuardRoots.has(root as object)) armedGuardRoots.add(root as object)

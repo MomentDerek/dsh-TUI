@@ -448,9 +448,8 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
  */
 export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promise<void> {
   markBoot('row-apply')
-  // This package's entry already mounted the screen in this process and
-  // composed the profile into its own root (./entry-slot.ts): the row only
-  // runs the DSH side and hands the session to that screen.
+  // The entry already mounted the screen in this process (./entry-slot.ts):
+  // the row only runs the DSH side and hands the session to that screen.
   const entrySlot = peekEntrySlot()
   if (entrySlot !== undefined) {
     entrySlot.rowSeen = true
@@ -481,10 +480,8 @@ export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promis
   })
 }
 
-/** The row under the entry's screen: the DSH side in a runtime fiber of its
- *  own, once the Loader settled (as the usual runtime starts), never a
- *  second render. A second apply of this row (a recompose) finds the hook
- *  taken and does nothing. */
+/** The row under the entry's screen: the DSH side in its own runtime fiber
+ *  once the Loader settled, never a second render; a recompose stays idle. */
 function attachToEntry(ctx: Context, config: RuntimeConfig<Config>): void {
   const attach = takeEntryAttach()
   if (attach === undefined) {

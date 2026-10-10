@@ -247,22 +247,15 @@ export function fatalReasonForExit(error: unknown, origin: ProcessGuardOrigin): 
  */
 let processGuardInstalled = false
 const processErrorAbsorbers = new Set<(error: unknown) => boolean>()
-/**
- * Absorb one more error class at the process level (the absorber logs what
- * it takes); everything else keeps the guard's semantics. Returns the
- * unregister handle.
- */
+/** Absorb one more error class at the process level (the absorber logs what
+ *  it takes); returns the unregister handle. */
 export function addProcessErrorAbsorber(absorb: (error: unknown) => boolean): () => void {
   processErrorAbsorbers.add(absorb)
   return () => { processErrorAbsorbers.delete(absorb) }
 }
 const absorbedByCaller = (error: unknown): boolean => [...processErrorAbsorbers].some(absorb => absorb(error))
-/**
- * Whether the guard's process listeners are installed (the first render
- * installs them unless DSH_TUI_NO_185_PROCESS_GUARD=1). The standalone entry
- * removes DSH's fail-loud handlers only when it is: the guard and the exit
- * funnel's sink then own every fatal error (src/dsh-adapter/process-exit.ts).
- */
+/** Whether the guard's process listeners are installed; the standalone entry
+ *  drops DSH's fail-loud handlers only then (src/dsh-adapter/process-exit.ts). */
 export function processGuardActive(): boolean {
   return processGuardInstalled
 }

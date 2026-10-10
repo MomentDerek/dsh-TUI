@@ -52,26 +52,28 @@ const check = (label: string, ok: boolean, detail?: unknown): void => {
 if (process.argv[2] === '--hmr-child') {
   const mode = process.argv[3]
   const delay = Number(process.argv[4] ?? 0)
-  const { loadHostDsh } = await import('../src/dsh-adapter/host-dsh.js')
   const { disposeRootSettled, trackComposition } = await import('../src/dsh-adapter/root-dispose.js')
-  const { realpathSync } = await import('node:fs')
   const { createRequire } = await import('node:module')
   const { pathToFileURL } = await import('node:url')
-  const dshDir = realpathSync(join(here, '../node_modules/@deepseek-ai/dsh'))
-  const host = await loadHostDsh(dshDir)
-  const hostRequire = createRequire(join(dshDir, 'package.json'))
+  // The host's arrangement from the dev tree: Context and Loader are the
+  // instances app-boot mounts includes with (host-contract.ts HOST_MODULES).
+  const appBootUrl = import.meta.resolve('@deepseek-ai/dsh-app-boot')
+  const appBoot = await import(appBootUrl) as typeof import('@deepseek-ai/dsh-app-boot')
+  const bootRequire = createRequire(appBootUrl)
+  const { Context } = await import(pathToFileURL(bootRequire.resolve('@deepseek-ai/cordis')).href) as typeof import('@deepseek-ai/cordis')
+  const Loader = (await import(pathToFileURL(bootRequire.resolve('@deepseek-ai/cordis-plugin-loader')).href) as { default: unknown }).default
   const dir = mkdtempSync(join(tmpdir(), 'verify-entry-hmr-'))
   writeFileSync(join(dir, 'package.json'), '{"name":"verify-entry-hmr","private":true}\n')
   writeFileSync(join(dir, 'cordis.patch.yml'), '[]\n')
   writeFileSync(join(dir, 'cordis.yml'), [
-    '- id: timer', `  name: '${pathToFileURL(hostRequire.resolve('@deepseek-ai/cordis-plugin-timer')).href}'`,
-    '- id: hmr', `  name: '${pathToFileURL(hostRequire.resolve('@deepseek-ai/dsh-hmr')).href}'`, '  config:', '    root: []', ''].join('\n'))
-  const ctx = new host.Context() as import('@deepseek-ai/cordis').Context & { baseUrl?: string }
+    '- id: timer', `  name: '${import.meta.resolve('@deepseek-ai/cordis-plugin-timer')}'`,
+    '- id: hmr', `  name: '${import.meta.resolve('@deepseek-ai/dsh-hmr')}'`, '  config:', '    root: []', ''].join('\n'))
+  const ctx = new Context() as import('@deepseek-ai/cordis').Context & { baseUrl?: string }
   ctx.baseUrl = pathToFileURL(dir).href + '/'
   ctx.provide('profileContext' as never, { name: 'verify', dir, patchPath: join(dir, 'cordis.patch.yml'), home: dir, startedBundles: [], overlays: [] } as never)
   // Readiness never comes: the composition is cut short by the dispose.
   ctx.provide('appReady' as never, { onReady: () => () => undefined } as never)
-  await ctx.plugin(host.Loader as never, undefined as never)
+  await ctx.plugin(Loader as never, undefined as never)
   if (mode === 'settled') trackComposition(ctx, async () => { await (ctx.get('loader' as never) as { await(): Promise<unknown> }).await() })
   let fired = false
   ctx.on('internal/status' as never, ((fiber: { name: string; state: number }) => {
@@ -86,7 +88,7 @@ if (process.argv[2] === '--hmr-child') {
       void dispose.then(() => { process.stdout.write(`disposed ${Date.now() - startedAt}\n`); process.exit(0) })
     }, delay)
   }) as never)
-  void host.appBoot.mountRootInclude(ctx, join(dir, 'cordis.yml'), [], undefined, 'dsh')
+  void appBoot.mountRootInclude(ctx, join(dir, 'cordis.yml'), [], undefined, 'dsh')
 } else if (process.argv[2] === '--child') {
   const { installEntrySignals, dieBySignal } = await import('../src/dsh-adapter/process-exit.js')
   const mode = process.argv[3]

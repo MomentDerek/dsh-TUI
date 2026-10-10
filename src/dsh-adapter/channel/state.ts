@@ -16,7 +16,6 @@ import type { ChannelState } from './types.js'
 /** The DSH backend's user-facing name (capability snapshot default). */
 export const DSH_BACKEND_LABEL = 'DSH'
 
-/** Launch configuration belongs to channel construction, not the composition root. */
 /** The settled startup open (`ChannelLaunchOptions.startup`). */
 export interface ChannelStartup {
   readonly session: AgentSession
@@ -37,6 +36,7 @@ export class StartupOpenError extends Error {
   }
 }
 
+/** Launch configuration belongs to channel construction, not the composition root. */
 export interface ChannelLaunchOptions {
   model: string
   cwd: string
@@ -146,24 +146,13 @@ export interface ChannelLaunchOptions {
   /** The startup session's durable history, read before construction so
    *  the first bind paints it ahead of any live event. */
   initialHistory?: readonly AgentEvent[]
-  /**
-   * The settings service the channel's `/settings` surface reads and writes
-   * (the TUI's own file-backed layer over the host's; ../tui-settings.ts).
-   * Absent → the host's `settings` service.
-   */
+  /** The `/settings` service (../tui-settings.ts); absent → the host's `settings`. */
   settingsService?: unknown
   /**
    * The startup session still opening (docs/standalone-host-design.md 5.3):
-   * the channel is constructed on a placeholder session (`ready` false), and
-   * `start()` adopts the real one with its history once this settles. A
-   * rejection leaves the placeholder bound and says why in the transcript;
-   * `/new` then retries through `openSession`. Absent → the session handed
-   * to construction is the real one.
-   *
-   * `route` and `agentPreset` are what the adopted session actually runs
-   * with when only the opener knows it (the in-process DSH kernel resolves
-   * its route and preset once DSH has composed); absent → the construction
-   * options stand.
+   * the channel starts on a placeholder (`ready` false) and `start()` adopts
+   * the real one once this settles; a rejection stays on the placeholder and
+   * `/new` retries. `route`/`agentPreset` override the construction options.
    */
   startup?: Promise<ChannelStartup>
   /** How a user re-enters a session of this backend from a shell (the

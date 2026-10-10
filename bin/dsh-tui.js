@@ -118,16 +118,10 @@ const shellOpt = isWin ? { shell: true } : {}
 const cmd = (command, args) =>
   isWin ? [`${command} ${shellQuote(args).join(' ')}`, []] : [command, args]
 
-// dsh CLI 预检的异步形态。探测照旧真的跑 `dsh --version`（经 cmd()/shellOpt，
-// Windows 交给 cmd.exe 按 PATHEXT 解析 dsh.cmd），只是不再占着关键路径等它：
-// 本包入口（DSH 内核在进程内组合、或非 DSH 内核）根本不需要 dsh CLI。
-// 消费点两处：`dsh --profile` 出口的 `requireDsh()`（文案与退出码与原来的同步
-// 预检逐字一致），以及入口路由非零退出时判断是否因缺 dsh 而跳过排查提示。
-// stdio 用 'ignore' 而不是 'pipe'：成功路径永不 await 这个 Promise，'pipe' 会把
-// 两条管道挂在这一轮的启动上。这里**不能** unref：`requireDsh()` 会在起 dsh 前
-// await 它，届时如果这个子进程是唯一的活跃句柄，Node 会把这个顶层 await 判成
-// 永不结算、以 exit 13 直接终止启动器（verify-launcher 实测）。探测就是
-// `dsh --version`，~80ms 内自行退出，不需要 unref。
+// dsh CLI 预检（`dsh --version`），异步起、不占关键路径：本包入口不需要 dsh CLI，
+// 只有 `dsh --profile` 出口（`requireDsh()`）与入口失败后的提示判定才消费结果。
+// **不能** unref：`requireDsh()` await 它时若这是唯一活跃句柄，Node 会把顶层 await
+// 判成永不结算、以 exit 13 终止启动器。
 let dshProbe
 const probeDsh = () => {
   dshProbe ??= new Promise(resolve => {
@@ -806,33 +800,13 @@ const startDshSession = (dshArgs, profile = PROFILE, env = process.env) =>
     })
   })
 
-// entry 子进程的 Node 编译缓存（`NODE_COMPILE_CACHE`）：整条模块图（含入口进程内
-// runProfile 组装的 DSH）都省掉解析与编译，与预载分支验证过的收益同源（首帧约
-// −70ms，docs/standalone-host-design.md 6.1）。纯 env 注入——不调
-// `module.enableCompileCache`，不改模块图、不新增依赖；`/restart`、`/kernel` 的
-// 替身进程从 entry 继承这个 env，自动跟着受益。
-//
-// 边界：用户显式设过 `NODE_COMPILE_CACHE` 一律不覆盖（空字符串同理——实测 Node 对
-// 空值静默禁用）。`NODE_DISABLE_COMPILE_CACHE` 是 Node 自己的开关，这里不参与也
-// 不与它冲突。目录创建 best-effort：建不出来就完全不注入，也不去动用户自己指定的
-// 目录。这是保守选择而不是故障对策——把入口引向一个建不出来的位置没有任何收益，
-// 而实测不可创建的位置代价不对称：/proc 类路径下 Node 会长时间不退出，常见的不可
-// 写目录则被 Node 自己静默跳过（chmod 500 的目录实测 exit 0、无告警）。新建目录按
-// 0700 建，已存在的目录权限不变（真实 `~/.dsh-tui` 及其下目录常见为 755）——这是
-// 一次窄权限创建，不是「目录私有」的保证。
-//
-// 路径沿用启动器既有的 `join(homedir(), '.dsh-tui', …)` 写法：与 src/utils/paths.ts
-// 的 `DATA_DIR` 同一解析（`<home>/.dsh-tui`），本文件零 lib 依赖（见文件头），所以
-// 这是同一表达式的复用，而不是第二份规则。
-//
-// **不要**把 :838-:930（`readLastRunRecord` 的声明行起、至 `// TTY 判定` 那段注释为止；
-// 行号随编辑漂移）之间的路径抽成模块级常量：verify-safe-mode.mjs 按这两个标记切片该
-// 区间、在 vm 沙箱里只注入 readFileSync/join/homedir/process（该脚本 :383-:398），区间
-// 内出现的外部标识符在沙箱里是 `undefined`；函数自身的 try/catch 会把它吞成「读不到
-// 记录」，表现为该套件 12 项静默转红（实测 exit=1）。同款切片手法也用在
-// verify-backend-registry.ts :185 对顶部 id 规则的提取上。注入点本身在这个区间之外，
-// 所以这里沿用既有写法即可。（上面刻意没有抄那两个标记的原文：抄进注释会让脚本的
-// indexOf 提前命中本注释，切片起点/终点整段错位。）
+// entry 子进程的 Node 编译缓存（docs/standalone-host-design.md 6.1）：纯 env 注入，
+// 替身进程继承。用户显式设过 `NODE_COMPILE_CACHE`（含空串）不覆盖；目录建不出来
+// 就不注入。
+// 路径沿用 `join(homedir(), '.dsh-tui', …)` 写法，**不要**抽成共用的模块级常量：
+// verify-safe-mode.mjs 把 readLastRunRecord 至「TTY 判定」注释之间的源码切进只注入
+// 少数全局的 vm 沙箱，区间内引用的外部常量会是 `undefined`，套件静默转红。
+// （别把那两处切片标记原文抄进注释：会让脚本的 indexOf 提前命中。）
 const withCompileCache = env => {
   if (env.NODE_COMPILE_CACHE !== undefined) return env
   const cacheDir = join(homedir(), '.dsh-tui', 'compile-cache')
@@ -844,9 +818,8 @@ const withCompileCache = env => {
   return { ...env, NODE_COMPILE_CACHE: cacheDir }
 }
 
-// 本包自己的入口（docs/standalone-host-design.md 5.8）：Claude 内核不组合 DSH
-// profile，直接 `node <入口> <应用参数>`。结果模型与 startDshSession 相同，
-// 首启结算与安全模式照旧。
+// 本包自己的入口（docs/standalone-host-design.md 5.8）：`node <入口> <应用参数>`，
+// 所有内核默认都走这里。结果模型与 startDshSession 相同。
 const startEntrySession = (entry, appArgs, env = process.env) =>
   new Promise(resolve => {
     const child = spawn(process.execPath, [entry, ...appArgs], { stdio: 'inherit', env: withCompileCache(env) })
@@ -1510,11 +1483,7 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   forwardExit(child)
 } else {
   // ─── profile 副本（或源码运行）：完整启动逻辑 ─────────────────────────────
-  // dsh CLI 预检（缺失时给安装指引）。探测异步起、结果在**真正要起 dsh 的出口**
-  // 才消费（见文件末尾路由的 `await requireDsh()`）：本包入口不需要 dsh CLI，让
-  // 这次探测留在关键路径上白等 ~80ms 没有意义。入口路由下缺 dsh 时由入口自己
-  // 打印同一份 noDsh 并以 1 退出，这里只用探测结果跳过后续的排查提示。文案、
-  // 退出码与自举/更新/救援路径的提示不变。
+  // dsh CLI 预检：异步起，结果在要起 dsh 的出口才消费（见 probeDsh）。
   void probeDsh()
 
   let installedVersion
@@ -1655,21 +1624,15 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // the app-level separator too, and replay this same argv on a safe retry.
   const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
 
-  // 内核分流（docs/standalone-host-design.md 5.8）：判定为非 DSH 内核时走本包入口
-  // （Claude 与 Codex 同一判据，见 src/hostEntryRoute.ts `entryRoute`），不组合 DSH
-  // profile。启动器读不到 profile 补丁里 Config 行的 backend（零 lib
-  // 依赖），所以这里只按 一次性交接 → DSH_TUI_BACKEND（--backend）→ kernel.json
-  // 判定；入口自己会再读 Config 行，钉在 DSH 上时原样交给 dsh。dsh 自己的
-  // 一次性开关（--version、--dump-config* 等 hostArgs）始终交给 dsh。
-  // DSH_TUI_HOST_ENTRY=0 关闭分流，所有内核都回到 `dsh --profile`。
-  // DSH 内核默认也走本包入口（Phase 2）：入口先挂界面，再把 profile 组合进同一个
-  // Cordis 根；DSH_TUI_HOST_ENTRY_DSH=0 让 DSH 内核回到 `dsh --profile`
-  // （src/kernelPrefs.ts）。入口用不了已安装的 dsh 时自己回退到 `dsh --profile`。
+  // 内核分流（docs/standalone-host-design.md 5.8）：默认所有内核都走本包入口，入口
+  // 再按 profile 补丁的 Config 行判定（src/hostEntryRoute.ts）。DSH_TUI_HOST_ENTRY_DSH=0
+  // 只让 DSH 内核回到 `dsh --profile`，DSH_TUI_HOST_ENTRY=0 让所有内核回去；dsh 自己的
+  // hostArgs（--version、--dump-config* 等）始终交给 dsh。启动器零 lib 依赖、读不到
+  // Config 行，所以只按 交接 → DSH_TUI_BACKEND → kernel.json 判定。
   const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
   const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
   const dshInEntry = hostEntryEnabled && process.env.DSH_TUI_HOST_ENTRY_DSH !== '0'
-  // 只做 id 语法判定（P0 D1）：成员判定归 boot——未装的插件 id 在那里与写错的 id
-  // 一样回落 dsh 并告警，启动器不必（也不能）复制注册表。
+  // 只做 id 语法判定：成员判定归 boot（未装的 id 在那里回落 dsh 并告警）。
   const pickKernel = value => {
     const id = typeof value === 'string' ? value.trim().toLowerCase() : ''
     return isBackendIdSyntax(id) ? id : undefined
@@ -1682,7 +1645,7 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     return pickKernel(readJson(join(homedir(), '.dsh-tui', 'kernel.json'))?.backend) ?? 'dsh'
   }
   if (hostEntryEnabled) {
-    // 运行中的 /kernel 切到 Claude 时经它重起（src/update.ts restartArgv）。
+    // 替身进程经它重起（src/update.ts restartArgv）。
     process.env.DSH_TUI_HOST_ENTRY_PATH = hostEntry
     process.env.DSH_TUI_PROFILE ??= PROFILE
   }
@@ -1691,15 +1654,12 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   if (hostEntryEnabled && hostArgs.length === 0 && (dshInEntry || launchKernel() !== 'dsh')) {
     // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
     const result = await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env)
-    // DSH 内核下没有 dsh CLI：入口已打印同一份 noDsh 指引并以 1 退出（host-entry.ts
-    // runInEntry）。这里不再追加 profileExited / safeHint / 安全模式询问——它们
-    // 指向一个不存在的 `dsh --profile`。预检的结果正是在这里用上。
+    // DSH 内核下没有 dsh CLI：入口已打印 noDsh 并以 1 退出，不再追加指向不存在的
+    // `dsh --profile` 的排查提示与安全模式询问。
     if (result.kind === 'exit' && result.code !== 0 && launchKernel() === 'dsh' && !(await probeDsh())) process.exit(result.code)
     settleFirstResult(result, firstArgs)
   } else {
-    // 唯一消费预检的出口：这条分支下面就是 `dsh --profile`（含 dsh 自己的
-    // --version/--dump-config* 这类 hostArgs，以及 DSH_TUI_HOST_ENTRY=0 与
-    // HOST_ENTRY_DSH=0 的非默认路径）。
+    // `dsh --profile` 出口：hostArgs，或入口被关闭的非默认路径。
     await requireDsh()
     settleFirstResult(await startDshSession(firstArgs), firstArgs)
   }

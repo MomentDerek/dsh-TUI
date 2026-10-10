@@ -4,8 +4,8 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSy
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-// Per-function paths: the `semver` root pulls in all 46 of its modules, and
-// this file loads before the first frame (docs/first-frame-startup-plan.md).
+// Per-function paths: the `semver` root pulls in all its modules, and this
+// file loads before the first frame (docs/standalone-host-design.md 6.1).
 import gt from 'semver/functions/gt.js'
 import gte from 'semver/functions/gte.js'
 import lt from 'semver/functions/lt.js'
@@ -1007,10 +1007,8 @@ export async function resolveTuiUpdateTarget(): Promise<TuiUpdateTarget> {
  * or blocks the interactive TUI.
  */
 export async function checkForTuiUpdate(): Promise<TuiUpdateInfo | undefined> {
-  // Both callers start this during the first render (a passive effect that
-  // Ink flushes synchronously, and right after mount). The first `fetch()`
-  // in a process loads Node's bundled undici synchronously (~30ms), so yield
-  // first: that cost then lands after the frame instead of before it.
+  // Callers start this during the first render; the first `fetch()` loads
+  // undici synchronously, so yield first and let that cost land after the frame.
   await new Promise<void>(resolve => setImmediate(resolve))
   const target = await resolveTuiUpdateTarget()
   return target.kind === 'update'
@@ -2138,8 +2136,8 @@ export interface TuiRestartOptions {
   onSpawn?: (child: { kill(signal: NodeJS.Signals): boolean }) => void
   /**
    * The replacement ended by a signal: called before any outcome notice, so a
-   * standalone-entry supervisor can end by the same signal (a termination it
-   * asked for is not a crash). Returning normally continues as before.
+   * standalone-entry supervisor can end by the same signal. Returning normally
+   * continues with the usual outcome handling.
    */
   onTerminationSignal?: (signal: NodeJS.Signals) => void
 }
@@ -2202,15 +2200,10 @@ export function restartChildEnv(
 }
 
 /**
- * The replacement's argv after `process.execPath`, pure. By default the same
- * script and arguments again. A replacement on the Claude kernel goes to the
- * package's host entry when the launcher named it (`hostEntry`) and this
- * process is not already it: a DSH-hosted process would otherwise relaunch
- * `dsh --profile` and boot Claude through the whole DSH composition. The
- * entry hands a DSH launch back to dsh itself, so the other direction needs
- * no change — unless the DSH kernel runs in the entry too (the default;
- * `dshInEntry`, off with `DSH_TUI_HOST_ENTRY_DSH=0`): then a DSH replacement
- * goes to the entry as well. Exported for scripts/verify-host-entry.
+ * The replacement's argv after `process.execPath`, pure: the same script and
+ * arguments again, except that a replacement on Claude (or on DSH with
+ * `dshInEntry`) started outside the entry goes to `hostEntry` with the app
+ * arguments.
  */
 export function restartArgv(input: {
   readonly execArgv: readonly string[]
@@ -2226,11 +2219,8 @@ export function restartArgv(input: {
   /** The DSH kernel runs in the entry as well (unless `DSH_TUI_HOST_ENTRY_DSH=0`). */
   readonly dshInEntry?: boolean
 }): string[] {
-  // A kernel switch must not hand the replacement THIS kernel's resume
-  // flags: an inherited `--resume <id>` in argv would send the new kernel
-  // looking for a session that belongs to the kernel it just left — the
-  // same reason DSH_TUI_RESUME_SESSION is deleted below. A fresh replacement
-  // drops them too: after /new they name the previous session.
+  // Inherited resume flags name a session of the kernel being left (a switch)
+  // or the previous session (a fresh replacement after /new).
   const strip = (args: readonly string[]): string[] => input.switching || input.fresh === true ? stripResumeArgs(args) : [...args]
   const script = input.argv[1]
   const viaEntry = input.kernel === 'claude' || (input.kernel === 'dsh' && input.dshInEntry === true)
@@ -2430,11 +2420,9 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
         signal: signal ?? null,
         elapsedMs,
       })
-      // A replacement that took the screen over and then died by a signal
-      // (its own exit funnel restored the terminal): the hook ends this
-      // process by that signal, or returns for the usual outcome handling.
-      // Before a handoff's first frame this process still holds the screen,
-      // so the failure path below restores it first.
+      // A replacement that took the screen over and died by a signal: the hook
+      // may end this process by that signal. Before a handoff's first frame this
+      // process still holds the screen, so the failure path below restores it.
       if (signal !== null && options.onTerminationSignal !== undefined && (!handoff || ackReadyAt !== undefined)) {
         options.onTerminationSignal(signal)
       }

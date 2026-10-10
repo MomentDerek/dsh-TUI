@@ -1,12 +1,10 @@
 /**
- * What a channel composition needs from whatever hosts it, without naming
- * Cordis: service lookups, a logger, the lifetime hook, the DecisionEvents
- * dispatch and gate, and the DSH-only `agent/pre-step` waterfall.
- *
- * The Cordis implementation (`cordis-host.ts`) wraps the plugin context; a
- * host that owns the process itself (docs/standalone-host-design.md) supplies
- * its own. Lookups for services the host does not mount return undefined, and
- * every consumer already degrades on that.
+ * What a channel composition needs from its host, without naming Cordis:
+ * service lookups, a logger, the lifetime hook, the DecisionEvents dispatch
+ * and gate, and the DSH-only `agent/pre-step` waterfall. Implemented by
+ * `cordis-host.ts` (in the single-root entry the Cordis root is the host,
+ * docs/standalone-host-design.md 5.1). Lookups for services the host does not
+ * mount return undefined, and every consumer degrades on that.
  */
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { AdapterRuntimeOptions } from '../../adapter/kernel/runtime.js'

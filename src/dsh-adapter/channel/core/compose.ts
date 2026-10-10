@@ -149,12 +149,10 @@ export function createCoreChannel(
   let started = false
   /**
    * The single late-extension window (docs/standalone-host-design.md 5.3,
-   * D1): a channel mounted on a placeholder learns its real session only at
-   * the first adoption, so the composition root registers (before `start`)
-   * one hook that may `extend` the core inside that adoption's tail. It is
-   * consumed by the first real session adopted, by the startup open or by a
-   * `/new` / `/resume` retry after a failed one; `extend` throws at every
-   * other time after `start`.
+   * D1): a placeholder-mounted channel learns its real session only at the
+   * first adoption (the startup open, or a `/new` / `/resume` retry), so one
+   * hook registered before `start` may `extend` the core inside that
+   * adoption's tail. `extend` throws at every other time after `start`.
    */
   let adoptHook: ((session: AgentSession) => void) | undefined
   let adoptWindow = false
@@ -377,9 +375,7 @@ export function createCoreChannel(
 
   /**
    * The subagent control for `session`: interrupt always; the transcript read
-   * and parent-mediated messaging only while the session serves them. Built
-   * per session, so the startup adoption (a placeholder replaced by the real
-   * session) rebuilds it.
+   * and messaging only while the session serves them. Rebuilt per adoption.
    */
   const subagentControlFor = (session: AgentSession): ChannelState['subagentControl'] => {
     const messaging = session.capabilities.subagents?.messaging
@@ -905,15 +901,10 @@ export function createCoreChannel(
   })
   const reports = createCoreReports({ owner, binding, state: () => state })
   /**
-   * Adopt the startup session once its open settles (`options.startup`;
-   * docs/standalone-host-design.md 5.3). Unlike `/new` and `/resume` this is
-   * no switch: the placeholder never served a turn, so there is no veto, no
-   * race probe and no switched notice, and the rows stay (local commands may
-   * have printed while the backend opened). The binding's prepare/adopt pair
-   * owns the candidate: a channel released mid-open closes it on arrival.
-   * A failed open leaves the placeholder bound and `ready` false; the notice
-   * row points at `/new`, which opens through `options.openSession` (or, for
-   * a `StartupOpenError`, says what to do instead).
+   * Adopt the startup session once its open settles (`options.startup`). No
+   * switch: no veto, no switched notice, and the rows stay. A failed open
+   * leaves the placeholder bound and `ready` false, with a notice row
+   * pointing at `/new` (or a `StartupOpenError`'s own hint).
    */
   const adoptStartup = (startup: NonNullable<ChannelLaunchOptions['startup']>): void => {
     const adoption = binding.capture()
@@ -941,9 +932,8 @@ export function createCoreChannel(
         state.cwd = candidate.cwd
         state.displayCwd = host.workspaceService.describe(candidate.cwd).description ?? candidate.cwd
         state.backendCapabilities = snapshotOf(candidate)
-        // What the opener resolved only now (the in-process DSH kernel's
-        // route and preset); written before the extensions attach, so
-        // whatever they set wins.
+        // Route and preset the opener resolved only now; written before the
+        // extensions attach, so theirs win.
         if (route !== undefined) {
           state.provider = route.provider
           state.model = route.model
@@ -1028,15 +1018,9 @@ export function createCoreChannel(
     }, replace)
   }
   /**
-   * Inside the tail of the first real session's adoption (the binding is
-   * already the candidate's): let the registered hook extend the core for
-   * it, then serve what it contributed as `start` would have: the action
-   * table again, then its runtime starts (the host subscriptions already
-   * run). Called after the core has written the session's identity,
-   * capability snapshot and command list, so whatever the extension writes
-   * wins; before the bind, so its listeners and bind hooks precede the
-   * session's first events. A throw fails the adoption transaction (the
-   * binding revokes the candidate and the channel), like any tail failure.
+   * Run the `adoptHook` window (see above) in the adoption tail, then serve
+   * its contributions as `start` would. After the core wrote the session's
+   * state, before the bind; a throw fails the adoption transaction.
    */
   const attachOnAdopt = (candidate: AgentSession): void => {
     const hook = adoptHook
@@ -1081,8 +1065,7 @@ export function createCoreChannel(
     reports,
     resetIdeSelection,
     refreshGitBranch,
-    /** Merge an extension's contributions (before `start`, or inside the
-     *  `extendOnAdopt` hook). */
+    /** Merge an extension's contributions (before `start`, or in the adoption window). */
     extend(next: ChannelExtension): void {
       if (started && !adoptWindow) throw new Error('dsh-tui: Channel extensions must attach before the channel starts')
       extension = {
@@ -1091,11 +1074,7 @@ export function createCoreChannel(
         delegates: { ...extension.delegates, ...next.delegates },
       }
     },
-    /**
-     * Register (before `start`) the one hook the first real session adopted
-     * runs, inside its adoption tail, to `extend` the core for that session
-     * (a placeholder-mounted channel learns its backend only then).
-     */
+    /** Register (before `start`) the adoption-window hook (see `adoptHook`). */
     extendOnAdopt(hook: (session: AgentSession) => void): void {
       if (started) throw new Error('dsh-tui: Channel adoption extensions must register before the channel starts')
       if (adoptHook !== undefined) throw new Error('dsh-tui: Channel adoption extension already registered')

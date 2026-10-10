@@ -1,64 +1,19 @@
 /**
  * The installed DSH host, loaded into this package's own entry
- * (docs/standalone-host-design.md 5.4 and Phase 2 "single root"): the entry's
- * Cordis root is built from the host's own `cordis`, gets the host's module
- * resolution before any TUI module loads, and has a profile composed into it
- * after the screen mounted — the whole profile on the DSH kernel
- * (`HostRoot.compose`), and the light profile on the other kernels
- * (`HostRoot.composeLite`, ./lite-profile.ts: this package's rows plus the
- * profile's third-party bundles, without `dsh-base`). No `runProfile`, no
- * second root.
+ * (docs/standalone-host-design.md 5.4, Phase 2 "single root"): the entry's
+ * Cordis root is built from the host's own `cordis`, and a profile is composed
+ * into it after the screen mounted — the whole profile on the DSH kernel
+ * (`HostRoot.compose`), the light profile elsewhere (`HostRoot.composeLite`,
+ * ./lite-profile.ts). No `runProfile`, no second root.
  *
- * Module identity. Everything comes from the `dsh` on PATH — by realpath, or
- * through the launcher script it is (npm / pnpm shims, Windows `.cmd` /
- * `.ps1`, a volta shim; `findHostDsh`) — never from this package's
- * own dependencies: the host's `cordis` is a nested copy, and the Loader
- * must be the one `dsh-app-boot` itself uses (resolved through app-boot's own
- * `createRequire`). These modules are imported by file URL only. This
- * package depends on them (optional peer + dev, ./host-contract.ts
- * HOST_TYPE_PACKAGES) for their types alone: every `@deepseek-ai/*` import
- * here is `import type` (verify:boundary holds it), and the module list with
- * the exports read from each is ./host-contract.ts HOST_MODULES — the probe
- * below and verify:contract both read it.
+ * Every host module comes from the `dsh` on PATH by realpath (or through its
+ * launcher shim; `findHostDsh`), imported by file URL; `@deepseek-ai/*` is
+ * `import type` here only. The module list, the replicated upstream code and
+ * the deliberate deviations are ./host-contract.ts (HOST_MODULES,
+ * HOST_REPLICAS, HOST_DEVIATIONS) and ADAPTER.md.
  *
- * What is reproduced from the host (@deepseek-ai/dsh 0.2.0-rc.2; keep in step
- * with it: ./host-contract.ts HOST_REPLICAS, fingerprinted by verify:contract
- * in host-replica.snapshot.json). Lines are the upstream function bodies:
- *
- * | here                         | upstream                                         | lines |
- * | ---------------------------- | ------------------------------------------------ | ----- |
- * | `loadLayeredEnv` call        | dsh `bin.js` runCli, before `runProfile`         | 1     |
- * | `prepareHostRoot` step 1–2   | dsh `profile-boot` composeProfile (no overlays)  | ~12   |
- * | `prepareHostRoot` step 4     | dsh-app-boot `boot()` prelude (baseUrl,          | ~12   |
- * |                              | dshHomePath, internal/update, Loader)            |       |
- * | `prepareHostRoot` step 5–7   | dsh `profile-boot` runProfile: proxy, appReady,  | ~40   |
- * |                              | fail-loud, profileContext, launch environment,   |       |
- * |                              | PluginPackages, provideCmdline                   |       |
- * | `createAppReady`             | dsh `profile-boot` createAppReady                | ~20   |
- * | `createProcessShutdown`      | dsh `profile-boot` createProcessShutdown         | ~45   |
- * | `HostRoot.compose`           | dsh-app-boot `boot()` tail (mountRootInclude,    | ~25   |
- * |                              | loader.await, auditStartupEntries, the startup   |       |
- * |                              | log exporter and `StartupError.startup`) +       |       |
- * |                              | runProfile appReady.commit                       |       |
- * | `writeStartupReport`         | dsh `bin.js` reportStartupFailure (file half)    | ~25   |
- *
- * One deviation: `bin.js` saves a report for a `StartupError` only and lets
- * any other startup error crash the process; the entry saves one for every
- * composition failure, because the screen stays up and shows its path.
- *
- * Deviations (./host-contract.ts HOST_DEVIATIONS, ADAPTER.md). Deliberately
- * not reproduced: `runProfile`'s SIGTERM/SIGINT handlers and
- * `createProcessShutdown().interrupt` (the entry owns signals and ends by the
- * signal through the TUI's exit funnel: ./process-exit.ts says why its exit
- * status differs from `interrupt`'s 0 / 130), the terminal half of
- * `reportStartupFailure` (the screen is up: the failure row names the report
- * instead), `--patch` overlays and `--from-default-profile` (the launcher passes
- * neither), and a `DSH_HOME` shim some installs carry in `bin.js` (it is not
- * upstream's; the launcher resolves `DSH_HOME` itself).
- *
- * Never writes to stdout. Before the screen mounts, host warnings go to
- * stderr as `dsh` prints them; the composition runs after the mount and
- * takes the caller's sink.
+ * Never writes to stdout: before the mount host warnings go to stderr, the
+ * composition takes the caller's sink.
  */
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
@@ -69,7 +24,6 @@ import { pathToFileURL } from 'node:url'
 import { inspect } from 'node:util'
 import type { Context } from '@deepseek-ai/cordis'
 import type * as AppBoot from '@deepseek-ai/dsh-app-boot'
-import type * as ProfileBoot from '@deepseek-ai/dsh/profile-boot'
 import type * as HomePaths from '@deepseek-ai/dsh-home-paths'
 import type * as Cmdline from '@deepseek-ai/dsh-cmdline'
 import type * as HttpProxy from '@deepseek-ai/dsh-http-proxy'
@@ -95,7 +49,16 @@ type Warn = (line: string) => void
 type ContractExports<K extends (typeof HOST_MODULES)[number]['key']> = Extract<(typeof HOST_MODULES)[number], { key: K }>['exports'][number]
 
 type AppBootModule = Pick<typeof AppBoot, ContractExports<'appBoot'>>
-type ProfileBootModule = Pick<typeof ProfileBoot, ContractExports<'profileBoot'>>
+/**
+ * `@deepseek-ai/dsh/profile-boot`, declared locally: the host CLI is not a
+ * dependency (its tree is the whole CLI). verify:contract probes these exports
+ * on an installed host.
+ */
+interface ProfileBootModule {
+  prepareProfile(name: string, userLayer?: boolean, fromDefaultProfile?: string): AppBoot.Profile
+  readonly INSTALL_ANCHOR: string
+  readonly PROFILE_ROOT_FILENAME: 'cordis.yml'
+}
 type HomePathsModule = Pick<typeof HomePaths, ContractExports<'homePaths'>>
 type CmdlineModule = Pick<typeof Cmdline, ContractExports<'cmdline'>>
 type HttpProxyModule = Pick<typeof HttpProxy, ContractExports<'httpProxy'>>
@@ -319,35 +282,22 @@ export async function loadHostDsh(packageDir: string | undefined = undefined): P
 export interface HostRoot {
   readonly ctx: Context
   /**
-   * Compose the profile into `ctx` (DSH kernel only): the same root the
-   * screen is mounted on. Rejects with the Loader's or the audit's error;
-   * the tree stays up (the caller decides what the screen shows).
-   * `stopping`: a root dispose waits for this composition
-   * (./root-dispose.ts): once the Loader settled, skip the audit and the
-   * readiness commit and return.
+   * Compose the profile into `ctx` (DSH kernel only). Rejects with the
+   * Loader's or the audit's error; the tree stays up. `stopping`: a root
+   * dispose is waiting (./root-dispose.ts), so skip the audit and readiness.
    */
   compose(warn: Warn, stopping?: () => boolean): Promise<void>
   /**
-   * Compose the light profile into `ctx` (the non-DSH kernels only): this
-   * package's rows and the profile's third-party bundles, with `dsh-base`
-   * left out and the rows that only its services can activate disabled
-   * (./lite-profile.ts, design 5.7). What the screen is missing on those
-   * kernels is exactly this: the `tui*` services and the plugin rows, which
-   * the entry root holds but nothing composes in.
-   * Same contract as {@link compose}: rejects with the Loader's or the
-   * audit's error (wrapped, with the startup report saved), the tree stays up,
-   * and `stopping` short-circuits once the Loader settled.
-   * Throws when the root was prepared for DSH — that kernel composes the whole
-   * profile through {@link compose} — or when the profile has none of the
-   * excluded bundles (nothing to trim: the caller composes normally instead).
+   * Compose the light profile into `ctx` (non-DSH kernels only): this package's
+   * rows and the profile's third-party bundles without `dsh-base`
+   * (./lite-profile.ts, design 5.7). Same contract as {@link compose}; throws
+   * when the root was prepared for DSH.
    */
   composeLite(warn: Warn, stopping?: () => boolean): Promise<void>
   /**
-   * Remove the fail-loud handlers (DSH kernel; a no-op otherwise). The entry
-   * calls it once the TUI's process guard and crash funnel are up: from then
-   * on they are the single owner of a fatal error (./process-exit.ts), and
-   * fail-loud listening first would exit before the funnel
-   * restored the terminal.
+   * Remove the fail-loud handlers (DSH kernel; a no-op otherwise) once the
+   * TUI's process guard is up: it alone owns a fatal error, and fail-loud
+   * would exit before the funnel restored the terminal.
    */
   readonly uninstallFailLoud: () => void
 }
@@ -359,11 +309,7 @@ export interface PrepareHostRootOptions {
   readonly args: readonly string[]
   /** Compose the profile later (the DSH kernel); else only the resolution. */
   readonly dsh: boolean
-  /**
-   * The entry's process-exit seam: `ctx.appExit(code)` goes to the TUI's exit
-   * funnel through it once the runtime filled it, and to the bounded
-   * `shutdown` before that (or when the funnel refuses).
-   */
+  /** Routes `ctx.appExit(code)` to the TUI's exit funnel; the bounded `shutdown` when unfilled or refused. */
   readonly exitSeam?: ProcessExitSeam
 }
 
@@ -452,8 +398,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     async compose(warn, stopping = () => false) {
       if (!options.dsh || profileContext === undefined) throw new Error('dsh-tui: this root was prepared without the DSH profile')
       // boot(): the warnings and errors logged while the tree starts, kept
-      // for the startup report (a logger exporter on a throwaway context,
-      // removed with it).
+      // for the startup report.
       const startupLogs: unknown[] = []
       const diagnostics = new host.Context() as Context & { logger: { exporter(exporter: unknown): unknown } }
       diagnostics.logger = (ctx as Context & { logger: { exporter(exporter: unknown): unknown } }).logger
@@ -469,18 +414,15 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         await appBoot.mountRootInclude(ctx, rootConfig, appBoot.readProfilePatches(BIN_NAME, profileContext, profile), undefined, BIN_NAME)
         const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
         await loader()?.await()
-        // A surface disposed the tree while it was starting, or is about to
-        // (a signal or /quit while composing): no audit, and above all no
-        // readiness (HMR would start its profile refresh on a dying tree).
+        // Disposed or about to be: no audit, and no readiness (HMR would start
+        // its profile refresh on a dying tree).
         if (loader() === undefined || stopping()) return
         await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
         if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined && !stopping()) appReady.commit()
       } catch (error) {
         // boot() attaches the root config and the startup logs to an audit
-        // failure; bin.js then saves the report under $DSH_HOME/logs. The
-        // entry saves one for every composition failure (bin.js lets any
-        // other error crash the process; here the screen stays up and shows
-        // the report's path instead).
+        // failure; unlike bin.js, a report is saved for every failure (the
+        // screen stays up and shows its path).
         if (error instanceof appBoot.StartupError) {
           Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: startupLogs }, enumerable: false, configurable: true, writable: true })
         }
@@ -499,26 +441,14 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
       if (options.dsh) throw new Error('dsh-tui: this root was prepared for DSH; compose the whole profile instead')
       const plan = liteProfilePlan(profile)
       if (!plan.trimmed) {
-        // Nothing to trim: the profile lists none of `excludedBundles` (one
-        // that does not carry dsh-base at all). Its layers are the whole
-        // profile then, so composing them IS the full composition the caller
-        // would otherwise reuse (./lite-profile.ts `trimmed`), and
-        // `rowDisables` is empty: no working row is disabled. This must not be
-        // fatal — the screen is already mounted and the exit is loud (exit 1),
-        // which a launcher turns into its safe-mode prompt: a profile that is
-        // merely whole would cost the kernel its whole plugin ecosystem. Warn
-        // on the caller's sink and compose it.
+        // Nothing to trim: composing the layers is the full composition, and
+        // not fatal (the screen is mounted; failing would cost every plugin).
         warn(`dsh-tui: light profile: ${options.profile} lists none of ${plan.excludedBundles.join(', ')}; composing it whole\n`)
       }
-      // What was left out, on the caller's warning sink: the composition is
-      // otherwise silent, and the row list is the reviewable half of the
-      // decision (./lite-profile.ts). Before the mount, so nothing may write
-      // to the terminal yet.
+      // What was left out, on the caller's warning sink.
       const notice = liteProfileNotice(plan)
       if (notice !== undefined) warn(notice)
-      // runProfile's profile facts, narrowed to the light bundle list: the
-      // patch expressions and the Loader resolve from the same profile
-      // directory, but `startedBundles` must name what is really composed.
+      // runProfile's profile facts; `startedBundles` names what is really composed.
       const liteContext: AppBoot.ProfileContext = {
         name: options.profile,
         dir: profile.dir,
@@ -530,10 +460,8 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         overlays: [],
         telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
       }
-      // readProfilePatches over the trimmed layers, then the disable rows:
-      // patch entries in the profile's own shape, applied last the way the
-      // profile's user layer is (a static disable in cordis.patch.yml would
-      // also hit the DSH kernel's composition, so this must stay runtime-side).
+      // The trimmed layers' patches, then the disable rows applied last (a
+      // static disable in cordis.patch.yml would also hit the DSH kernel).
       const patches = appBoot.readProfilePatches(BIN_NAME, liteContext, { ...profile, layers: [...plan.layers] })
       patches.push(...plan.disableRows)
       try {
@@ -543,10 +471,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         if (loader() === undefined || stopping()) return
         await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
       } catch (error) {
-        // Same failure contract as compose: the screen is up on these kernels
-        // too, so the report is saved and the path travels on the error.
-        // Difference from compose: no startup-log exporter, so `messages` is
-        // empty (the light composition has no DSH boot to log through).
+        // Same failure contract as compose, without startup logs.
         if (error instanceof appBoot.StartupError) {
           Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: [] }, enumerable: false, configurable: true, writable: true })
         }
@@ -653,12 +578,9 @@ function createAppReady(): { readonly service: AppReadyService; commit(): void }
 }
 
 /**
- * dsh `profile-boot` createProcessShutdown (0.2.0-rc.2), the `shutdown` half:
- * dispose, then set the exit code; a stalled dispose exits after the bound.
- * It serves `appExit` only before the TUI's funnel can take it. The
- * `interrupt` half (the signal path: dispose then force-exit 0 / 130, a
- * second signal at once) is replaced by ./process-exit.ts, which ends by the
- * signal itself after the funnel restored the terminal.
+ * dsh `profile-boot` createProcessShutdown (0.2.0-rc.2), the `shutdown` half
+ * only (`interrupt` is ./process-exit.ts): dispose, then set the exit code; a
+ * stalled dispose exits after the bound.
  */
 function createProcessShutdown(dispose: () => Promise<unknown>, timeoutMs = PROCESS_SHUTDOWN_TIMEOUT_MS): (code: number) => Promise<void> {
   let pending: Promise<void> | undefined

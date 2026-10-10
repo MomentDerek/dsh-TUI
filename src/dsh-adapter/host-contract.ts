@@ -1,32 +1,15 @@
 /**
- * The host contract of this package's own entry (docs/standalone-host-design.md
- * 5.4, ADAPTER.md): what the entry needs from the installed `dsh` and what
- * it reproduces of it. One list, read by both sides:
- *
- *  - ./host-dsh.ts `loadHostDsh` imports {@link HOST_MODULES} from the host's
- *    installation by realpath and checks every listed export (the capability
- *    probe; a miss is the fallback reason the entry shows);
- *  - scripts/verify-upstream-contract.ts runs that same probe against the
- *    pinned dev copy of `@deepseek-ai/dsh`, against fake hosts that each lack
- *    one export, and fingerprints the upstream bodies {@link HOST_REPLICAS}
- *    names (host-replica.snapshot.json) so a version-line move says which
- *    reproduced piece needs a review;
- *  - ./contract.ts takes {@link HOST_TYPE_PACKAGES} into the blessed list and
- *    the optional-at-runtime set (scripts/verify-manifest-deps.ts then holds
- *    them to optional peer + dev).
- *
- * Pure data, no imports: the entry reads it before any hijack.
+ * The host contract of this package's entry (docs/standalone-host-design.md
+ * 5.4, ADAPTER.md): what the entry loads from the installed `dsh` and what it
+ * reproduces. Read by ./host-dsh.ts (the capability probe), ./contract.ts
+ * (blessed type packages) and scripts/verify-host-contract.ts (probe,
+ * fake hosts, replica fingerprints). Pure data, no imports.
  */
 
 /** The host CLI package whose installation the entry loads. */
 export const HOST_PACKAGE = '@deepseek-ai/dsh'
 
-/**
- * The host line the reproduced pieces were checked against (ADAPTER.md
- * "独立入口的宿主契约"). host-replica.snapshot.json records it with the
- * fingerprints; a dev copy on another version fails verify:contract until the
- * changed pieces are reviewed and the snapshot is regenerated.
- */
+/** The host line the reproduced pieces were checked against (host-replica.snapshot.json). */
 export const HOST_REPLICA_VERSION = '0.2.0-rc.2'
 
 /** Where the entry resolves a host module from. */
@@ -45,10 +28,7 @@ export interface HostModuleSpec {
   readonly exports: readonly string[]
 }
 
-/**
- * The host modules the entry loads, all from one installation. Order is load
- * order.
- */
+/** The host modules the entry loads, all from one installation, in load order. */
 export const HOST_MODULES = [
   { key: 'cordis', specifier: '@deepseek-ai/cordis', via: 'host', exports: ['Context'] },
   {
@@ -67,14 +47,12 @@ export const HOST_MODULES = [
 ] as const satisfies readonly HostModuleSpec[]
 
 /**
- * The packages ./host-dsh.ts takes types from (`import type` only: at run
- * time every module comes from the host by realpath). Their types reach the
- * published declarations, so each is an optional peer + dev dependency and
- * blessed (AGENTS.md); none needs to resolve from this package at run time.
- * `cordis` is already blessed; `cordis-plugin-loader` is read as `unknown`.
+ * The packages ./host-dsh.ts takes types from (`import type` only); each is
+ * an optional peer + dev dependency and blessed. The host package itself is
+ * not one (its dependency tree is the whole CLI): ./host-dsh.ts declares the
+ * `profile-boot` exports it reads.
  */
 export const HOST_TYPE_PACKAGES = [
-  HOST_PACKAGE,
   '@deepseek-ai/dsh-app-boot',
   '@deepseek-ai/dsh-cmdline',
   '@deepseek-ai/dsh-home-paths',
@@ -95,9 +73,8 @@ export interface HostReplica {
 }
 
 /**
- * The reproduced upstream pieces (host-dsh.ts file header has the line
- * counts). A changed fingerprint means: re-read the upstream body against
- * `local`, carry the change over (or record why not), regenerate the snapshot.
+ * The reproduced upstream pieces. A changed fingerprint means: re-read the
+ * upstream body against `local`, carry the change over, regenerate the snapshot.
  */
 export const HOST_REPLICAS: readonly HostReplica[] = [
   { id: 'process-shutdown', package: HOST_PACKAGE, symbol: 'createProcessShutdown', kind: 'function', local: 'createProcessShutdown: the `shutdown` half only (`interrupt` is replaced by process-exit.ts, see HOST_DEVIATIONS)' },
@@ -110,12 +87,7 @@ export const HOST_REPLICAS: readonly HostReplica[] = [
   { id: 'run-cli', package: HOST_PACKAGE, symbol: 'runCli', kind: 'function', local: 'prepareHostRoot\'s loadLayeredEnv call before the profile; the StartupError-only report' },
 ]
 
-/**
- * Where the entry deliberately differs from what `dsh --profile` does, and the
- * entry-side seams that exist because of the single root. Documentation, not
- * fingerprints: these are this package's own code, held by focused
- * regressions (named in each line). Mirrored in ADAPTER.md.
- */
+/** Where the entry deliberately differs from `dsh --profile`. Documentation only; mirrored in ADAPTER.md. */
 export const HOST_DEVIATIONS: readonly { readonly id: string; readonly what: string }[] = [
   { id: 'no-interrupt', what: 'runProfile\'s SIGTERM/SIGINT handlers and createProcessShutdown().interrupt are not reproduced: the entry owns SIGTERM/SIGHUP/SIGINT (process-exit.ts installEntrySignals) and ends by the signal after the TUI\'s exit funnel, where interrupt exits 0 (TERM) / 130 (INT) — the launcher reads a numeric 130 as a crash (verify-entry-process-exit, accept-host-entry §7)' },
   { id: 'exit-seam', what: 'ctx.appExit (provideCmdline exit) goes to the TUI\'s exit funnel through ProcessExitSeam first, and to the reproduced shutdown only when the funnel refuses (prepareHostRoot exitSeam)' },

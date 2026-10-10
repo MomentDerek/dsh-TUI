@@ -128,14 +128,14 @@ export function writeKernelPrefs(
 export const KERNEL_SWITCH_HANDOFF_ENV = 'DSH_TUI_BACKEND_HANDOFF'
 
 /**
- * The package's own entry for the Claude kernel (docs/standalone-host-design.md
- * 5.8; routing in hostEntryRoute.ts). Kept here, beside the other launch
- * variables, so src/update.ts does not pull the routing module in.
+ * The package's own entry, which hosts every kernel by default
+ * (docs/standalone-host-design.md 5.8; routing in hostEntryRoute.ts). Kept
+ * here so src/update.ts does not pull the routing module in.
  * `DSH_TUI_HOST_ENTRY=0` keeps every kernel on `dsh --profile`.
  */
 export const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
-/** The entry's path, set by the launcher: a relaunch onto the Claude kernel
- *  goes through it (src/update.ts restartArgv). */
+/** The entry's path, set by the launcher: a replacement on Claude, or on DSH
+ *  while it runs in the entry, relaunches through it (src/update.ts restartArgv). */
 export const HOST_ENTRY_PATH_ENV = 'DSH_TUI_HOST_ENTRY_PATH'
 
 /** Whether the host entry is switched off. */
@@ -143,26 +143,17 @@ export function hostEntryDisabled(env: NodeJS.ProcessEnv = process.env): boolean
   return env[HOST_ENTRY_ENV] === '0'
 }
 
-/**
- * docs/standalone-host-design.md Phase 2: the DSH kernel runs in the
- * package's own entry by default, composing the profile into the entry's
- * Cordis root after the screen mounts. `DSH_TUI_HOST_ENTRY_DSH=0` hands DSH
- * launches to `dsh --profile` again (the entry still starts the Claude
- * kernel); `DSH_TUI_HOST_ENTRY=0` turns the entry off altogether. An
- * installed dsh the entry cannot use falls back to `dsh --profile` by itself.
- */
+/** `DSH_TUI_HOST_ENTRY_DSH=0` hands only DSH launches back to `dsh --profile`;
+ *  the other kernels stay in the entry. */
 export const HOST_ENTRY_DSH_ENV = 'DSH_TUI_HOST_ENTRY_DSH'
 
-/** Whether the DSH kernel runs in the host entry (on unless switched off above). */
+/** Whether the DSH kernel runs in the host entry (the default). */
 export function hostEntryDshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[HOST_ENTRY_DSH_ENV] !== '0' && !hostEntryDisabled(env)
 }
 
-/**
- * Why the entry could not use the installed dsh, handed to the screen that
- * follows (the delegated `dsh --profile` process reads it from here); set
- * by the entry, read and cleared once by the runtime (plugin.ts).
- */
+/** Why the entry could not use the installed dsh; set by the entry, read and
+ *  cleared once by the runtime (plugin.ts), also in a delegated `dsh --profile`. */
 export const HOST_NOTICE_ENV = 'DSH_TUI_HOST_NOTICE'
 
 /**

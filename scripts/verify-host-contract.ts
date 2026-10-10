@@ -5,22 +5,23 @@
  *  1. the contract's packages are blessed, optional at run time, and every
  *     module it loads belongs to a declared package;
  *  2. the capability probe (`loadHostDsh`, the production code) passes on the
- *     pinned dev copy of `@deepseek-ai/dsh` — the dependency copy stands in
- *     for an installed host, which CI does not have;
+ *     installed host (the `dsh` on PATH, or the package dir in
+ *     DSH_TUI_CONTRACT_DSH); skipped without one — the host CLI is no
+ *     dependency of this package, so CI has none;
  *  3. it fails, naming the gap, on fake hosts that each lack one listed
  *     export, one module, or app-boot itself (and loads the complete fake, so
  *     every failure is the one removed piece);
  *  4. the entry falls back on such a host: `dsh --profile` takes the launch
  *     and the reason reaches stderr and the delegated screen
  *     (`DSH_TUI_HOST_NOTICE`), headless with a fake `dsh` on PATH;
- *  5. the upstream bodies the entry reproduces (HOST_REPLICAS) still hash to
- *     host-replica.snapshot.json. A moved version line or a changed body
- *     fails with the pieces to review; when the dsh on PATH is another build,
- *     its differences are reported as warnings (it is what runs, but not
- *     what CI pins).
+ *  5. host-replica.snapshot.json records HOST_REPLICAS on HOST_REPLICA_VERSION;
+ *     on an installed host of that version the reproduced upstream bodies
+ *     still hash to it (a changed body fails with the pieces to review), on
+ *     another version the differences are warnings. Published versions are
+ *     immutable, so the hashes move only with the line: review when moving it.
  *
  * Run: node --import tsx/esm scripts/verify-host-contract.ts [--snapshot]
- * (`--snapshot` rewrites the fingerprints after the review.)
+ * (`--snapshot` rewrites the fingerprints from an installed host on the line.)
  */
 import './lib/fake-home.mjs'
 import assert from 'node:assert/strict'
@@ -29,7 +30,6 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { HOST_MODULES, HOST_PACKAGE, HOST_REPLICA_VERSION, HOST_REPLICAS, HOST_TYPE_PACKAGES } from '../src/dsh-adapter/host-contract.js'
 import { UPSTREAM_BLESSED_PACKAGES, UPSTREAM_VALIDATED_VERSION, upstreamDriftSummary } from '../src/dsh-adapter/contract.js'
 import { findHostDsh, loadHostDsh } from '../src/dsh-adapter/host-dsh.js'
@@ -44,15 +44,13 @@ const check = (label: string, ok: boolean, detail?: unknown): void => {
   passed += 1
 }
 const packageOf = (specifier: string): string => specifier.split('/').slice(0, 2).join('/')
-const devPackageDir = (name: string): string => dirname(realpathSync(fileURLToPath(import.meta.resolve(`${name}/package.json`))))
 
 // ── 1. the contract's own consistency ──────────────────────────────────
 const blessed = new Set<string>(UPSTREAM_BLESSED_PACKAGES)
 for (const name of HOST_TYPE_PACKAGES) check(`${name} is blessed`, blessed.has(name))
-check('the host package is in the contract', (HOST_TYPE_PACKAGES as readonly string[]).includes(HOST_PACKAGE))
 for (const spec of HOST_MODULES) {
   const name = packageOf(spec.specifier)
-  check(`${spec.specifier} belongs to a declared package`, blessed.has(name) || name === '@deepseek-ai/cordis-plugin-loader', name)
+  check(`${spec.specifier} belongs to a declared package`, blessed.has(name) || name === HOST_PACKAGE || name === '@deepseek-ai/cordis-plugin-loader', name)
 }
 check('module keys are unique', new Set(HOST_MODULES.map(spec => spec.key)).size === HOST_MODULES.length)
 check('the replicas were checked against the primary validated line', HOST_REPLICA_VERSION === UPSTREAM_VALIDATED_VERSION,
@@ -64,13 +62,17 @@ const withoutHost: Record<string, string | undefined> = { ...coherent }
 for (const name of HOST_TYPE_PACKAGES) withoutHost[name] = undefined
 check('host packages absent at run time: no drift notice', upstreamDriftSummary(withoutHost) === undefined, upstreamDriftSummary(withoutHost))
 
-// ── 2. the probe on the pinned dev copy ───────────────────────────────
-const devHost = devPackageDir(HOST_PACKAGE)
-const loaded = await loadHostDsh(devHost)
-check('the probe passes on the dev copy', loaded.packageDir === devHost)
-check('the dev copy is on the replica line', loaded.version === HOST_REPLICA_VERSION, loaded.version)
-check('the probe hands back a constructible Context', typeof loaded.Context === 'function')
-check('the launch-environment key is read', typeof loaded.launchEnvironmentKey === 'string' && loaded.launchEnvironmentKey !== '')
+// ── 2. the probe on the installed host ────────────────────────────────
+const located = process.env.DSH_TUI_CONTRACT_DSH !== undefined ? { packageDir: process.env.DSH_TUI_CONTRACT_DSH } : findHostDsh()
+const hostDir = 'packageDir' in located ? realpathSync(located.packageDir) : undefined
+const loaded = hostDir === undefined ? undefined : await loadHostDsh(hostDir)
+if (loaded === undefined) {
+  console.log('SKIP the capability probe and replica hashes: no installed dsh (PATH or DSH_TUI_CONTRACT_DSH)')
+} else {
+  check('the probe passes on the installed host', loaded.packageDir === hostDir)
+  check('the probe hands back a constructible Context', typeof loaded.Context === 'function')
+  check('the launch-environment key is read', typeof loaded.launchEnvironmentKey === 'string' && loaded.launchEnvironmentKey !== '')
+}
 
 // ── 3. fake hosts, each missing one piece ─────────────────────────────
 const fakeRoot = mkdtempSync(join(tmpdir(), 'verify-host-contract-'))
@@ -161,43 +163,41 @@ interface Snapshot {
 }
 const fingerprints = (resolvePackage: (name: string) => string): Snapshot['replicas'] => Object.fromEntries(HOST_REPLICAS.map(replica =>
   [replica.id, { package: replica.package, symbol: replica.symbol, ...fingerprintReplica(resolvePackage(replica.package), replica) }]))
-const current = fingerprints(devPackageDir)
+const onLine = loaded !== undefined && loaded.version === HOST_REPLICA_VERSION
+const installed = loaded === undefined ? undefined : (() => {
+  const hostRequire = createRequire(join(loaded.packageDir, 'package.json'))
+  return fingerprints(name => name === HOST_PACKAGE ? loaded.packageDir : dirname(hostRequire.resolve(`${name}/package.json`)))
+})()
 if (SNAPSHOT) {
-  const snapshot: Snapshot = { hostVersion: loaded.version, replicas: current }
+  if (!onLine || loaded === undefined || installed === undefined) {
+    console.error(`--snapshot needs an installed dsh ${HOST_REPLICA_VERSION} (found ${loaded?.version ?? 'none'})`)
+    process.exit(1)
+  }
+  const snapshot: Snapshot = { hostVersion: loaded.version, replicas: installed }
   writeFileSync(snapshotPath, `${JSON.stringify(snapshot, null, 2)}\n`)
   console.log(`host-replica snapshot written: ${snapshotPath} (${loaded.version})`)
   process.exit(0)
 }
 check('host-replica.snapshot.json exists', existsSync(snapshotPath), 'run with --snapshot')
 const recorded = JSON.parse(readFileSync(snapshotPath, 'utf8')) as Snapshot
+const ids = (list: readonly string[]): string => [...list].sort().join(',')
+check('the snapshot is on the replica line', recorded.hostVersion === HOST_REPLICA_VERSION,
+  `snapshot ${recorded.hostVersion} vs HOST_REPLICA_VERSION ${HOST_REPLICA_VERSION}: review HOST_REPLICAS on an installed host of the line, then --snapshot`)
+check('the snapshot records exactly HOST_REPLICAS', ids(Object.keys(recorded.replicas)) === ids(HOST_REPLICAS.map(replica => replica.id)), 'run with --snapshot')
 const changed = (against: Snapshot['replicas']): string[] => HOST_REPLICAS
   .filter(replica => against[replica.id]?.sha256 !== recorded.replicas[replica.id]?.sha256)
   .map(replica => `${replica.id}: ${replica.package} ${replica.symbol} → review ${replica.local}`)
-const devChanged = changed(current)
-const extra = Object.keys(recorded.replicas).filter(id => !HOST_REPLICAS.some(replica => replica.id === id))
-if (recorded.hostVersion !== loaded.version || devChanged.length > 0 || extra.length > 0) {
-  console.error(`Host replica surface needs review (snapshot ${recorded.hostVersion}, dev copy ${loaded.version}):`)
-  for (const line of devChanged) console.error(`  - ${line}`)
-  for (const id of extra) console.error(`  - ${id}: recorded but no longer in HOST_REPLICAS`)
-  if (devChanged.length === 0 && extra.length === 0) console.error('  (every reproduced body is unchanged; record the new line with --snapshot)')
+const hostChanged = installed === undefined ? [] : changed(installed)
+if (onLine && hostChanged.length > 0) {
+  console.error(`Host replica surface needs review (snapshot ${recorded.hostVersion}, installed ${loaded?.packageDir}):`)
+  for (const line of hostChanged) console.error(`  - ${line}`)
   console.error('Carry upstream changes into src/dsh-adapter/host-dsh.ts (or record why not), then run node --import tsx/esm scripts/verify-host-contract.ts --snapshot')
   process.exit(1)
 }
-passed += 1
-// The installed dsh, when there is one and it is another build: warn only.
-const host = findHostDsh()
-if ('packageDir' in host && realpathSync(host.packageDir) !== devHost) {
-  try {
-    const hostRequire = createRequire(join(host.packageDir, 'package.json'))
-    const installed = fingerprints(name => name === HOST_PACKAGE ? host.packageDir : dirname(hostRequire.resolve(`${name}/package.json`)))
-    const hostChanged = changed(installed)
-    if (hostChanged.length > 0) {
-      console.warn(`host contract warning: the dsh on PATH (${host.packageDir}) differs from the recorded ${recorded.hostVersion} in:`)
-      for (const line of hostChanged) console.warn(`  - ${line}`)
-    }
-  } catch (error) {
-    console.warn(`host contract warning: cannot fingerprint the dsh on PATH (${error instanceof Error ? error.message : String(error)})`)
-  }
+if (onLine) passed += 1
+else if (hostChanged.length > 0) {
+  console.warn(`host contract warning: the installed dsh ${loaded?.version} (${loaded?.packageDir}) differs from the recorded ${recorded.hostVersion} in:`)
+  for (const line of hostChanged) console.warn(`  - ${line}`)
 }
 console.log(`host contract OK (${passed} checks; ${HOST_MODULES.length} modules, ${HOST_REPLICAS.length} replica fingerprints on ${recorded.hostVersion})`)
 process.exit(0)

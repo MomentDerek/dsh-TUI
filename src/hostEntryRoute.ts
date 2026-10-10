@@ -1,13 +1,9 @@
 /**
- * Which process hosts a launch (docs/standalone-host-design.md 5.8): the
- * Claude kernel runs in this package's own entry
- * (`lib/types/dsh-adapter/host-entry.js`) without composing a DSH profile;
- * the DSH kernel keeps running inside `dsh --profile <profile>`.
- *
- * The launcher (bin/dsh-tui.js, which must not import lib/) repeats the
- * cheap half of this decision inline; the entry decides again here with the
- * profile patch's Config row as well, because only the entry can afford to
- * read it, and hands a DSH-pinned launch on to dsh.
+ * Which process hosts a launch (docs/standalone-host-design.md 5.8): every
+ * kernel runs in this package's entry by default, DSH included unless
+ * `DSH_TUI_HOST_ENTRY_DSH=0` hands it back to `dsh --profile`. The launcher
+ * repeats the cheap half inline; the entry decides again here with the
+ * profile patch's Config row, which only it can afford to read.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { KERNEL_SWITCH_HANDOFF_ENV, hostEntryDshEnabled, parseBackendId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
@@ -37,12 +33,9 @@ export function configuredBackend(profile: string, patchFile: string = profilePa
   return parseBackendChoice(readProfileTuiSettings(patchFile, ['backend'])?.backend)
 }
 
-/** The kernel this launch boots on, by the same ranking as the plugin
- *  (handoff → Config row → DSH_TUI_BACKEND → kernel.json → dsh). Both halves of
- *  the parse are here, as in the boot (`plugin.ts`): the syntax gate first, then
- *  the registry — an id that is syntactically valid but not installed falls back
- *  to dsh exactly like a typo does (P0 D1), so the entry never mounts the
- *  runtime on a kernel this process cannot load. */
+/** The kernel this launch boots on, ranked as in the plugin (handoff → Config
+ *  row → DSH_TUI_BACKEND → kernel.json → dsh). An id that is not installed
+ *  falls back to dsh like a typo, so the entry never mounts an unloadable kernel. */
 export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
   readonly configured?: KernelBackendId
   readonly memoryFile?: string
@@ -60,21 +53,13 @@ export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
 
 /** Where the entry sends a launch (docs/standalone-host-design.md 5.8). */
 export type EntryRoute =
-  /** Run this kernel in this process. `dsh` composes the profile into the
-   *  entry's root afterwards; every other kernel stops after the mount. */
+  /** Run this kernel in this process: DSH composes the profile, the others
+   *  the light profile (given a usable installed dsh). */
   | { readonly kind: 'entry'; readonly kernel: KernelBackendId }
   /** Hand the launch to `dsh --profile <profile>` unchanged. */
   | { readonly kind: 'delegate' }
 
-/**
- * How the entry routes a launch whose kernel {@link entryKernel} already
- * found. Only the DSH kernel composes the profile into the entry's root, and
- * only while Phase 2's default holds (`DSH_TUI_HOST_ENTRY_DSH=0` hands DSH
- * back to `dsh --profile`). Claude and Codex alike mount the runtime on the
- * entry's own root without a profile, so the runtime resolves the kernel
- * itself — deriving it here again would drop the one input only this process
- * reads (the profile patch's Config row).
- */
+/** How the entry routes the kernel {@link entryKernel} found: only DSH can be delegated. */
 export function entryRoute(kernel: KernelBackendId, env: NodeJS.ProcessEnv = process.env): EntryRoute {
   if (kernel !== 'dsh') return { kind: 'entry', kernel }
   return hostEntryDshEnabled(env) ? { kind: 'entry', kernel } : { kind: 'delegate' }

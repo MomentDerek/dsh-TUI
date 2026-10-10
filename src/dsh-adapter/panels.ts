@@ -626,18 +626,12 @@ export class TuiPanelRuntime extends Service {
 
 // ── 启用列表接线（tuiDisplayPrefs 的 panels CSV；无环的 module store）──
 
-/** 本进程内由插件注册产生、且尚未被移除的面板 id。dsh-tui 行 apply 时用
- * 配置初始化启用 CSV；profile 路径上先于它 apply 的插件行已经注册过面板，
- * 直接覆盖会把它们挤出启用列表（入口路径没有这个窗口：TUI 行先 mount，
- * 插件行在其后激活）。 */
+/** 本进程内由插件注册、尚未撤下的面板 id：配置应用时并回启用 CSV，免得
+ * 先于 dsh-tui 行注册的面板被配置覆盖挤掉。 */
 const registeredPanelIds = new Set<string>()
 
-/** 本进程内被**用户**显式移除的已注册面板 id（/settings 的
- * `sidePanel.panels` 勾选，Session 级）。并集在启动窗口之外还会跑：启动期
- * 的 boot settings 应用与之后每次设置编辑都带着持久化文档重新应用同一行
- * 配置，用户层未设 `panels` 时它回落到 schema 给出的 `cordis.yml` 值——
- * 那份 CSV 里没有后来注册的插件面板，光看 CSV 分辨不出「用户移除了它」
- * 与「文档还不知道它」，没有这份记录就会被一次次并回。 */
+/** 用户在 /settings 显式移除的已注册面板 id（Session 级）：配置 CSV 分辨不出
+ * 「用户移除了它」与「文档还不知道它」，没有这份记录并集会把它一次次并回。 */
 const removedPanelIds = new Set<string>()
 
 /** 注册成功后把最终 id 追加进侧栏启用 CSV（已存在则不动）——注册即
@@ -659,25 +653,14 @@ function disablePanelIdInStore(id: string): void {
   applySidePanelPanels(ids.join(','))
 }
 
-/**
- * 用户在 /settings 里勾掉了一些面板，记下「显式移除」：下一次配置应用
- * （boot settings 或任何一次设置编辑）不得把它们并回。只登记用户从启用
- * 列表里删掉的**已注册** id——没注册过的 id 不在并集范围内，无需记账，
- * 也免得用户层一时缺了某个内置面板就永久钉住移除。
- */
+/** 记下用户从启用列表删掉的**已注册** id，之后的配置应用不再并回。 */
 export function noteExplicitPanelRemovals(configured: string | undefined): void {
   if (configured === undefined) return
   const ids = new Set(parseSidePanelIds(configured))
   for (const id of registeredPanelIds) if (!ids.has(id)) removedPanelIds.add(id)
 }
 
-/**
- * dsh-tui 行应用 `sidePanel.panels` 配置（schema 默认值总会给出一个 CSV，
- * 所以这里拿不到「未设置」）。已注册的面板 id 并回列表尾部：两条路径的
- * 结果一致——注册过就一定在启用列表里，除非被 /settings 显式移除或插件
- * 自己撤下。**不分**「启动窗口」与「之后」：启动期的 boot settings 应用
- * 也走这条（同一份 Config CSV），而它同样不该挤掉先注册的面板。
- */
+/** 应用 `sidePanel.panels` 配置，已注册的面板 id 并回尾部（除非被显式移除）。 */
 export function applyConfiguredSidePanelPanels(configured: string | undefined): void {
   const ids = [...parseSidePanelIds(configured ?? getSidePanelPanels())]
   for (const id of registeredPanelIds) {
@@ -688,11 +671,8 @@ export function applyConfiguredSidePanelPanels(configured: string | undefined): 
 }
 
 /**
- * /settings 的设置编辑那一跳（plugin.ts 的 applyDisplay）：先按这份 CSV
- * 结算「显式移除」（并集马上会把它并回，所以必须先记），再走并集。
- * boot settings 那一跳**不得**走这里——那时 CSV 里缺席的已注册 id 只说明
- * 「那一行在本文件写完之后才注册」，不是用户移除（plugin.ts 的
- * settingsEditsLive 闸门）。
+ * /settings 编辑那一跳：先结算显式移除，再走并集。boot settings **不得**走这里——
+ * 那时 CSV 缺席的已注册 id 只说明它注册得晚，不是用户移除。
  */
 export function applySidePanelPanelsFromSettings(configured: string | undefined): void {
   noteExplicitPanelRemovals(configured)

@@ -1,38 +1,11 @@
 /**
- * v0.15 admission loader: the product-side half of the Component identity
- * path (docs/standalone-host-design.md 5.7).
- *
- * The dsh CLI Loader owns discovery and loading — the profile's boundary
- * statement puts it outside this package ("插件的发现、安装与加载由 dsh CLI
- * 负责，加载时强制不在 dsh-TUI"), so the TUI never imports plugin modules
- * itself. What it does own is the identity step. A third-party row's `apply`
- * runs without any manifest: until someone reads its package-root
- * `dsh-plugin.json` and calls `getHostAdmission()`, that activation has no
- * verified Component identity — panels fall back to the `act<N>` namespace
- * (`./panels.ts` pluginIdFor) and every mediated capability refuses the
- * caller (`requireComponentIdentity`: DecisionEvents, storage.local,
- * commands). Verified with the acceptance fixtures, which had to call
- * admission themselves to exercise the path.
- *
- * This module is that loader, and nothing more: it observes the composition
- * for plugin activations, resolves each entry's package root through the
- * Loader's own entry tree, reads the manifest, and admits the activation
- * through the host-only accessor.
- *
- * The result is the load decision this side owns:
- *
- * - admitted -> the verified identity is bound to the plugin's own Cordis
- *   activation (`bindComponentIdentity` -> `bindCallerEffect`), so it lives
- *   and dies with that fiber;
- * - refused -> no identity. The plugin keeps running — loading belongs to the
- *   dsh CLI, and "rejecting" by unloading the row would rewrite the user's
- *   profile (`cordis-plugin-loader` marks an unloaded entry `disabled` and
- *   writes the tree back) — it simply stays outside every mediated
- *   capability, logged once through the debug channel.
- *
- * Listeners and the retry timer are registered with `ctx.effect` on the
- * caller's row, so the existing teardown (and the exit funnel that drives it)
- * releases them.
+ * v0.15 admission loader (docs/standalone-host-design.md 5.7): the dsh CLI
+ * loads plugins; this side owns only the identity step. It watches the
+ * composition for plugin activations, reads each entry's package-root
+ * `dsh-plugin.json` and admits it through `getHostAdmission()`, binding the
+ * identity to the plugin's own fiber. A refused activation keeps running (an
+ * unload would rewrite the user's profile) but stays outside every mediated
+ * capability. Listeners and the retry timer ride the caller's `ctx.effect`.
  */
 
 import { createRequire } from 'node:module'
@@ -45,18 +18,9 @@ import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { getHostAdmission, type TuiPluginHost } from './plugin-host.js'
 import { logForDebugging } from '../utils/debug.js'
 
-/** Retry window for an activation whose admission is not decidable yet: a
- *  required contract only appears on the host descriptor once its source is
- *  live (DecisionEvents needs the channel's dispatch, which on the profile
- *  path exists only after every row applied). Mirrors the acceptance
- *  fixture's own retry loop.
- *
- *  The same bound covers the host-wait path (the row is registered but
- *  `tuiPluginHost` or its admission seam is not up yet): a host that never
- *  arrives (issue #183 — stale patch, host row incompatible) would otherwise
- *  keep `pending` non-empty forever and the flush timer re-arming itself with
- *  no limit. Exhausting it settles the activation as `refused` with a
- *  diagnostic, loud enough to see and bounded enough to stop ticking. */
+/** Retry window for an admission not decidable yet (a required contract or
+ *  the host itself arrives later). Bounded so a host that never arrives
+ *  (issue #183) settles as `refused` with a diagnostic instead of ticking forever. */
 const RETRY_INTERVAL_MS = 200
 const RETRY_ATTEMPTS = 100
 
@@ -89,9 +53,7 @@ export function armAdmissionLoader(
   ctx: Context,
   options: {
     host?: () => TuiPluginHost | undefined
-    /** @internal retry bound; production always uses RETRY_ATTEMPTS. The
-     *  regression drives both exhaustion paths down to a few ticks instead of
-     *  spending the real 20 s window. */
+    /** @internal retry bound for the regression; production uses RETRY_ATTEMPTS. */
     retryAttempts?: number
   } = {},
 ): void {
@@ -125,12 +87,9 @@ export function armAdmissionLoader(
 
   const attempt = (fiber: FiberLike): void => {
     const pluginCtx = fiber.ctx
-    // LOADING (1) is the decisive moment, not ACTIVE (2): Cordis emits the
-    // transition before the row's callback runs, so admitting here means the
-    // plugin already has its identity while its own `apply` registers panels
-    // or subscribes (verified: the panel lands under the manifest id instead
-    // of the `act<N>` fallback). ACTIVE stays as the catch-up path for rows
-    // that activated before this loader was armed.
+    // LOADING (1), not ACTIVE (2): Cordis emits it before the row's callback
+    // runs, so the plugin has its identity while its `apply` registers panels.
+    // ACTIVE is the catch-up path for rows that activated before arming.
     if (!Context.is(pluginCtx) || (fiber.state !== 1 && fiber.state !== 2)) {
       settle(fiber, 'skipped')
       return
@@ -156,10 +115,8 @@ export function armAdmissionLoader(
     if (admission === undefined) {
       const waited = (attempts.get(fiber) ?? 0) + 1
       attempts.set(fiber, waited)
-      // The host has not arrived (or exposes no admission seam). Bounded on
-      // purpose: an absent host is indistinguishable from a late one, so this
-      // waits, then settles and says so instead of re-arming the timer for
-      // ever. Nothing is swallowed — the refusal is logged.
+      // The host has not arrived (an absent host looks like a late one):
+      // bounded wait, then a logged refusal.
       if (waited >= retryAttempts) {
         settle(fiber, 'refused')
         logForDebugging(
@@ -204,10 +161,8 @@ export function armAdmissionLoader(
     if (activation.state !== 1 && activation.state !== 2) return
     const current = state.get(fiber)
     if (current === 'admitted' || current === 'refused') return
-    // Synchronous on purpose: the row's own callback runs one microtask after
-    // LOADING, so a timer or a promise hop here would let `apply` register its
-    // panel before the identity exists (that is exactly the `act<N>`
-    // fallback). Retries are the exception — they go through the timer.
+    // Synchronous on purpose: the row's callback runs one microtask after
+    // LOADING, so any hop here would let `apply` run before the identity exists.
     pending.add(fiber)
     attempt(activation)
     if (pending.has(fiber) && timer === undefined) timer = setTimeout(flush, RETRY_INTERVAL_MS)
@@ -251,19 +206,9 @@ export function armAdmissionLoader(
       }
       consider(fiber)
     }
-    // The composition root, not this row: plugin rows hang off the loader's
-    // context, so their lifecycle events never travel through the TUI row.
-    // `global` keeps child filters from hiding them (// ./host-access.ts).
-    //
-    // Registering that subscription is a host-side act: this function runs
-    // inside the `dsh-tui` row's activation, where the root capability guard
-    // (installed with the first TUI row) refuses `root.events.on` outright —
-    // "dsh-tui: root.events.on is unavailable from a plugin activation".
-    // The listener and its cleanup are the host's own bookkeeping about which
-    // third-party activations exist, not a plugin reaching into the root, so
-    // they run in the host capability (same shape as the kernel refresh in
-    // ./plugin-host.ts). Both the subscription and its disposer are wrapped:
-    // teardown runs from a plugin activation too.
+    // On the composition root (plugin rows' lifecycle events never travel
+    // through the TUI row), `global` so child filters cannot hide them; in the
+    // host capability, since the root guard refuses `root.events.on` here.
     const disposer = withHostRootCapability(
       () => root.on('internal/status', listener, { global: true }) as unknown,
     )
@@ -278,17 +223,8 @@ export function armAdmissionLoader(
 }
 
 /** The package-root `dsh-plugin.json` of the entry that owns `fiber`, if any.
- *
- *  Both loader calls are fences: `locate` can return an entry id this loader
- *  cannot look up, and `EntryTree.resolve` **throws** (`cannot resolve entry
- *  <id>`) instead of returning undefined for anything but a plain top-level
- *  id. A real profile nests rows behind group ids separated by `:`
- *  (`include:<group>:<row>`), and `dsh-tui-agent-preset-registry` is exactly
- *  such a child row — so a bare `resolve(entryId)` took the whole process down
- *  from inside the `internal/status` listener. "Not an entry we can inspect"
- *  and "not a Component" are the same answer here: no manifest, skip. Real
- *  admission failures are unaffected — they surface from `admission.admit`
- *  and still settle as `refused` with a diagnostic. */
+ *  Both loader calls are fenced: `EntryTree.resolve` throws for nested ids
+ *  (`include:<group>:<row>`); an uninspectable entry is simply skipped. */
 function manifestPathOf(loader: LoaderLike, fiber: object): string | undefined {
   let entryId: string | undefined
   try {

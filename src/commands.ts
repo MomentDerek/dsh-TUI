@@ -257,9 +257,7 @@ export function isHiddenCommandName(input: string): boolean {
 
 /**
  * Commands that may run while the channel is not ready (`ChannelUi.ready`
- * false: the standalone entry's startup session is still opening): the
- * purely local ones, which need no session. Everything else is refused like
- * a plain prompt, before dispatch, so the draft stays.
+ * false): the purely local ones. Everything else is refused before dispatch.
  */
 export const BOOT_SAFE_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'exit', 'quit', 'q',
@@ -272,11 +270,7 @@ export const BOOT_SAFE_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'new', 'resume',
 ])
 
-/**
- * Whether a parsed command line may run before the channel is ready.
- * @param name - Command name (no slash).
- * @returns True when {@link BOOT_SAFE_COMMAND_NAMES} lets it through.
- */
+/** Whether a command name (no slash) may run before the channel is ready. */
 export function isBootSafeCommand(name: string): boolean {
   return BOOT_SAFE_COMMAND_NAMES.has(name)
 }

@@ -1,6 +1,6 @@
 /**
  * Opt-in boot timeline for startup measurements
- * (docs/standalone-host-design.md, Phase 0 baseline). With
+ * (docs/standalone-host-design.md). With
  * `DSH_TUI_BOOT_TRACE=<file>` each mark appends one JSON line to that file:
  * `{"mark","ms","at","pid"}`, where `ms` counts from this process's start and
  * `at` is the wall clock (for lining up with the launcher). Otherwise it does

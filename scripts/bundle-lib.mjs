@@ -24,13 +24,8 @@
  * keeps `DSH_TUI_HOST_ENTRY_PATH`, the package `exports` map and every verify
  * import working unchanged.
  *
- * Measured against a same-window baseline the first frame drops ~20% (real
- * HOME: 1064ms → 852ms; isolated without the timing hook: 1555ms → 1223ms).
- * Larger deltas quoted with the ESM load hook installed are inflated — the
- * hook's per-module cost lands on the baseline's 2322 modules much harder than
- * on the bundle's 1705. Shrinking the 7.7MB product does not help either: a
- * comment-stripped 5.25MB build measured *slower* across three same-window
- * rounds, so the cost is the per-module work, not the bytes.
+ * The first frame drops ~20% against a same-window baseline; the cost is the
+ * per-module work, not the bytes (numbers in docs/standalone-host-design.md 6.1).
  *
  * `.d.ts` files are untouched: `tsc` stays the type checker and the published
  * `types` conditions keep pointing at the same paths.

@@ -1,16 +1,9 @@
 /**
  * The `dsh-tui` settings namespace served from the TUI's own document
- * (`~/.dsh-tui/settings.json`, ../tuiSettingsFile.ts;
- * docs/standalone-host-design.md 5.6 (a)) instead of the DSH profile, so both
- * kernels read and write one user layer.
- *
- * The service has the settings-service shape the plugin and the channel
- * already consume (the registered-scope API of older hosts, plus
- * describe/mutate for the `/settings` screen), so neither needs a second
- * code path: `register` hands the plugin a file-backed scope, `describe` and
- * `mutate` serve the screen. Every other namespace goes to `delegate` (the
- * DSH settings service on the profile path; nothing in the standalone
- * entry).
+ * (../tuiSettingsFile.ts, docs/standalone-host-design.md 5.6) instead of the
+ * DSH profile, so every kernel reads and writes one user layer. Same shape as
+ * the settings service the plugin and channel already consume; every other
+ * namespace goes to `delegate` (the host's settings service, when mounted).
  */
 import type Schema from '@deepseek-ai/schemastery'
 import { logForDebugging } from '../utils/debug.js'

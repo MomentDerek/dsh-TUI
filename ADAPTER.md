@@ -83,16 +83,17 @@ manifest 一致,过期即红)。
 (docs/standalone-host-design.md Phase 2),契约单一来源是
 `src/dsh-adapter/host-contract.ts`:
 
-- **依赖**:`@deepseek-ai/dsh` 与 `host-dsh.ts` 取类型的 `dsh-app-boot`、`dsh-cmdline`、
-  `dsh-home-paths`、`dsh-http-proxy`、`dsh-launch-environment`(`HOST_TYPE_PACKAGES`)是
-  optional peer + dev、进 blessed 清单;它们的类型进了发布的 `.d.ts`。运行期**不**从本包解析
+- **依赖**:`host-dsh.ts` 取类型的 `dsh-app-boot`、`dsh-cmdline`、`dsh-home-paths`、
+  `dsh-http-proxy`、`dsh-launch-environment`(`HOST_TYPE_PACKAGES`)是 optional peer + dev、
+  进 blessed 清单。宿主 CLI `@deepseek-ai/dsh` **不是**依赖(它的依赖树是整个 CLI):
+  `host-dsh.ts` 本地声明入口读取的 `profile-boot` 三个导出。运行期**不**从本包解析
   它们:入口按宿主 realpath 加载宿主自己的副本(profile 由宿主 dsh 安装、cordis 必须单实例),
   所以它们也在运行期可缺的集合里(缺席不算 drift)。新包范围只写已核对的 `0.2.0-rc.2`
   (`dsh-home-paths` 沿用家族宽范围)。`cordis-plugin-loader` 只当 `unknown` 用,不声明 peer。
 - **能力探测**:`HOST_MODULES` 列出 8 个宿主模块与入口读取的每个导出。`loadHostDsh` 逐项检查,
   缺模块 / 缺导出即抛出点名原因,入口回退(DSH 内核交给 `dsh --profile`,Claude 内核无宿主解析)
-  并把原因写 stderr 与界面通知。`host-dsh.ts` 用 `Pick<typeof 宿主模块, 契约导出名>` 取类型,
-  契约写了 pinned 宿主不存在的导出时编译失败。
+  并把原因写 stderr 与界面通知。`host-dsh.ts` 用 `Pick<typeof 宿主模块, 契约导出名>` 取类型
+  (`profile-boot` 除外,本地声明),契约写了 pinned 宿主不存在的导出时编译失败。
 - **复刻面**:`HOST_REPLICAS` 列出入口复刻的上游函数体(`createProcessShutdown` 的 shutdown
   半边与超时常量、`createAppReady`、`composeProfile`、`runProfile`、app-boot `boot()`、
   bin.js `reportStartupFailure` 与 `runCli`),`host-replica.snapshot.json` 记录它们在
@@ -100,11 +101,13 @@ manifest 一致,过期即红)。
   信号以同一信号结束而非 0/130、`exitSeam`、`uninstallFailLoud` 在 `processGuardActive()` 后、
   所有组合失败都写报告、`deferRootCapabilityGuard`、`process.report.excludeNetwork`、
   劫持先于 TUI 模块)。
-- **门禁**:`verify:contract` 额外跑 `scripts/verify-host-contract.ts`——用 dev 副本跑生产探测、
-  对逐个缺导出 / 缺模块的假宿主断言点名失败、无头起入口验证回退与原因传递、比对复刻指纹。
-  版本线移动或函数体变化即失败并列出要复核的复刻点;复核、把变化搬进 `host-dsh.ts` 后
-  `node --import tsx/esm scripts/verify-host-contract.ts --snapshot` 重写快照。PATH 上另有
-  不同构建的 `dsh` 时只打警告。
+- **门禁**:`verify:contract` 额外跑 `scripts/verify-host-contract.ts`——对逐个缺导出 / 缺模块
+  的假宿主断言点名失败、无头起入口验证回退与原因传递、核对快照与 `HOST_REPLICA_VERSION` 一致;
+  有已装宿主(PATH 上的 `dsh` 或 `DSH_TUI_CONTRACT_DSH`)时再跑生产探测并比对复刻指纹,
+  CI 无宿主时跳过这两步。已发布版本不可变,指纹只随版本线移动:移动版本线时在装有该版本
+  `dsh` 的机器上复核、把变化搬进 `host-dsh.ts`,再
+  `node --import tsx/esm scripts/verify-host-contract.ts --snapshot` 重写快照。已装宿主是
+  其他版本时指纹差异只打警告。
 - **测试开关**:`DSH_TUI_TEST_FAULT`(`test-faults.ts`)是产品代码里的内部测试开关,只在显式
   设置该环境变量时生效、不进用户文档;`verify:boundary` 保证它只在 `test-faults.ts` 被读取、
   只由入口与 runtime 装配,`verify-entry-process-exit` 断言未设时无效。

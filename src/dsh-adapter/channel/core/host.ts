@@ -21,10 +21,8 @@ import type { ChannelOwner } from '../owner.js'
 import type { ChannelState } from '../types.js'
 
 /**
- * The host services a channel composition reads. Each one is looked up per
- * read, not at construction: with the in-process DSH kernel the screen
- * mounts first and the profile's `tui*` rows arrive with the composition
- * afterwards (docs/standalone-host-design.md 5.1, single root).
+ * The host services a channel composition reads, looked up per read: the
+ * profile's `tui*` rows can compose after the mount (docs/standalone-host-design.md 5.1).
  */
 export interface CoreHost {
   readonly adapterRuntime: AdapterRuntimeOptions
@@ -93,10 +91,8 @@ export function resolveCoreHost(host: ChannelHost, owner: Pick<ChannelOwner, 'ow
 }
 
 /**
- * Re-render on settings-section and plugin-scene changes (owner-scoped).
- * The subscriptions follow the runtimes: when the host reports a service
- * change (a row composed after the mount, or reloaded), each one re-binds to
- * whatever runtime is current.
+ * Re-render on settings-section and plugin-scene changes (owner-scoped),
+ * re-binding when the host reports a service change.
  */
 export function startHostSubscriptions(
   host: Pick<CoreHost, 'settingsSectionsRuntime' | 'sceneRuntime'>,

@@ -204,9 +204,8 @@ Cordis config
   - 新增此类引用时两组声明都要加、范围保持一致（verify:manifest-deps 门禁会校验）。
   - 仅测试/脚本使用的框架包（如 dsh-settings、dsh-tools、dsh-session-persistence-*）
     只需 dev 依赖，不要为它们声明 peer。
-  - 宿主 CLI `@deepseek-ai/dsh` 与独立入口取类型的宿主包（`src/dsh-adapter/host-contract.ts`
-    的 `HOST_TYPE_PACKAGES`）同样是 optional peer + dev：只为类型、能力探测与复刻指纹，
-    运行期由 `host-dsh.ts` 按宿主 realpath 加载宿主副本，绝不从本包解析（见 ADAPTER.md
+  - 独立入口取类型的宿主包（`src/dsh-adapter/host-contract.ts` 的 `HOST_TYPE_PACKAGES`）
+    同样是 optional peer + dev，只为类型；宿主 CLI `@deepseek-ai/dsh` 不是依赖。运行期由 `host-dsh.ts` 按宿主 realpath 加载宿主副本，绝不从本包解析（见 ADAPTER.md
     「独立入口的宿主契约」）。
   - `dsh-working-activity` 等非宿主包仍是 runtime dependency。
   - 历史例外已消除：`dsh-working-activity@0.2.4` 及更早版本会经其 runtime
@@ -224,19 +223,10 @@ Cordis config
 - 该命令先删除整个 `lib/`，再用 `tsc -p tsconfig.json` 把 `src/` 输出到
   `lib/types/`，随后由 `scripts/bundle-lib.mjs` **就地打包** `lib/types`，最后
   运行适配边界、上游契约与 patch surface 门禁。
-- `lib/types` 是打包产物，不是 `tsc` 的原始输出：`tsc` 生成约 870 个模块文件，
-  入口在首帧前要把它们全部解析、链接并执行一遍，这段开销占首帧的大头（既不是
-  读盘也不是编译）。打包把每个**能从外部按路径加载**的模块登记为 rollup 入口
-  （`package.json` 的 `exports` 全部子路径、启动器与 `scripts/` 里出现的
-  `lib/types/**.js` 路径、`ink/sixel-worker.js`、`dsh-adapter/host-entry.js`），
-  共享模块抽进 `lib/types/chunks/`，被折叠进 chunk 的原文件随即删除——残留文件
-  会让同一条加载路径上出现第二份模块实例，也就是两个 Cordis 单例、插件行不
-  激活。入口自身留在原路径（共享时成为转发文件），所以 `DSH_TUI_HOST_ENTRY_PATH`、
-  `exports` 映射与按路径 import 的回归脚本都不受影响；`import.meta.url` 由打包
-  插件改写成**原模块**的路径，位置推算（spec 根探测、随包 preset、companion
-  素材、`resolveOwnBin`）语义不变。`lib/types/bundle-manifest.json` 记录产物
-  清单，`verify:lib-bundle` 据此拦住「`tsc` 之后漏跑打包」的半成品树。
-  `.d.ts` 仍由 `tsc` 负责，`types` 条件指向的路径不变。
+- `lib/types` 是打包产物，不是 `tsc` 的原始输出：每个能从外部**按路径**加载的模块都是
+  rollup 入口，共享模块抽进 `lib/types/chunks/`；新增按路径加载的 `lib/types/**.js` 时它会被
+  自动登记，`verify:lib-bundle` 拦住漏跑打包的半成品树。原理与测量见
+  [独立宿主设计 6.1](standalone-host-design.md) 与 `scripts/bundle-lib.mjs` 头注释。
 - 编译前的 vendor 构建（`vendor/dsh-std`、`vendor/mathjax-tex-svg`）由
   `scripts/build-vendor.mjs` 负责：输入（子模块源码、锁文件、构建命令、Node
   版本）与产物文件逐字节都和上次成功构建一致时跳过，否则照常重建；

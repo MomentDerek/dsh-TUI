@@ -1,27 +1,14 @@
 #!/usr/bin/env node
 /**
- * 轻量 profile 的**裁剪表 ↔ patch 行 id** 静态对口门禁。
+ * 轻量 profile 的裁剪表 ↔ patch 行 id 静态对口门禁。
  *
- * `src/dsh-adapter/lite-profile.ts` 的 `LITE_PROFILE_ROW_DISABLES` 是一张常量表，
- * 每条的 `id` 必须是 `cordis.patch.yml` 里真实存在的 Loader 行 id（`insert` 的
- * `id`）。这张表的失效方式是**静默**的：patch 里的 id 被改名后，表里那条 disable
- * 指向一个不存在的行，被裁掉的服务没人管，于是那一行重新 pending —— 而
- * `verify:patch-surface`（只看 insert/override 快照）与 `verify:build` 都不会红。
- * 现有的漂移检测在 `scripts/probe-lite-profile-claude.mjs`（跑真实组合、逐条对
- * 实测 pending），但它是一次几十秒的加载型探针；本脚本补一条**秒级、纯静态**的
- * 断言，让改名在最近的关口就红。
- *
- * 解析方式与 `scripts/verify-patch-surface.ts` 的 `parsePatch` 同口径：`yaml` 包 +
- * 「顶层是 list，`insert: [...]` 里的每项取 `id`」，不自造 YAML 解析器（该文件
- * 是仓库里 patch 语义的唯一权威读法）。
- *
- * 断言：
- *   1. 表非空且 id 不重复（空表/重复表本身就让裁剪静默失效）；
- *   2. 表里每个 id 都能在 `cordis.patch.yml` 的 insert id 集合里找到；
- *   3. 每条 `missing` 非空（missing 为空 = 这条 disable 的依据没了，行该被重新评估）。
+ * `LITE_PROFILE_ROW_DISABLES`（src/dsh-adapter/lite-profile.ts）的每个 `id` 必须是
+ * `cordis.patch.yml` 里真实的 insert 行 id：改名后 disable 静默失效、被裁服务重新
+ * pending，而 `verify:patch-surface` / `verify:build` 都不红。断言：表非空且无重复；
+ * 每个 id 都在 patch 的 insert id 里；每条 `missing` 非空。解析口径同
+ * `scripts/verify-patch-surface.ts` 的 `parsePatch`。
  *
  * 跑法：node --import tsx/esm scripts/verify-lite-profile-rows.mjs
- * 退出码：0 = 全部对上；1 = 有 id 在 patch 里找不到（逐条打印）。
  */
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -65,7 +52,7 @@ for (const row of LITE_PROFILE_ROW_DISABLES) {
 if (failures.length > 0) {
   console.error(`lite-profile-rows: ${failures.length} problem(s)`)
   for (const line of failures) console.error(`  - ${line}`)
-  console.error('Renamed an insert id in cordis.patch.yml? Update LITE_PROFILE_ROW_DISABLES in src/dsh-adapter/lite-profile.ts to match (and re-run scripts/probe-lite-profile-claude.mjs for the measured pending rows).')
+  console.error('Renamed an insert id in cordis.patch.yml? Update LITE_PROFILE_ROW_DISABLES in src/dsh-adapter/lite-profile.ts to match (and re-run the plugins-light-claude case of scripts/accept-host-entry.mjs).')
   process.exit(1)
 }
 console.log(`lite-profile-rows OK (${LITE_PROFILE_ROW_DISABLES.length} rows, all present among ${insertIds.size} patch inserts)`)
