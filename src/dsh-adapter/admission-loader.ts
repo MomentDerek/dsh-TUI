@@ -178,12 +178,7 @@ export function armAdmissionLoader(
   const seed = (): void => {
     if (typeof loader.entries !== 'function') return
     try {
-      for (const entry of loader.entries()) {
-        const fiber = entry.fiber
-        if (fiber === undefined || fiber === null) continue
-        if (fiber.state !== 1 && fiber.state !== 2) continue
-        consider(fiber)
-      }
+      for (const entry of loader.entries()) consider(entry.fiber)
     } catch (error) {
       logForDebugging(`dsh-tui: admission loader could not walk the entry tree (${messageOf(error)})`)
     }
@@ -191,12 +186,11 @@ export function armAdmissionLoader(
 
   ctx.effect(() => {
     const listener = (fiber: unknown): void => {
-      if (typeof fiber !== 'object' || fiber === null) return
-      const activation = fiber as FiberLike
       // A fiber that leaves the running states loses the identity with its
       // own effects (restart): forget the pass so a re-activation is admitted
       // again.
-      if (activation.state === 5 || activation.state === 4 || activation.state === 3) {
+      const fiberState = (fiber as FiberLike | null | undefined)?.state
+      if (typeof fiber === 'object' && fiber !== null && (fiberState === 5 || fiberState === 4 || fiberState === 3)) {
         state.delete(fiber)
         pending.delete(fiber)
         attempts.delete(fiber)
@@ -224,16 +218,10 @@ export function armAdmissionLoader(
  *  Both loader calls are fenced: `EntryTree.resolve` throws for nested ids
  *  (`include:<group>:<row>`); an uninspectable entry is simply skipped. */
 function manifestPathOf(loader: LoaderLike, fiber: object): string | undefined {
-  let entryId: string | undefined
-  try {
-    entryId = loader.locate?.(fiber)
-  } catch {
-    return undefined
-  }
-  if (entryId === undefined) return undefined
   let entry: LoaderEntryLike | undefined
   try {
-    entry = loader.resolve?.(entryId)
+    const entryId = loader.locate?.(fiber)
+    entry = entryId === undefined ? undefined : loader.resolve?.(entryId)
   } catch {
     return undefined
   }
