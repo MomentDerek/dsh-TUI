@@ -1,6 +1,6 @@
 /** Registry bridge regression, including relocated assets through the real Loader/Registry/Include. Run after build. */
 import assert from 'node:assert/strict'
-import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
@@ -95,18 +95,13 @@ const relocatedRoot = mkdtempSync(join(checkoutRoot, '.preset-path # % 中文-')
 const runtime = new Context()
 let mounted = 0
 try {
-  // The packaged layout: lib/types is bundled in place (scripts/bundle-lib.mjs),
-  // so the modules link chunks/ and resolve their own location from the
-  // nearest dsh-tui package.json — give the relocated copy all three.
-  const modules = join(relocatedRoot, 'lib', 'types', 'dsh-adapter')
+  const modules = join(relocatedRoot, 'src', 'dsh-adapter')
   const assets = join(relocatedRoot, 'presets', 'liangshen')
   mkdirSync(modules, { recursive: true })
   mkdirSync(assets, { recursive: true })
   for (const name of ['bundled-presets.js', 'packaged-presets.js']) {
     copyFileSync(new URL(`../lib/types/dsh-adapter/${name}`, import.meta.url), join(modules, name))
   }
-  cpSync(fileURLToPath(new URL('../lib/types/chunks', import.meta.url)), join(relocatedRoot, 'lib', 'types', 'chunks'), { recursive: true })
-  writeFileSync(join(relocatedRoot, 'package.json'), JSON.stringify({ name: '@deepseek-harness-tui/dsh-tui', type: 'module' }))
   // Different metadata makes a hard-coded copy fail, including name and order.
   const relocatedMetadata = { name: 'Relocated 梁神', description: 'Metadata from preset.yml', order: 17 }
   writeFileSync(join(assets, 'preset.yml'), JSON.stringify(relocatedMetadata))

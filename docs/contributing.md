@@ -221,12 +221,7 @@ Cordis config
 常规构建与类型检查关口：`pnpm build`。
 
 - 该命令先删除整个 `lib/`，再用 `tsc -p tsconfig.json` 把 `src/` 输出到
-  `lib/types/`，随后由 `scripts/bundle-lib.mjs` **就地打包** `lib/types`，最后
-  运行适配边界、上游契约与 patch surface 门禁。
-- `lib/types` 是打包产物，不是 `tsc` 的原始输出：每个能从外部**按路径**加载的模块都是
-  rollup 入口，共享模块抽进 `lib/types/chunks/`；新增按路径加载的 `lib/types/**.js` 时它会被
-  自动登记，`verify:lib-bundle` 拦住漏跑打包的半成品树。原理与测量见
-  [独立宿主设计 6.1](standalone-host-design.md) 与 `scripts/bundle-lib.mjs` 头注释。
+  `lib/types/`，最后运行适配边界、上游契约与 patch surface 门禁。
 - 编译前的 vendor 构建（`vendor/dsh-std`、`vendor/mathjax-tex-svg`）由
   `scripts/build-vendor.mjs` 负责：输入（子模块源码、锁文件、构建命令、Node
   版本）与产物文件逐字节都和上次成功构建一致时跳过，否则照常重建；
@@ -492,10 +487,6 @@ TypeScript 源的脚本在头部声明 `node --import tsx/esm <script>` 形式�
 - 保持帧输出缓冲、常规运行安静。TUI 活动期间不要加 `console.log` 或 stdout
   诊断。用 opt-in 的 stderr/调试路径（如 `DSH_TUI_DEBUG`）或既有
   `DSH_TUI_RENDER_LOG` 帧捕获。
-- 产品代码里的测试专用开关只有 `DSH_TUI_TEST_FAULT`（`src/dsh-adapter/test-faults.ts`，
-  给 `accept-host-entry` 注入崩溃/`appExit`）：只在显式设置该变量时生效，属内部开关，
-  不写进 README / configuration；`verify:boundary` 限定它只在该文件读取、只由入口与
-  runtime 装配。不要新增同类开关，确有必要时按同样方式登记。
 - 在成功、错误、中断与收尾时都保持 raw 模式、光标、alt-screen、同步输出、
   鼠标、焦点与终端查询的清理。
 - 避免渲染期无界集合或每 token/每帧分配。流式会话长命，本仓库对先前的 OOM

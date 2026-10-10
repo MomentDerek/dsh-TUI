@@ -303,8 +303,8 @@ app-boot `composeEntries` 读（约 85ms），或随设置迁移一并解决（5
 - **接线。**组合挂在首帧之后：入口等 `HostComposeSeam.firstFrameFlushed` 再组合，组合成功（已
   审计）后调用 `composeSucceeded`，运行时据此重读挂载时取值的接缝（主题 host、扩展 store、toast
   sink），并把本包的 `/settings` 分节迁到组合的 sections 服务（`rehomeSettingsSection`）。
-- **验收。**Claude 内核用隔离 profile + 本仓 fixtures（`theme` / `panels` / `guard`）跑
-  `accept-host-entry.mjs` 的 `plugins-light-claude`：面板在屏且落在插件自己的身份下、`tui/input`
+- **验收。**Claude 内核用隔离 profile + 测试插件（主题、面板、决策拦截）在真实终端中验收：
+  面板在屏且落在插件自己的身份下、`tui/input`
   与 `tui/session-switch` 拦截生效、panel budget 与 storage 按身份计入、运行时主题在组合结算后上屏、
   `/settings` 出现 `dsh-tui` 分节。**Codex 内核走同一条组合路径但未验收。**主题的判据是
   `DSH_TUI_THEME`（明确意愿）：仅 `~/.dsh-tui/theme.json` 的持久化偏好不算锁，claude / codex 品牌
@@ -362,20 +362,11 @@ IPC 协议，维护成本比手写镜像更高。
   删掉 `~/.dsh-tui` 的探针（缓存与 `theme.json` 一并被擦），不宜与 warm 读数比较。走
   `dsh --profile` 的那条路径（`DSH_TUI_HOST_ENTRY=0` / `DSH_TUI_HOST_ENTRY_DSH=0`）不受益；
   `startDshSession` 的其他 spawn（安全模式重试等）是否同样无缓存待复核。
-- **模块图打包**（`scripts/bundle-lib.mjs`）。首帧前的瓶颈是**模块解析与链接的次数**，不是 I/O
-  （887 个模块读取合计 72ms）也不是编译。`pnpm compile` 在 `tsc` 之后就地打包 `lib/types`：每个能
-  从外部**按路径**加载的模块（`exports` 全部子路径、启动器与 `scripts/` 引用的 `lib/types/**.js`、
-  `ink/sixel-worker.js`、`host-entry.js`）都是 rollup 入口，共享模块抽进 `lib/types/chunks/`，被
-  折叠的原文件删除；`import.meta.url` 改写为原模块路径，`bundle-manifest.json` 记录产物形状，
-  `verify:lib-bundle` 拦住漏跑打包的半成品树。**入口与插件行必须共享同一份 chunk**，否则同一批
-  模块有两份实例，表现为 `startup failed: 1 required plugin did not activate`。收益：真实 HOME 下
-  render-done 约 −20%（1064 → 852ms），只动首帧段、不改善「可输入」；ESM load hook 下的差值按模块
-  数放大，不可当真；产物体积不是成本所在（去注释的更小产物反而更慢），再压只能 minify，代价是
-  崩溃栈失去行号。
 - **首帧图瘦身。**`lodash-es` 改按路径导入（`verify-source-hygiene` 拦 barrel 导入）约 −126ms
   （16/16 同号；首帧前模块 1238 → 641）；去掉启动器在 spawn entry 前的同步 `dsh --version` 预检约
   −46ms；更新检查让出首帧 + `semver` 按路径导入，渲染段约 −26ms。
-- **未做。**`/migrate` 懒加载（估 −50~70ms）、首帧前 `zod`（经 `dsh-user-questions` 同步挂载）、
+- **未做。**模块图打包（首帧前的瓶颈是模块解析与链接的次数，不是 I/O；就地打包 `lib/types` 实测
+  render-done 约 −20%，另行提交）、`/migrate` 懒加载（估 −50~70ms）、首帧前 `zod`（经 `dsh-user-questions` 同步挂载）、
   首帧不依赖宿主准备段（约 135ms，结构性改动）。冻结前画出「正在启动 DSH」的静态状态。
 
 ### 6.2 其他
@@ -417,7 +408,7 @@ PR #1216 已关闭、分支作废：它要换来的快速启动由 Phase 1/2 的
 | 2 | 设置存储 | 5.6 (a)：`~/.dsh-tui/settings.json` + 一次性导入 |
 | 2a | 分期 | TuiHost 推迟到 Phase 2；单根后不再建 |
 | 3 | 根模型 | D1「单根」：入口自建运行时，DSH 内核也组合进同一个根；D2（DSH 保留预载）作废 |
-| 4 | `dsh --profile dsh-tui` 直启 | 继续支持；没有专项实现与验收，现有覆盖仅启动器的 `DSH_TUI_HOST_ENTRY=0` 回退（`verify-launcher.mjs`、`accept-host-entry.mjs` 的 `dsh-entry-off`） |
+| 4 | `dsh --profile dsh-tui` 直启 | 继续支持；没有专项实现与验收，现有覆盖仅启动器的 `DSH_TUI_HOST_ENTRY=0` 回退（`verify-launcher.mjs`） |
 | 5 | PR #1216 | 关闭、分支作废（第 8 节） |
 | 6 | Claude 内核的第三方插件扩展 | 缺失不可接受；轻量 profile 纳入 Phase 2，形状为往入口裸根里装配（5.7） |
 | 7 | `@deepseek-ai/dsh` | 加入 blessed 包与 peer 依赖 |

@@ -27,8 +27,7 @@
  * through `disposeRootSettled` with the composition tracked it settles every
  * time.
  *
- * Plus the test-only fault switch parser (src/dsh-adapter/test-faults.ts) and
- * the source wiring the acceptance cases rely on.
+ * Plus the source wiring these cases rely on.
  *
  * Run: node --import tsx/esm scripts/verify-entry-process-exit.ts
  */
@@ -38,7 +37,6 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { readTestFault } from '../src/dsh-adapter/test-faults.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 let passed = 0
@@ -244,12 +242,6 @@ esac
   check('delegate: a numeric dsh exit is passed on', exited.code === 7 && exited.signal === null, exited)
   const forwarded = await runDelegate('wait', child => { child.kill('SIGTERM') })
   check('delegate: SIGTERM to the entry alone reaches dsh, whose exit the entry mirrors', forwarded.out.includes('dsh-got-term') && forwarded.code === 0, forwarded)
-
-  // ── the test-only fault switch ───────────────────────────────────────
-  check('DSH_TUI_TEST_FAULT unset: no fault', readTestFault({}) === undefined)
-  check('render@1500 parses', JSON.stringify(readTestFault({ DSH_TUI_TEST_FAULT: 'render@1500' })) === JSON.stringify({ kind: 'render', delayMs: 1500 }))
-  check('app-exit:3 parses with the default delay', JSON.stringify(readTestFault({ DSH_TUI_TEST_FAULT: 'app-exit:3' })) === JSON.stringify({ kind: 'app-exit', code: 3, delayMs: 4000 }))
-  check('an unknown fault is ignored', readTestFault({ DSH_TUI_TEST_FAULT: 'boom' }) === undefined)
 
   // ── wiring ─────────────────────────────────────────────────────────────
   const entry = readFileSync(join(here, '../src/dsh-adapter/host-entry.ts'), 'utf8')

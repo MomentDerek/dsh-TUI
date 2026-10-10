@@ -19,7 +19,6 @@
 | `native.codex` | 只允许 `src/backends/codex/` 内访问 |
 | `'@deepseek-ai/…'` 字符串字面量 | 只在 `src/dsh-adapter/` 内出现(运行期拼出来交给 `createRequire` / `import()` 的说明符也算) |
 | 宿主专属模块(`host-contract.ts` 的 `HOST_MODULES`,cordis 除外,含 `@deepseek-ai/dsh` 本身) | 任何地方不得值 import;只由 `src/dsh-adapter/host-dsh.ts` 按宿主 realpath 动态加载,说明符只写在 `host-contract.ts`;`host-dsh.ts` 对 `@deepseek-ai/*` 只能 `import type`;`host-contract.ts` 只给 `host-dsh.ts` 与 `contract.ts` import |
-| `DSH_TUI_TEST_FAULT` | 测试专用开关,只在 `src/dsh-adapter/test-faults.ts` 出现,只由 `host-entry.ts` / `plugin.ts` 装配(见下文「独立入口的宿主契约」) |
 
 ### 后端 manifest
 
@@ -108,9 +107,6 @@ manifest 一致,过期即红)。
   `dsh` 的机器上复核、把变化搬进 `host-dsh.ts`,再
   `node --import tsx/esm scripts/verify-host-contract.ts --snapshot` 重写快照。已装宿主是
   其他版本时指纹差异只打警告。
-- **测试开关**:`DSH_TUI_TEST_FAULT`(`test-faults.ts`)是产品代码里的内部测试开关,只在显式
-  设置该环境变量时生效、不进用户文档;`verify:boundary` 保证它只在 `test-faults.ts` 被读取、
-  只由入口与 runtime 装配,`verify-entry-process-exit` 断言未设时无效。
 
 ## Patch Surface
 

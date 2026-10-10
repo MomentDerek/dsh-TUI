@@ -52,7 +52,7 @@ for (const row of LITE_PROFILE_ROW_DISABLES) {
 if (failures.length > 0) {
   console.error(`lite-profile-rows: ${failures.length} problem(s)`)
   for (const line of failures) console.error(`  - ${line}`)
-  console.error('Renamed an insert id in cordis.patch.yml? Update LITE_PROFILE_ROW_DISABLES in src/dsh-adapter/lite-profile.ts to match (and re-run the plugins-light-claude case of scripts/accept-host-entry.mjs).')
+  console.error('Renamed an insert id in cordis.patch.yml? Update LITE_PROFILE_ROW_DISABLES in src/dsh-adapter/lite-profile.ts to match.')
   process.exit(1)
 }
 console.log(`lite-profile-rows OK (${LITE_PROFILE_ROW_DISABLES.length} rows, all present among ${insertIds.size} patch inserts)`)

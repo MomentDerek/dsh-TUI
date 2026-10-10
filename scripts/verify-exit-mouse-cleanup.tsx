@@ -209,7 +209,7 @@ const sleep = (ms: number): Promise<void> =>
 
 // ---------------------------------------------------------------------------
 // 4. A useInput that mounts after detachForShutdown (a late React commit
-// while the exit funnel settles, found by the Phase 1 tui-test acceptance)
+// while the exit funnel settles)
 // must not re-enter raw mode: the funnel's DBP/DFE are already written.
 // ---------------------------------------------------------------------------
 {

@@ -297,15 +297,8 @@ pnpm build
 ```
 
 - This removes the complete `lib/` directory, runs `tsc -p tsconfig.json` to
-  emit `src/` into `lib/types/`, then bundles `lib/types` **in place** with
-  `scripts/bundle-lib.mjs`, and finally checks the adapter boundary, upstream
+  emit `src/` into `lib/types/`, and then checks the adapter boundary, upstream
   contract, and patch surface.
-- `lib/types` is a bundle, not the raw `tsc` output: every module something
-  outside the bundle loads **by path** is a rollup entry and shared code lands
-  in `lib/types/chunks/`; `verify:lib-bundle` rejects a tree where `tsc` ran
-  without the bundle step. Rationale and measurements live in
-  [standalone host design 6.1](standalone-host-design.md) and the header of
-  `scripts/bundle-lib.mjs`.
 - The vendored builds that compile depends on (`vendor/dsh-std`,
   `vendor/mathjax-tex-svg`) go through `scripts/build-vendor.mjs`: a target is
   skipped only when its inputs (submodule sources, lockfiles, build command,
@@ -660,12 +653,6 @@ guide owns detailed contracts such as the toolchain and verification matrix.
 - Keep frame output buffered and normal runs quiet. Do not add `console.log` or
   stdout diagnostics while the TUI is active. Use an opt-in stderr/debug path
   such as `DSH_TUI_DEBUG`, or the existing `DSH_TUI_RENDER_LOG` frame capture.
-- The only test switch in product code is `DSH_TUI_TEST_FAULT`
-  (`src/dsh-adapter/test-faults.ts`, crash / `appExit` injection for
-  `accept-host-entry`): it acts only when that variable is set, is internal and stays
-  out of README / configuration docs; `verify:boundary` keeps it read in that file only
-  and armed only by the entry and the runtime. Do not add more; if one is unavoidable,
-  register it the same way.
 - Preserve raw-mode, cursor, alternate-screen, synchronized-output, mouse,
   focus, and terminal-query cleanup on success, error, interrupt, and teardown.
 - Avoid render-time unbounded collections or per-token/per-frame allocations.

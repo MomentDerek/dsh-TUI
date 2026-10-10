@@ -16,33 +16,16 @@
  * 运行：pnpm build && node scripts/verify-workspaces-degrade.mjs
  */
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join, relative } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createLocalWorkspaceRuntime } from '../lib/types/dsh-adapter/workspaces.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = rel => readFileSync(join(root, rel), 'utf8')
-// lib/types is bundled in place (scripts/bundle-lib.mjs): a module's code may
-// sit in the chunks it imports. Read the module together with every file it
-// reaches through relative imports.
-const readLinked = rel => {
-  const seen = new Set()
-  const queue = [join(root, rel)]
-  let text = ''
-  while (queue.length > 0) {
-    const file = queue.shift()
-    if (seen.has(file) || !existsSync(file)) continue
-    seen.add(file)
-    const source = readFileSync(file, 'utf8')
-    text += `\n/* ${relative(root, file)} */\n${source}`
-    for (const [, spec] of source.matchAll(/(?:from|import)\s*['"](\.{1,2}\/[^'"]+\.js)['"]/g)) queue.push(join(dirname(file), spec))
-  }
-  return text
-}
 
 const entry = read('lib/types/dsh-adapter/index.js')
-const injectMatch = entry.match(/\bconst inject = \[([^\]]*)\]/)
+const injectMatch = entry.match(/export const inject = \[([^\]]*)\]/)
 assert.ok(injectMatch, 'compiled entry exports an inject list')
 assert.match(injectMatch[1], /'agents'/, 'code-level inject keeps agents')
 assert.doesNotMatch(
@@ -54,14 +37,14 @@ assert.doesNotMatch(
 // Phase 4a: the channel's host seams (the workspace runtime among them) are
 // resolved by the core for every composition (channel/core/host.ts).
 for (const rel of ['lib/types/dsh-adapter/plugin.js', 'lib/types/dsh-adapter/channel/core/host.js']) {
-  const compiled = readLinked(rel)
+  const compiled = read(rel)
   assert.match(compiled, /createLocalWorkspaceRuntime/, `${rel} carries the local-only fallback`)
   assert.match(compiled, /get\('tuiWorkspaces'\)/, `${rel} reads the service optionally via ctx.get`)
 }
 
-const plugin = readLinked('lib/types/dsh-adapter/plugin.js')
+const plugin = read('lib/types/dsh-adapter/plugin.js')
 assert.equal(
-  [...plugin.matchAll(/dsh-tui: tuiWorkspaces service is not mounted/g)].length,
+  [...plugin.matchAll(/tuiWorkspaces service is not mounted/g)].length,
   1,
   'the degraded-boot warning exists exactly once',
 )

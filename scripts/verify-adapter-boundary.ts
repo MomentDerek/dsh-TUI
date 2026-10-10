@@ -58,9 +58,6 @@
  *   src/dsh-adapter/host-dsh.ts    every @deepseek-ai/* import type-only
  *   src/dsh-adapter/host-contract.ts imported only by host-dsh.ts and
  *                  contract.ts
- *   DSH_TUI_TEST_FAULT (test-only switch, src/dsh-adapter/test-faults.ts)
- *                  named only there, and test-faults.ts imported only by
- *                  host-entry.ts and plugin.ts
  *
  * Plain fs + regex scan, no TypeScript program: it runs inside `verify:build`
  * on every build and must not depend on the compiled tree. Only real module
@@ -148,8 +145,6 @@ const HOST_CONTRACT = 'dsh-adapter/host-contract.ts'
 const HOST_CONTRACT_IMPORTERS = [HOST_DSH, 'dsh-adapter/contract.ts']
 /** Host-only literals contract.ts may carry (a manifest read, not a module load). */
 const HOST_LITERAL_EXCEPTIONS = new Set(['dsh-adapter/contract.ts @deepseek-ai/dsh/package.json'])
-const TEST_FAULTS = 'dsh-adapter/test-faults.ts'
-const TEST_FAULT_IMPORTERS = ['dsh-adapter/host-entry.ts', 'dsh-adapter/plugin.ts']
 const STRING_LITERAL = /(['"`])(@deepseek-ai\/[^'"`\s]*)\1/gu
 
 /** The host-only specifiers, read from the contract's source text (the gate
@@ -438,9 +433,6 @@ for (const file of files) {
     if (target === HOST_CONTRACT && !HOST_CONTRACT_IMPORTERS.includes(path)) {
       violations.push(`${where} imports src/${HOST_CONTRACT}; only ${HOST_CONTRACT_IMPORTERS.map(item => `src/${item}`).join(' and ')} read the host contract`)
     }
-    if (target === TEST_FAULTS && !TEST_FAULT_IMPORTERS.includes(path)) {
-      violations.push(`${where} imports src/${TEST_FAULTS}; the test-only fault switch is armed only by ${TEST_FAULT_IMPORTERS.map(item => `src/${item}`).join(' and ')}`)
-    }
   }
   // A type-only import's specifier is a type, not a load: the rules above own it.
   const typeSpecifiers = new Set(refs.filter(ref => ref.typeOnly).map(ref => `${ref.line} ${ref.specifier}`))
@@ -453,9 +445,6 @@ for (const file of files) {
     } else if (isHostOnly(literal) && path !== HOST_CONTRACT && !HOST_LITERAL_EXCEPTIONS.has(`${path} ${literal}`)) {
       violations.push(`${where} names the host-only '${literal}'; only src/${HOST_CONTRACT} lists host modules (src/${HOST_DSH} loads them from it)`)
     }
-  }
-  if (path !== TEST_FAULTS && /\bDSH_TUI_TEST_FAULT\b/u.test(code)) {
-    violations.push(`${path}:${lineAt(code, code.search(/\bDSH_TUI_TEST_FAULT\b/u))} names DSH_TUI_TEST_FAULT; the test-only switch is read only in src/${TEST_FAULTS}`)
   }
 
   for (const pattern of NATIVE_PATTERNS) {

@@ -102,7 +102,6 @@ import { CHANNEL_UI_LIFETIME_ENDED } from '../adapter/channel/ui.js'
 import { markBoot } from '../utils/bootTrace.js'
 import type { EntrySlot, HostComposeSeam } from './entry-slot.js'
 import { TERMINATION_SIGNALS, dieBySignal, type ExitRequest, type ExitRequestAnswer, type ProcessExitSeam, type TerminationSignal } from './process-exit.js'
-import { RenderTestFault, readTestFault } from './test-faults.js'
 import { StartupOpenError, type ChannelStartup } from './channel/state.js'
 
 /**
@@ -2416,11 +2415,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // the screen border). It must sit INSIDE AlternateScreen: the alt-screen
   // box sizes itself to the real terminal rows, while PageMargin reports
   // content-box dimensions to everything below it.
-  const renderFault = readTestFault()
   const buildTree = (): React.ReactElement => {
-    const chat = renderFault?.kind === 'render'
-      ? React.createElement(React.Fragment, null, buildChat(), React.createElement(RenderTestFault, { delayMs: renderFault.delayMs }))
-      : buildChat()
+    const chat = buildChat()
     const marginChildren = bootedFullscreen
       ? React.createElement(AlternateScreen, null, React.createElement(PageMargin, null, chat))
       : React.createElement(PageMargin, null, chat)

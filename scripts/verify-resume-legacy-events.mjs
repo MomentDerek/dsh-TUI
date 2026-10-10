@@ -296,15 +296,18 @@ writeFileSync(
 writeFileSync(join(validatorPkg, 'lib', 'index.js'), 'export {}\n')
 
 // The unit under test: the COMPILED compat module, placed in the profile
-// tree with its relative-import layout intact. lib/types is bundled in place
-// (scripts/bundle-lib.mjs), so the module links shared chunks/ whose names
-// move with every build: mirror every .js under lib/types.
+// tree with its relative-import layout intact.
 const tuiPkg = join(profileTree, 'node_modules', '@deepseek-harness-tui', 'dsh-tui')
 const profileCompat = join(tuiPkg, 'lib', 'types', 'dsh-adapter', 'compat')
+mkdirSync(profileCompat, { recursive: true })
+mkdirSync(join(tuiPkg, 'lib', 'types', 'utils'), { recursive: true })
 cpSync(
-  join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'types'),
-  join(tuiPkg, 'lib', 'types'),
-  { recursive: true, filter: source => !/\.(?:d\.ts|map)$/.test(source) },
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'types', 'dsh-adapter', 'compat', 'sessionLog.js'),
+  join(profileCompat, 'sessionLog.js'),
+)
+cpSync(
+  join(dirname(fileURLToPath(import.meta.url)), '..', 'lib', 'types', 'utils', 'paths.js'),
+  join(tuiPkg, 'lib', 'types', 'utils', 'paths.js'),
 )
 writeFileSync(join(tuiPkg, 'package.json'), JSON.stringify({ name: '@deepseek-harness-tui/dsh-tui', version: '0.0.0-fixture', type: 'module' }))
 

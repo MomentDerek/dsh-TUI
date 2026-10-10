@@ -68,7 +68,7 @@ mkdirSync(targetProfile, { recursive: true, mode: 0o700 })
 if (existsSync(join(profile, 'cordis.yml'))) cpSync(join(profile, 'cordis.yml'), join(targetProfile, 'cordis.yml'))
 // dsh-purge (when the profile bundles it) rewrites the GLOBAL dsh bin.js on
 // start and breaks every dsh launch; the copy leaves it out, bundle and
-// patch rows alike (scripts/lib/isolated-profile.mjs does the same).
+// patch rows alike.
 if (existsSync(join(profile, 'cordis.patch.yml'))) {
   const rows = parseYaml(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8'), { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: source => ({ js: source }) }] }) ?? []
   const kept = Array.isArray(rows) ? rows.filter(row => !String(row?.id ?? '').startsWith('dsh-purge')) : rows

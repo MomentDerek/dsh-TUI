@@ -148,13 +148,12 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
       return
     }
   }
-  const [{ Config }, { apply, handleStartupError }, { publishEntrySlot }, { deferRootCapabilityGuard, armRootCapabilityGuard }, { processGuardActive }, { armProcessTestFault, readTestFault }, { logRestartEvent }] = await Promise.all([
+  const [{ Config }, { apply, handleStartupError }, { publishEntrySlot }, { deferRootCapabilityGuard, armRootCapabilityGuard }, { processGuardActive }, { logRestartEvent }] = await Promise.all([
     import('./index.js'),
     import('./plugin.js'),
     import('./entry-slot.js'),
     import('./host-access.js'),
     import('../ink/update-overflow-guard.js'),
-    import('./test-faults.js'),
     import('../update.js'),
   ])
   markBoot('entry-modules')
@@ -196,7 +195,6 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // One owner of a fatal error: with the TUI's process guard up, DSH's
   // fail-loud would exit 1 before the exit funnel ran.
   if (root !== undefined && processGuardActive()) root.uninstallFailLoud()
-  armProcessTestFault(readTestFault(), () => ctx.get('appExit' as never) as ((code: number) => void) | undefined)
   // 3a. Non-DSH kernels: compose the light profile (design 5.7) through the
   // seam. A failure ends the process loudly: a kernel whose plugin ecosystem
   // did not come up must not pass as a boot.

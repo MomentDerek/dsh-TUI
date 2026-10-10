@@ -523,7 +523,7 @@ const GROUPS = {
     ["verify-workspaces-degrade", ['node', 'scripts/verify-workspaces-degrade.mjs']],
 // 轻量 profile 裁剪表 ↔ patch 行 id 的口对（秒级静态）：`LITE_PROFILE_ROW_DISABLES`
 // 的 id 被改名后 disable 会指向不存在的行，被裁服务重新 pending 而 patch-surface/
-// verify:build 都不红，这条在最近的关口拦住。加载型覆盖见 accept-host-entry 的 plugins-light-claude。
+// verify:build 都不红，这条在最近的关口拦住。
     ["verify-lite-profile-rows", ['node', '--import', 'tsx/esm', 'scripts/verify-lite-profile-rows.mjs']],
 // 插件扩展面回归（dsh-tui-extensions）：
 //  - events：真 cordis 总线 + 真 channel——tui/input 改写/取消/崩溃

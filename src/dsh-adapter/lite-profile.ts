@@ -5,9 +5,9 @@
  * `tui*` services and third-party plugin rows exist without DSH. One root
  * rather than a second one: a second root's rows stay pending unless every
  * entry service is copied over, and its effects need a second dispose point.
- * The row table below is guarded by scripts/verify-lite-profile-rows.mjs and
- * exercised by scripts/accept-host-entry.mjs (plugins-light-claude). Where the
- * plugin registry belongs is still open (issue #1247), so row ids stay data.
+ * The row table below is guarded by scripts/verify-lite-profile-rows.mjs.
+ * Where the plugin registry belongs is still open (issue #1247), so row ids
+ * stay data.
  * Pure data and functions: no `@deepseek-ai/*` import, no I/O.
  */
 
