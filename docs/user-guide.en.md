@@ -439,7 +439,11 @@ dsh-TUI ships no generic skills; `/skills` browses skills DSH discovers, and a d
 | Exit | `/exit` (or `/quit` `/q`) | double-press `Ctrl+C` or `Ctrl+D` also exits when idle; mid-work, press `Ctrl+C`/`Ctrl+D` again to force quit when the interrupt won't settle |
 
 Command-line resume: `dsh-tui --resume` (last session) / `dsh-tui --resume <id>` (specific session).
-`-c` / `--continue` are equivalent.
+`-c` / `--continue` are equivalent. Startup recovery only ever targets **the backend this
+launch selected**: a backend with no last session, or a derived target belonging to a
+different backend, refuses with a clear error and exit code 1 — no silent cold start, no new
+session (safe mode's "retry normal startup" degrades to a warning plus a cold start, see the
+[README](../README.md)).
 
 ### 4.2 Time-travel rewind (double-press Esc)
 
@@ -477,7 +481,7 @@ Full-screen view of the whole session timeline (doesn't pollute scrollback); key
 - `/model`: selector. **Switching = fork the session** (history kept, only routing changes, the old session stays in `/resume`);
   persisted to `~/.dsh-tui/model.json` and reused by the next launch (a `provider`/`model`
   pair in cordis.yml/profile is only the first-run deployment default).
-- DSH provider tabs start with **Recently used**, and `Tab` / `Shift+Tab` switch providers; Codex and Claude show their catalogs directly without these tabs. All backends use `↑/↓` to select a model, `←/→` to adjust its effort, `Enter` to apply both, and `Esc` to cancel the draft. Click the available tabs, models, effort levels, or select/cancel hints; the wheel moves model focus.
+- DSH provider tabs start with **Recently used**, and `Tab` / `Shift+Tab` switch providers; Codex and Claude show their catalogs directly without these tabs. All backends use `↑/↓` to select a model, `←/→` to adjust its effort, `Enter` to apply both, and `Esc` to cancel the draft. Click the available tabs, models, effort levels, or select/cancel hints; clicking an effort level immediately applies the focused model and that effort and closes the picker. The wheel moves model focus.
 - Switching is rejected mid-turn.
 - `/preset` options: `standard` (default full features), `ptc`, `minimal` (the kernel's Minimal preset: one persistent-shell tool only, no compaction, no plan mode — and therefore no compaction and no tool-result pruning, so a long session can hit the context limit and `/compact` plus questions are unavailable; Help and `/` completion mark the command, and entering the preset says so once),
   `cordis`, `liangshen` (Liangshen mode).

@@ -15,7 +15,7 @@ import { createTuiSettingsService, type DelegateSettings } from './tui-settings.
 import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 import { kernelEntriesOf } from '../components/kernelCatalog.js'
 import { openBackendStartup, prepareBackendStartup, probeKernels, installSurfaceFor } from './backends.js'
-import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
+import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, listOfferedBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
 import { formatSessionRef } from '../agent/refs.js'
 import type { AgentEvent } from '../agent/events.js'
 import type { AgentSession } from '../agent/session.js'
@@ -48,12 +48,12 @@ import { createFreshAgent, isUnstoredFreshSession } from './fresh-agent.js'
 import { ensurePackagedPresets } from './packaged-presets.js'
 import { registerBundledPresets } from './bundled-presets.js'
 import { ensureLegacySessionEventTypes, snapshotLiveSessionEvents } from './compat/index.js'
-import { clearResumeTarget, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
+import { clearResumeTarget, resumeTargetFromArgv, stripResumeArgs, writeResumeTarget } from '../sessionHistory.js'
 import { cmdlineArgsOf, initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
-import { DSH_BACKEND_ID, HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
+import { DSH_BACKEND_ID, HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
@@ -592,11 +592,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // exactly like an unknown value did before the set was open — dsh plus a
   // warning, never a crashed boot. `envKnown` carries that into the resolver for
   // the one source that arrives raw; the other three are parsed above/beside.
+  const configuredBackend = parseBackendChoice(config.backend)
   const rememberedBackend = readKernelPrefs().backend
   const entryKernel = runtimeOptions.entryKernel
   const backendChoice: KernelBackendId = entryKernel ?? (dshInEntry ? DSH_BACKEND_ID : resolveRememberedBackend({
     ...(handoffBackend === undefined ? {} : { handoff: handoffBackend }),
-    configured: parseBackendChoice(config.backend),
+    configured: configuredBackend,
     envRaw: rawBackend,
     envKnown: isRegisteredBackend,
     memory: isRegisteredBackend(rememberedBackend) ? rememberedBackend : undefined,
@@ -611,35 +612,75 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // elsewhere — an uninstalled plugin id falls back to dsh (P0 D1), an unset
   // DSH_TUI_BACKEND follows the remembered kernel instead. Handing it over either
   // fails or resumes an unrelated session that happens to share the id, so it is
-  // revoked rather than carried across (PR #1380 review R2).
+  // revoked rather than carried across (PR #1380 review R2) — and a revocation is
+  // a refusal, not a cold start (roadmap §6 item 11, B-2a).
   const resumeBackendRaw = process.env[RESUME_BACKEND_ENV]
   if (resumeBackendRaw !== undefined) delete process.env[RESUME_BACKEND_ENV]
+  // A safe-mode retry carries a licence to survive a revoked target (the launcher
+  // sets RESUME_RETRY_ENV; see resolveResumeTarget). Read and deleted right away,
+  // like the mark above: no child may inherit it.
+  const resumeRetry = process.env[RESUME_RETRY_ENV] !== undefined
+  delete process.env[RESUME_RETRY_ENV]
   const resumeTarget = resolveResumeTarget({
     sessionId: launchSessionId,
     sourceBackend: parseBackendId(resumeBackendRaw),
     backendChoice,
+    retry: resumeRetry,
   })
-  const effectiveSessionId = resumeTarget.sessionId
+  const effectiveSessionId = resumeTarget.kind === 'usable' ? resumeTarget.sessionId : undefined
   // The non-DSH path below opens `backendChoice`'s own session — a revoked target
   // must not reach it either.
-  const configuredSessionId = resumeTarget.revokedFrom === undefined ? config.sessionId : undefined
-  if (resumeTarget.revokedFrom !== undefined) {
-    ctx.logger.warn(
-      `dsh-tui: dropping the resume target that backend "${resumeTarget.revokedFrom}" left behind; this boot runs on "${backendChoice}". ` +
-      'A bare --resume request uses this backend\'s own last session; an explicit id is passed through.',
-    )
+  const configuredSessionId = resumeTarget.kind === 'revoked' ? undefined : config.sessionId
+  // Safe-mode retries replay the original argv. Revocation must also remove its
+  // resume flags, or either startup path can reopen the replacement backend's
+  // own last session after promising a cold start. Prompt parsing keeps raw argv.
+  const startupArgv = resumeTarget.kind === 'revoked'
+    ? stripResumeArgs(cmdlineArgs ?? process.argv.slice(2))
+    : cmdlineArgs ?? process.argv.slice(2)
+  if (resumeTarget.kind === 'revoked') {
+    // Fail closed (roadmap §6 item 11): the target belongs to another backend, so
+    // this boot neither carries it over nor quietly starts a session nobody asked
+    // for. A fatal refusal is thrown into the startup funnel, which reports it on
+    // stderr and exits non-zero after restoring the terminal; the only tolerated
+    // case is the safe-mode retry, whose target comes from last-run.json and whose
+    // failure would close the user's last way back (RESUME_RETRY_ENV).
+    // The advice must be executable (PR #1449 review R2): when the source backend
+    // is not registered here, `--backend <from> --resume` would hit this same
+    // refusal, so that branch says the backend is unavailable instead. The other
+    // branch names the id (`kernelId`), never the display label — `--backend`
+    // takes an id.
+    const refusalKey = !resumeTarget.fatal
+      ? 'resume-target-revoked-retry'
+      : isRegisteredBackend(resumeTarget.from) ? 'resume-target-revoked' : 'resume-target-revoked-uninstalled'
+    const refusal = t(refusalKey, {
+      from: resumeTarget.from,
+      kernel: backendLabel(backendChoice),
+      kernelId: backendChoice,
+    })
+    if (resumeTarget.fatal) throw new Error(refusal)
+    ctx.logger.warn(refusal)
   }
-  if (rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
+  // Config and handoff outrank env: an ignored env value cannot invalidate the
+  // selected backend's resume target or claim that this boot fell back to DSH.
+  if (handoffBackend === undefined && configuredBackend === undefined
+    && rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
     // Two cases, two sentences: a typo is not an uninstalled plugin (P0 D1).
     const installed = listBackends().map(entry => entry.manifest.id).join(', ')
-    // Report the target DSH will actually use: an explicit id, or its own marker
-    // when a bare resume request survived the fallback.
-    const resumeClause = effectiveSessionId === undefined
-      ? ''
-      : ` The resume target "${effectiveSessionId}" stays as it is; dsh will be asked to resume it.`
-    ctx.logger.warn((isBackendIdSyntax(rawBackendGiven)
+    // The plain fallback (no resume request) keeps P0 D1's shape: dsh plus a
+    // warning, exit code 0. With a resume target in hand it must not: dsh would
+    // be asked to open an id that belongs to the backend the user named, which
+    // either fails or resumes a session of another backend (roadmap §6 item 11).
+    // Nothing is resumed, nothing is created — the boot stops here instead.
+    if (effectiveSessionId !== undefined) {
+      throw new Error(t('resume-backend-unavailable', {
+        backend: rawBackendGiven,
+        session: effectiveSessionId,
+        installed,
+      }))
+    }
+    ctx.logger.warn(isBackendIdSyntax(rawBackendGiven)
       ? `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" names no installed backend (registered: ${installed}); starting on dsh`
-      : `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" is not a valid backend id (lowercase letters, digits and dashes); starting on dsh`) + resumeClause)
+      : `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" is not a valid backend id (lowercase letters, digits and dashes); starting on dsh`)
   }
   /**
    * Whether a Config row or DSH_TUI_BACKEND overrides the selector's
@@ -688,7 +729,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           stderrReporter.push(line)
         },
         ...(configuredSessionId === undefined ? {} : { configuredSessionId }),
-        argv: cmdlineArgs ?? process.argv.slice(2),
+        argv: startupArgv,
       }
       // One load per launch, shared by the deferred path (the entry mounts
       // between `prepare` and `start`) and the eager one.
@@ -717,7 +758,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // Resolve a surviving bare request on the backend that actually opened.
   // This also covers a remembered backend whose startup fell back to DSH.
   const bootSessionId = backendStart === undefined
-    ? effectiveSessionId ?? resumeTargetFromArgv(cmdlineArgs ?? process.argv.slice(2))
+    ? effectiveSessionId ?? resumeTargetFromArgv(startupArgv)
     : backendStart.resumedSessionId
   // The backend session (and its child process) belongs to this fiber until the
   // channel adopts it: a boot that throws before then disposes the fiber's
@@ -2298,8 +2339,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // /channel: restart with a new session after the connection changed.
     onRestartFreshSession: restartFreshSession,
     // The backend registry as the picker sees it: the UI takes data, not the
-    // registry (P0). dsh first, then the manifest order — picker order.
-    kernelEntries: kernelEntriesOf(listBackends()),
+    // registry (P0). dsh first, then the manifest order — picker order. Entries
+    // that registered without an admission are not offered (B-2).
+    kernelEntries: kernelEntriesOf(listOfferedBackends()),
     onProbeKernels: () => probeKernels(ctx, sessionCwd),
     // The kernel picker's SDK install wizard (a dim row's Enter): the surface of
     // whichever row the user picked, looked up by id — the manifest says what to
@@ -2555,7 +2597,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           refreshLastRunRecord()
           return createDshSession(dshCtx, { agent: created.agent, handle: created.handle })
         }
-        const rowArgs = cmdlineArgsOf(dshCtx) ?? process.argv.slice(2)
         // A provider-URI workspace target, resolvable now that providers exist.
         let startupMeta = meta
         if (deferredWorkspace !== undefined) {
@@ -2564,7 +2605,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           if (target === undefined) throw new Error(unsupportedWorkspaceTarget(deferredWorkspace))
           startupMeta = { cwd: target.cwd }
         }
-        const opened = await openOnRow(rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs), startupMeta)
+        // A revoked target (the safe-mode retry's warning path) cold-starts here too.
+        const rowSessionId = resumeTarget.kind === 'revoked'
+          ? undefined
+          : rowConfig.sessionId ?? resumeTargetFromArgv(cmdlineArgsOf(dshCtx) ?? process.argv.slice(2))
+        const opened = await openOnRow(rowSessionId, startupMeta)
         const session = createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle })
         // The composition failed while this opened: close the unadoptable session.
         if (compositionFailed) {
