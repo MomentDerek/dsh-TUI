@@ -14,6 +14,11 @@ export type CursorDeclaration = {
   readonly node: DOMElement
   /** Show the native caret; omitted for accessibility-only focus anchors. */
   readonly visible?: boolean
+  /**
+   * Show the native cursor when this focus anchor moves, then hide it after
+   * 500 ms at rest. Text inputs omit this so their caret remains visible.
+   */
+  readonly hideOnIdle?: boolean
 }
 
 /**
