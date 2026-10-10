@@ -2219,6 +2219,9 @@ export function restartArgv(input: {
   readonly kernel: KernelBackendId | undefined
   /** Whether this is a kernel switch (resume flags are dropped). */
   readonly switching: boolean
+  /** The replacement opens a fresh session (no session id to hand over, e.g.
+   *  after /new): inherited resume flags name the previous one and are dropped. */
+  readonly fresh?: boolean
   readonly hostEntry: string | undefined
   /** The DSH kernel runs in the entry as well (unless `DSH_TUI_HOST_ENTRY_DSH=0`). */
   readonly dshInEntry?: boolean
@@ -2226,8 +2229,9 @@ export function restartArgv(input: {
   // A kernel switch must not hand the replacement THIS kernel's resume
   // flags: an inherited `--resume <id>` in argv would send the new kernel
   // looking for a session that belongs to the kernel it just left — the
-  // same reason DSH_TUI_RESUME_SESSION is deleted below.
-  const strip = (args: readonly string[]): string[] => input.switching ? stripResumeArgs(args) : [...args]
+  // same reason DSH_TUI_RESUME_SESSION is deleted below. A fresh replacement
+  // drops them too: after /new they name the previous session.
+  const strip = (args: readonly string[]): string[] => input.switching || input.fresh === true ? stripResumeArgs(args) : [...args]
   const script = input.argv[1]
   const viaEntry = input.kernel === 'claude' || (input.kernel === 'dsh' && input.dshInEntry === true)
   if (viaEntry && input.hostEntry !== undefined && script !== input.hostEntry) {
@@ -2248,6 +2252,7 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
     argv: process.argv,
     kernel: options.backend ?? options.kernel,
     switching: options.backend !== undefined,
+    fresh: sessionId === '',
     hostEntry: hostEntry === undefined || hostEntry === '' || hostEntryDisabled() ? undefined : hostEntry,
     dshInEntry: hostEntryDshEnabled(),
   })

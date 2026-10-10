@@ -115,6 +115,10 @@ check('with DSH in the entry (the default) a DSH relaunch under dsh moves to the
   JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
 check('with DSH in the entry the entry relaunches itself on DSH',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, 'foo']))
+check('a fresh /restart (after /new) on the entry drops the inherited resume flags',
+  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, fresh: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
+check('a fresh /restart under dsh drops them too',
+  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, fresh: true, hostEntry: undefined })) === JSON.stringify(stripResumeArgs(dshArgv.slice(1))))
 const noSeparator = ['/node', '/dsh/lib/bin.js', '--profile', 'dsh-tui']
 check('a dsh argv without app args gives the entry none',
   JSON.stringify(restartArgv({ execArgv: [], argv: noSeparator, kernel: 'claude', switching: true, hostEntry: entry })) === JSON.stringify([entry]))
