@@ -132,7 +132,7 @@ const env: NodeJS.ProcessEnv = {
   DSH_HOME: join(entryHome, '.dsh'),
   DSH_TUI_BACKEND: 'dsh',
 }
-for (const name of ['DSH_TUI_HOST_ENTRY', 'DSH_TUI_HOST_ENTRY_DSH', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HANDOFF_ACK_FD', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_HOST_NOTICE', 'DSH_TUI_PROFILE']) delete env[name]
+for (const name of ['DSH_TUI_HOST_ENTRY', 'DSH_TUI_BACKEND_HANDOFF', 'DSH_TUI_HANDOFF_ACK_FD', 'DSH_TUI_RESTART_CHILD', 'DSH_TUI_HOST_NOTICE', 'DSH_TUI_PROFILE']) delete env[name]
 const entry = spawnSync(process.execPath, ['--import', 'tsx/esm', join(repo, 'src', 'dsh-adapter', 'host-entry.ts'), 'hello'], { cwd: repo, env, encoding: 'utf8', timeout: 60_000 })
 const delegated = existsSync(record) ? JSON.parse(readFileSync(record, 'utf8')) as { args: string[]; notice?: string } : undefined
 check('the entry hands a host it cannot use to `dsh --profile`', JSON.stringify(delegated?.args) === JSON.stringify(['--profile', 'dsh-tui', '--', 'hello']), { delegated, stderr: entry.stderr })

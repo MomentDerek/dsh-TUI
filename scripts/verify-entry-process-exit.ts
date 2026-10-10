@@ -192,7 +192,6 @@ esac
         HOME: sandbox,
         DSH_HOME: join(sandbox, '.dsh'),
         DSH_TUI_BACKEND: 'dsh',
-        DSH_TUI_HOST_ENTRY_DSH: '0',
         FAKE_DSH: fake,
       },
     })
@@ -246,9 +245,7 @@ esac
   // `runInEntry` must get the kernel the entry found, not a literal 'dsh'
   // (that would pin the runtime's backend and degrade Codex to DSH).
   check('the entry runs the kernel its route found, not a literal backend (only DSH then publishes the slot)',
-    /const route = entryRoute\(entryKernel\(process\.env, \{ configured: configuredBackend\(profile\) \}\)\)/.test(entry)
-    && /if \(route\.kind === 'entry'\) await runInEntry\(route\.kernel\)/.test(entry)
-    && /else delegateToDsh\(\)/.test(entry)
+    /await runInEntry\(entryKernel\(process\.env, \{ configured: configuredBackend\(profile\) \}\)\)/.test(entry)
     && /const slot = kernel === 'dsh' && root !== undefined \? publishEntrySlot\(\) : undefined/.test(entry))
   check('/restart and /update supervise their replacement through the seam',
     /const supervision = superviseReplacement\(exitSeam, options\)/.test(plugin) && /superviseReplacement\(exitSeam, \{\}\)/.test(plugin))

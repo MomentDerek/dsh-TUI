@@ -133,21 +133,12 @@ export const KERNEL_SWITCH_HANDOFF_ENV = 'DSH_TUI_BACKEND_HANDOFF'
  * `DSH_TUI_HOST_ENTRY=0` keeps every kernel on `dsh --profile`.
  */
 export const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
-/** The entry's path, set by the launcher: a replacement on Claude, or on DSH
- *  while it runs in the entry, relaunches through it (src/update.ts restartArgv). */
+/** The entry's path, set by the launcher: a replacement on Claude or DSH
+ *  relaunches through it (src/update.ts restartArgv). */
 export const HOST_ENTRY_PATH_ENV = 'DSH_TUI_HOST_ENTRY_PATH'
 
 export function hostEntryDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[HOST_ENTRY_ENV] === '0'
-}
-
-/** `DSH_TUI_HOST_ENTRY_DSH=0` hands only DSH launches back to `dsh --profile`;
- *  the other kernels stay in the entry. */
-export const HOST_ENTRY_DSH_ENV = 'DSH_TUI_HOST_ENTRY_DSH'
-
-/** Whether the DSH kernel runs in the host entry (the default). */
-export function hostEntryDshEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env[HOST_ENTRY_DSH_ENV] !== '0' && !hostEntryDisabled(env)
 }
 
 /** Why the entry could not use the installed dsh; set by the entry, read and

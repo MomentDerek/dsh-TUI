@@ -33,7 +33,7 @@ dsh-tui（全局启动器）
 
 界面要等整个 profile 组合完、`dsh-tui` 行 apply、后端打开之后才出现（约 2 秒）。
 
-现状（单根）见第 3 节：首帧不再等任何后端；`DSH_TUI_HOST_ENTRY=0` / `DSH_TUI_HOST_ENTRY_DSH=0`
+现状（单根）见第 3 节：首帧不再等任何后端；`DSH_TUI_HOST_ENTRY=0`
 退回上面的链（5.8）。
 
 ### 1.2 为什么不沿用预载
@@ -78,7 +78,7 @@ bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析——保留�
          └─ 本包运行时（plugin.ts 的 apply）挂在这个根上，deferBackendOpen
               └─ createCoreChannel(cordisChannelHost(ctx), pendingSession, …) ──► render(Chat)
                                                                                   ← 首帧在这里
-       内核判定（hostEntryRoute.entryRoute）：
+       内核判定（hostEntryRoute.entryKernel）：
          ├─ claude / codex：不组合完整 profile；首帧后组合轻量 profile（5.7），
          │     运行时自己解析内核并打开后端
          │     └─ channel.adoptStartup(session)                          可发送
@@ -303,7 +303,7 @@ IPC 协议，维护成本比手写镜像更高。
 
 - **compile cache。**启动器给 entry 子进程注入 `NODE_COMPILE_CACHE=<数据目录>/compile-cache`
   （纯 env 注入；用户已设值与 `NODE_DISABLE_COMPILE_CACHE` 照旧生效，`/restart`、`/kernel` 随 env
-  继承）。冷热差约 190ms；走 `dsh --profile` 的路径（`DSH_TUI_HOST_ENTRY=0` / `DSH_TUI_HOST_ENTRY_DSH=0`）不受益。
+  继承）。冷热差约 190ms；走 `dsh --profile` 的路径（`DSH_TUI_HOST_ENTRY=0`）不受益。
 - **首帧图瘦身。**`lodash-es` 改按路径导入（`verify-source-hygiene` 拦 barrel 导入）约 −126ms；启动器的
   `dsh --version` 预检改为异步、不占关键路径约 −46ms；更新检查让出首帧 + `semver` 按路径导入约 −26ms。
 - **未做。**模块图打包（瓶颈是模块解析与链接次数；就地打包 `lib/types` 实测 render-done 约 −20%，

@@ -1,16 +1,12 @@
 /**
- * Which process hosts a launch (docs/standalone-host-design.md): every
- * kernel runs in this package's entry by default, DSH included unless
- * `DSH_TUI_HOST_ENTRY_DSH=0` hands it back to `dsh --profile`. The launcher
- * repeats the cheap half inline; the entry decides again here with the
- * profile patch's Config row, which only it can afford to read.
+ * Which kernel the package's entry boots (docs/standalone-host-design.md).
+ * The launcher repeats the cheap half inline; the entry decides again here
+ * with the profile patch's Config row, which only it can afford to read.
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { KERNEL_SWITCH_HANDOFF_ENV, hostEntryDshEnabled, parseBackendId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
 import { isRegisteredBackend, parseBackendChoice } from './dsh-adapter/backend-registry.js'
 import { profilePatchPath, readProfileTuiSettings } from './tuiSettingsFile.js'
-
-export { hostEntryDshEnabled } from './kernelPrefs.js'
 
 /** The profile the launcher would have started (`dsh --profile <name>`). */
 export const HOST_PROFILE_ENV = 'DSH_TUI_PROFILE'
@@ -48,18 +44,4 @@ export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
     envKnown: isRegisteredBackend,
     memory: isRegisteredBackend(memory) ? memory : undefined,
   })
-}
-
-/** Where the entry sends a launch. */
-export type EntryRoute =
-  /** Run this kernel in this process: DSH composes the profile, the others
-   *  the light profile (given a usable installed dsh). */
-  | { readonly kind: 'entry'; readonly kernel: KernelBackendId }
-  /** Hand the launch to `dsh --profile <profile>` unchanged. */
-  | { readonly kind: 'delegate' }
-
-/** Only DSH can be delegated. */
-export function entryRoute(kernel: KernelBackendId, env: NodeJS.ProcessEnv = process.env): EntryRoute {
-  if (kernel !== 'dsh') return { kind: 'entry', kernel }
-  return hostEntryDshEnabled(env) ? { kind: 'entry', kernel } : { kind: 'delegate' }
 }

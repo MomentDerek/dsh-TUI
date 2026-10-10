@@ -12,7 +12,7 @@ import valid from 'semver/functions/valid.js'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
 import { stripResumeArgs } from './sessionHistory.js'
-import { HOST_ENTRY_PATH_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, hostEntryDisabled, hostEntryDshEnabled, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
+import { HOST_ENTRY_PATH_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, hostEntryDisabled, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
 import { classifyReplacementOutcome, formatHandoffNotice, handoffEventTag, writeHandoffStage } from './handoffEvents.js'
 import { HANDOFF_ACK_FD_ENV, HANDOFF_ATTEMPT_ENV, HANDOFF_SCREEN_ENV, parseHandoffAckLine } from './handoffAck.js'
 import { DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from './ink/termio/csi.js'
@@ -2200,9 +2200,8 @@ export function restartChildEnv(
 
 /**
  * The replacement's argv after `process.execPath`, pure: the same script and
- * arguments again, except that a replacement on Claude (or on DSH with
- * `dshInEntry`) started outside the entry goes to `hostEntry` with the app
- * arguments.
+ * arguments again, except that a replacement on Claude or DSH started outside
+ * the entry goes to `hostEntry` with the app arguments.
  */
 export function restartArgv(input: {
   readonly execArgv: readonly string[]
@@ -2215,14 +2214,12 @@ export function restartArgv(input: {
    *  after /new): inherited resume flags name the previous one and are dropped. */
   readonly fresh?: boolean
   readonly hostEntry: string | undefined
-  /** The DSH kernel runs in the entry as well (unless `DSH_TUI_HOST_ENTRY_DSH=0`). */
-  readonly dshInEntry?: boolean
 }): string[] {
   // Inherited resume flags name a session of the kernel being left (a switch)
   // or the previous session (a fresh replacement after /new).
   const strip = (args: readonly string[]): string[] => input.switching || input.fresh === true ? stripResumeArgs(args) : [...args]
   const script = input.argv[1]
-  const viaEntry = input.kernel === 'claude' || (input.kernel === 'dsh' && input.dshInEntry === true)
+  const viaEntry = input.kernel === 'claude' || input.kernel === 'dsh'
   if (viaEntry && input.hostEntry !== undefined && script !== input.hostEntry) {
     // The app arguments: everything after dsh's own `--`.
     const separator = input.argv.indexOf('--', 2)
@@ -2243,7 +2240,6 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
     switching: options.backend !== undefined,
     fresh: sessionId === '',
     hostEntry: hostEntry === undefined || hostEntry === '' || hostEntryDisabled() ? undefined : hostEntry,
-    dshInEntry: hostEntryDshEnabled(),
   })
   logRestartEvent(`${tag}: spawning replacement`, {
     node: process.execPath,

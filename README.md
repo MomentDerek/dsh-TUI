@@ -219,8 +219,7 @@ including clicking outside it on the launchpad, cancels a pending installation.
   session has opened. You can type right away; Enter sends once it is ready
   (local commands such as `/help` and `/kernel` run meanwhile). Third-party
   plugins (themes, panels, decision hooks) join once the screen is up. The DSH kernel starts from the same entry: its screen
-  appears first and says "Starting DSH…" while DSH loads in the same process
-  (`DSH_TUI_HOST_ENTRY_DSH=0` hands it back to `dsh --profile`).
+  appears first and says "Starting DSH…" while DSH loads in the same process.
   `DSH_TUI_HOST_ENTRY=0` restores the old launch path for both kernels.
 
 Details and known limitations: [Claude backend](docs/claude-backend.en.md).

@@ -1,6 +1,6 @@
 /**
  * The host entry's pure routing parts: `entryKernel`, `configuredBackend`,
- * `restartArgv`, `entryRoute`, the DSH-in-entry switches, `findHostDsh`
+ * `restartArgv`, `findHostDsh`
  * across npm/pnpm/volta/wrapper shims, and launcher-path expansion under
  * `path.win32` rules (no Windows needed). The launcher half (bin/dsh-tui.js)
  * is in verify-launcher.mjs.
@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, win32 } from 'node:path'
-import { configuredBackend, entryKernel, entryRoute, hostEntryDshEnabled } from '../src/hostEntryRoute.js'
+import { configuredBackend, entryKernel } from '../src/hostEntryRoute.js'
 import { findHostDsh, launcherScriptPaths, resolveLauncherPath } from '../src/dsh-adapter/host-dsh.js'
 import { stripResumeArgs } from '../src/sessionHistory.js'
 import { restartArgv } from '../src/update.js'
@@ -45,21 +45,6 @@ check('an uninstalled kernel.json entry does not decide the boot either',
 check('the Config row beats DSH_TUI_BACKEND', entryKernel({ DSH_TUI_BACKEND: 'claude' }, { configured: 'dsh', memoryFile: noMemory }) === 'dsh')
 check('a handoff beats the Config row', entryKernel({ DSH_TUI_BACKEND_HANDOFF: 'claude' }, { configured: 'dsh', memoryFile: noMemory }) === 'claude')
 
-// ── entryRoute: what the entry runs itself, and what it hands to dsh ──
-/** The kernel the entry would run in process, or 'delegate' for `dsh --profile`. */
-const routed = (kernel: KernelBackendId, env: NodeJS.ProcessEnv = {}): KernelBackendId | 'delegate' => {
-  const route = entryRoute(kernel, env)
-  return route.kind === 'entry' ? route.kernel : 'delegate'
-}
-check('claude runs in the entry, without the profile', routed('claude') === 'claude')
-check('codex runs in the entry the same way, on its own kernel', routed('codex') === 'codex')
-check('dsh composes the profile into the entry by default', routed('dsh') === 'dsh')
-check('DSH_TUI_HOST_ENTRY_DSH=0 hands dsh to dsh --profile', routed('dsh', { DSH_TUI_HOST_ENTRY_DSH: '0' }) === 'delegate')
-check('DSH_TUI_HOST_ENTRY=0 hands dsh on as well', routed('dsh', { DSH_TUI_HOST_ENTRY: '0' }) === 'delegate')
-check('the DSH switches leave claude and codex in the entry',
-  routed('claude', { DSH_TUI_HOST_ENTRY_DSH: '0', DSH_TUI_HOST_ENTRY: '0' }) === 'claude'
-  && routed('codex', { DSH_TUI_HOST_ENTRY_DSH: '0' }) === 'codex')
-
 // ── configuredBackend ─────────────────────────────────────────────────
 const patch = join(root, 'cordis.patch.yml')
 check('no patch file: no pin', configuredBackend('x', patch) === undefined)
@@ -82,17 +67,13 @@ check('a /restart on Claude under dsh moves to the entry, resume kept',
   JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'claude', switching: false, hostEntry: entry })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
 check('without the entry path the dsh argv is replayed as before',
   JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'claude', switching: true, hostEntry: undefined })) === JSON.stringify(stripResumeArgs(dshArgv.slice(1))))
-check('a DSH relaunch stays on dsh',
-  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry })) === JSON.stringify(dshArgv.slice(1)))
+check('a DSH relaunch under dsh moves to the entry',
+  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
 const entryArgv = ['/node', entry, '--resume', 'abc', 'foo']
-check('the entry relaunches itself (it hands a DSH kernel on to dsh)',
+check('the entry relaunches itself on DSH',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
 check('the entry on Claude is not re-targeted',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, hostEntry: entry })) === JSON.stringify(entryArgv.slice(1)))
-check('with DSH in the entry (the default) a DSH relaunch under dsh moves to the entry',
-  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
-check('with DSH in the entry the entry relaunches itself on DSH',
-  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry, dshInEntry: true })) === JSON.stringify([entry, 'foo']))
 check('a fresh /restart (after /new) on the entry drops the inherited resume flags',
   JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, fresh: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
 check('a fresh /restart under dsh drops them too',
@@ -100,11 +81,6 @@ check('a fresh /restart under dsh drops them too',
 const noSeparator = ['/node', '/dsh/lib/bin.js', '--profile', 'dsh-tui']
 check('a dsh argv without app args gives the entry none',
   JSON.stringify(restartArgv({ execArgv: [], argv: noSeparator, kernel: 'claude', switching: true, hostEntry: entry })) === JSON.stringify([entry]))
-
-// ── the default and its switches (kernelPrefs) ───────────────────────
-check('the DSH kernel runs in the entry by default', hostEntryDshEnabled({}))
-check('DSH_TUI_HOST_ENTRY_DSH=0 hands DSH to dsh --profile', !hostEntryDshEnabled({ DSH_TUI_HOST_ENTRY_DSH: '0' }))
-check('DSH_TUI_HOST_ENTRY=0 wins over everything', !hostEntryDshEnabled({ DSH_TUI_HOST_ENTRY: '0', DSH_TUI_HOST_ENTRY_DSH: '1' }))
 
 // ── findHostDsh: the first dsh on PATH, followed through launchers ───
 // A fake installed host: <prefix>/lib/node_modules/@deepseek-ai/dsh.

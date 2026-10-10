@@ -1623,13 +1623,12 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
 
   // 内核分流（docs/standalone-host-design.md）：默认所有内核都走本包入口，入口
-  // 再按 profile 补丁的 Config 行判定（src/hostEntryRoute.ts）。DSH_TUI_HOST_ENTRY_DSH=0
-  // 只让 DSH 内核回到 `dsh --profile`，DSH_TUI_HOST_ENTRY=0 让所有内核回去；dsh 自己的
+  // 再按 profile 补丁的 Config 行判定（src/hostEntryRoute.ts）。DSH_TUI_HOST_ENTRY=0
+  // 让所有内核回到 `dsh --profile`；dsh 自己的
   // hostArgs（--version、--dump-config* 等）始终交给 dsh。启动器零 lib 依赖、读不到
   // Config 行，所以只按 交接 → DSH_TUI_BACKEND → kernel.json 判定。
   const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
   const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
-  const dshInEntry = hostEntryEnabled && process.env.DSH_TUI_HOST_ENTRY_DSH !== '0'
   // 只做 id 语法判定：成员判定归 boot（未装的 id 在那里回落 dsh 并告警）。
   const pickKernel = value => {
     const id = typeof value === 'string' ? value.trim().toLowerCase() : ''
@@ -1649,9 +1648,9 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   }
   // 必须在首次 spawn 之前：本次启动的 TUI 写的记录都晚于这个时刻。
   noteLaunchChain()
-  if (hostEntryEnabled && hostArgs.length === 0 && (dshInEntry || launchKernel() !== 'dsh')) {
+  if (hostEntryEnabled && hostArgs.length === 0) {
     // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
-    const result = await startEntrySession(hostEntry, args, dshInEntry ? withGuideSkillDir(process.env) : process.env)
+    const result = await startEntrySession(hostEntry, args, withGuideSkillDir(process.env))
     // DSH 内核下没有 dsh CLI：入口已打印 noDsh 并以 1 退出，不再追加指向不存在的
     // `dsh --profile` 的排查提示与安全模式询问。
     if (result.kind === 'exit' && result.code !== 0 && launchKernel() === 'dsh' && !(await probeDsh())) process.exit(result.code)

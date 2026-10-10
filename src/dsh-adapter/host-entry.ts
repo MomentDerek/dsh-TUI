@@ -1,14 +1,14 @@
 /**
  * This package's own entry (docs/standalone-host-design.md), started by
- * bin/dsh-tui.js for every kernel. A launch routed back to DSH is handed to
- * `dsh --profile` unchanged. Otherwise: take over the installed dsh's root and
+ * bin/dsh-tui.js for every kernel: take over the installed dsh's root and
  * module resolution before any TUI module loads, mount the runtime on it, then
- * compose the dsh-tui profile (DSH) or the light profile (other kernels).
+ * compose the dsh-tui profile (DSH) or the light profile (other kernels). A DSH
+ * launch without a usable installed dsh is handed to `dsh --profile` unchanged.
  */
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
 import { lastBootMark, markBoot } from '../utils/bootTrace.js'
-import { configuredBackend, entryKernel, entryRoute, hostProfile } from '../hostEntryRoute.js'
+import { configuredBackend, entryKernel, hostProfile } from '../hostEntryRoute.js'
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
 import { HOST_NOTICE_ENV, type KernelBackendId } from '../kernelPrefs.js'
 import { logForDebugging } from '../utils/debug.js'
@@ -32,9 +32,7 @@ const NO_DSH = {
 // already open, the network section's reverse lookups block the event loop.
 if (process.report !== undefined) (process.report as { excludeNetwork?: boolean }).excludeNetwork = true
 const profile = hostProfile()
-const route = entryRoute(entryKernel(process.env, { configured: configuredBackend(profile) }))
-if (route.kind === 'entry') await runInEntry(route.kernel)
-else delegateToDsh()
+await runInEntry(entryKernel(process.env, { configured: configuredBackend(profile) }))
 
 function delegateToDsh(): void {
   const appArgs = process.argv.slice(2)
