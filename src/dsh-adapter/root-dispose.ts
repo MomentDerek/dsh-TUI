@@ -1,7 +1,6 @@
 /**
- * Disposing the entry's root while the profile may still be composing into
- * it. @deepseek-ai/dsh-hmr
- * deadlocks when its fiber is disposed while its init is still starting config
+ * Disposing the entry's root while the profile may still be composing into it:
+ * @deepseek-ai/dsh-hmr deadlocks when disposed while its init starts config
  * watchers, so a root dispose first lets the Loader settle, and the composition
  * skips its audit and readiness once a dispose is waiting.
  */

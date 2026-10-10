@@ -37,11 +37,10 @@ const failures = []
 
 if (LITE_PROFILE_ROW_DISABLES.length === 0) failures.push('LITE_PROFILE_ROW_DISABLES is empty')
 const seen = new Set()
-for (const row of LITE_PROFILE_ROW_DISABLES) {
-  if (seen.has(row.id)) failures.push(`duplicate table id: ${row.id}`)
-  seen.add(row.id)
-  if (!insertIds.has(row.id)) failures.push(`${row.id} — not an insert id in cordis.patch.yml (from ${row.from})`)
-  if (row.missing.length === 0) failures.push(`${row.id} — no missing service recorded, the disable has no stated reason`)
+for (const id of LITE_PROFILE_ROW_DISABLES) {
+  if (seen.has(id)) failures.push(`duplicate table id: ${id}`)
+  seen.add(id)
+  if (!insertIds.has(id)) failures.push(`${id} — not an insert id in cordis.patch.yml`)
 }
 
 if (failures.length > 0) {

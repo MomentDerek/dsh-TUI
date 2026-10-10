@@ -1,11 +1,9 @@
 /**
- * Process ownership in this package's entry: signals and exit go through the
- * TUI's exit funnel (./plugin.ts) whenever it is up; without an owner the
- * entry disposes the root itself, bounded. Either way a termination signal ends the
- * process by that signal: the launcher treats a numeric non-zero exit as a
- * crash, and exit 0 would hide the termination from `timeout`, tmux and
- * service managers — so `runProfile`'s 0 / 130 is not reproduced. A second
- * signal forces the exit at once.
+ * Signals and exit in this package's entry go through the TUI's exit funnel
+ * (./plugin.ts) when it is up, else the entry disposes the root, bounded. A
+ * termination signal ends the process by that signal, not `runProfile`'s 0 /
+ * 130 (the launcher reads non-zero as a crash, 0 hides it from `timeout`,
+ * tmux and service managers); a second signal forces the exit at once.
  */
 
 export type TerminationSignal = 'SIGTERM' | 'SIGHUP' | 'SIGINT'
@@ -16,12 +14,9 @@ export type ExitRequest =
   /** `ctx.appExit(code)` (dsh-cmdline): a plugin asked the app to exit. */
   | { readonly kind: 'code'; readonly code: number }
 
-/**
- * The owner's answer: `exiting` (the funnel ends the process) and `pending`
- * (an exit already in flight) arm the backstop; `supervising` follows a
- * replacement that may run for hours, so no backstop; `refused` makes the
- * entry dispose the root itself.
- */
+/** The owner's answer. `exiting` / `pending` (already in flight) arm the backstop;
+ *  `supervising` (a replacement that may run for hours) does not; `refused`
+ *  makes the entry dispose the root itself. */
 export type ExitRequestAnswer = 'exiting' | 'pending' | 'supervising' | 'refused'
 
 export interface ProcessExitSeam {
@@ -58,8 +53,6 @@ export interface EntrySignalOptions {
   readonly disposeRoot: () => Promise<unknown>
   /** restart.log / debug breadcrumb; must not write to the terminal. */
   readonly log?: (event: string, data?: Record<string, unknown>) => void
-  /** Where the process was when the signal came (a boot mark), for the log. */
-  readonly where?: () => string | undefined
 }
 
 /** Once per process. */
@@ -73,7 +66,7 @@ export function installEntrySignals(options: EntrySignalOptions): void {
     }
     first = signal
     const answer = options.seam.request?.({ kind: 'signal', signal }) ?? 'refused'
-    options.log?.('signal: received', { signal, answer, ...(options.where === undefined ? {} : { at: options.where() }) })
+    options.log?.('signal: received', { signal, answer })
     if (answer === 'supervising') {
       // The replacement decides; a second signal still forces this process.
       return

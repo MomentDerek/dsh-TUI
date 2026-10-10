@@ -14,8 +14,6 @@ export interface EntrySlot {
   /** The DSH side. The row calls it once, after the Loader settled; it never
    *  throws (a failure lands in the mounted screen). */
   attachDsh?: (ctx: unknown, runtimeConfig: unknown, configOwner: unknown) => Promise<void>
-  /** A host warning while the profile composes (never to the terminal). */
-  composeWarning?: (line: string) => void
   /** The composition failed or had no `dsh-tui` row: the startup session will
    *  never come. `logPath` is the saved startup report, if any. */
   composeFailed?: (error: unknown, logPath?: string) => void
@@ -29,13 +27,9 @@ export interface EntrySlot {
 
 /**
  * As EntrySlot, for kernels without a `dsh-tui` row (the entry composes the
- * light profile itself). Passed through `RuntimeApplyOptions.composeSeam`.
+ * light profile itself); `composeSucceeded` re-reads mount-time resolutions.
  */
-export interface HostComposeSeam {
-  firstFrameFlushed?: () => Promise<void>
-  /** Re-reads mount-time resolutions (runtime themes, `/settings` section) and re-renders once. */
-  composeSucceeded?: () => void
-}
+export type HostComposeSeam = Pick<EntrySlot, 'firstFrameFlushed' | 'composeSucceeded'>
 
 const ENTRY_SLOT_KEY = Symbol.for('@deepseek-harness-tui/dsh-tui:host-entry')
 

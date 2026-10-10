@@ -2522,7 +2522,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   }
 
   if (entrySlot !== undefined) {
-    entrySlot.composeWarning = line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }
     entrySlot.firstFrameFlushed = flushFirstFrame
     entrySlot.composeSucceeded = () => { settleComposition(true) }
     entrySlot.composeFailed = (error, logPath) => {

@@ -2215,8 +2215,6 @@ export function restartArgv(input: {
   readonly fresh?: boolean
   readonly hostEntry: string | undefined
 }): string[] {
-  // Inherited resume flags name a session of the kernel being left (a switch)
-  // or the previous session (a fresh replacement after /new).
   const strip = (args: readonly string[]): string[] => input.switching || input.fresh === true ? stripResumeArgs(args) : [...args]
   const script = input.argv[1]
   const viaEntry = input.kernel === 'claude' || input.kernel === 'dsh'

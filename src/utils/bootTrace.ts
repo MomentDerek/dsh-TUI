@@ -8,15 +8,7 @@
 import { appendFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 
-let lastMark: string | undefined
-
-/** The latest boot mark, for diagnostics that want to say where a boot was. */
-export function lastBootMark(): string | undefined {
-  return lastMark
-}
-
 export function markBoot(mark: string): void {
-  lastMark = mark
   const file = process.env.DSH_TUI_BOOT_TRACE
   if (file === undefined || file === '') return
   try {

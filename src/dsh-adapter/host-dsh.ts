@@ -19,7 +19,7 @@ import type * as Cmdline from '@deepseek-ai/dsh-cmdline'
 import type * as HttpProxy from '@deepseek-ai/dsh-http-proxy'
 import type * as LaunchEnvironment from '@deepseek-ai/dsh-launch-environment'
 import { HOST_MODULES, HOST_PACKAGE } from './host-contract.js'
-import { LITE_PROFILE_EXCLUDED_BUNDLES, liteProfileNotice, liteProfilePlan } from './lite-profile.js'
+import { LITE_PROFILE_EXCLUDED_BUNDLES, liteProfilePlan } from './lite-profile.js'
 import type { ProcessExitSeam } from './process-exit.js'
 
 /** The diagnostic prefix the host's own boot uses. */
@@ -65,7 +65,7 @@ export interface HostDsh {
 
 /** Where the host came from, or why there is none (shown to the user). */
 export type HostDshLocation =
-  | { readonly packageDir: string; readonly launcher: string; readonly via: 'link' | 'shim' | 'beside' | 'volta' }
+  | { readonly packageDir: string; readonly via: 'link' | 'shim' | 'beside' | 'volta' }
   | { readonly reason: string }
 
 /** `findHostDsh`'s reason when PATH has no `dsh` at all. */
@@ -88,7 +88,7 @@ export function findHostDsh(env: NodeJS.ProcessEnv = process.env, platform: Node
       // npm's Windows shims sit beside the global node_modules.
       if (platform === 'win32') {
         const beside = join(dir, 'node_modules', '@deepseek-ai', 'dsh')
-        if (isHostPackage(beside)) return { packageDir: beside, launcher: candidate, via: 'beside' }
+        if (isHostPackage(beside)) return { packageDir: beside, via: 'beside' }
       }
       // The first `dsh` on PATH is the one a launch would run: it is the host
       // or there is none.
@@ -99,7 +99,7 @@ export function findHostDsh(env: NodeJS.ProcessEnv = process.env, platform: Node
         return { reason: `${candidate} cannot be resolved (${error instanceof Error ? error.message : String(error)})` }
       }
       const linked = hostPackageAbove(real)
-      if (linked !== undefined) return { packageDir: linked, launcher: candidate, via: 'link' }
+      if (linked !== undefined) return { packageDir: linked, via: 'link' }
       return followLauncher(candidate, real, env, platform)
     }
   }
@@ -125,7 +125,7 @@ function followLauncher(candidate: string, real: string, env: NodeJS.ProcessEnv,
     const volta = env.VOLTA_HOME ?? join(env.HOME ?? env.USERPROFILE ?? '', '.volta')
     const image = join(volta, 'tools', 'image', 'packages', '@deepseek-ai', 'dsh')
     for (const packageDir of [join(image, 'lib', 'node_modules', '@deepseek-ai', 'dsh'), join(image, 'node_modules', '@deepseek-ai', 'dsh')]) {
-      if (isHostPackage(packageDir)) return { packageDir, launcher: candidate, via: 'volta' }
+      if (isHostPackage(packageDir)) return { packageDir, via: 'volta' }
     }
     return { reason: `${candidate} is a volta shim and volta's image has no @deepseek-ai/dsh under ${image}` }
   }
@@ -150,7 +150,7 @@ function followLauncher(candidate: string, real: string, env: NodeJS.ProcessEnv,
       continue
     }
     const packageDir = hostPackageAbove(target)
-    if (packageDir !== undefined) return { packageDir, launcher: candidate, via: 'shim' }
+    if (packageDir !== undefined) return { packageDir, via: 'shim' }
   }
   return { reason: `${candidate} is a launcher script that starts no @deepseek-ai/dsh script found on disk` }
 }
@@ -251,12 +251,11 @@ export async function loadHostDsh(packageDir: string | undefined = undefined): P
 export interface HostRoot {
   readonly ctx: Context
   /**
-   * DSH kernel only. Rejects with the Loader's or the audit's error; the tree
-   * stays up. `stopping`: a root dispose is waiting, so skip audit and readiness.
+   * The dsh-tui profile (DSH kernel) or the light profile (./lite-profile.ts).
+   * Rejects with the Loader's or the audit's error; the tree stays up.
+   * `stopping`: a root dispose is waiting, so skip audit and readiness.
    */
   compose(warn: Warn, stopping?: () => boolean): Promise<void>
-  /** Non-DSH kernels only (./lite-profile.ts). Same contract as {@link compose}. */
-  composeLite(warn: Warn, stopping?: () => boolean): Promise<void>
   /**
    * Remove the fail-loud handlers (DSH kernel; a no-op otherwise) once the
    * TUI's process guard is up: it alone owns a fatal error, and fail-loud
@@ -391,22 +390,21 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     ctx,
     uninstallFailLoud: () => { uninstallFailLoud() },
     async compose(warn, stopping = () => false) {
-      if (!options.dsh || profileContext === undefined) throw new Error('dsh-tui: this root was prepared without the DSH profile')
-      await mountAndAudit(appBoot.readProfilePatches(BIN_NAME, profileContext, profile), warn, stopping)
-    },
-    async composeLite(warn, stopping = () => false) {
-      if (options.dsh) throw new Error('dsh-tui: this root was prepared for DSH; compose the whole profile instead')
+      if (profileContext !== undefined) {
+        await mountAndAudit(appBoot.readProfilePatches(BIN_NAME, profileContext, profile), warn, stopping)
+        return
+      }
       const plan = liteProfilePlan(profile)
       if (!plan.trimmed) {
         // Nothing to trim: composing the layers is the full composition, and
         // not fatal (the screen is mounted; failing would cost every plugin).
         warn(`dsh-tui: light profile: ${options.profile} lists none of ${LITE_PROFILE_EXCLUDED_BUNDLES.join(', ')}; composing it whole\n`)
+      } else {
+        warn(`dsh-tui: light profile: ${plan.excluded.join(', ')} left out of ${profile.layers.length} bundles; disabled ${plan.disableRows.map(row => row.id).join(', ')} (their injected services come from the excluded bundles)\n`)
       }
-      const notice = liteProfileNotice(plan)
-      if (notice !== undefined) warn(notice)
       // The trimmed layers' patches, then the disable rows applied last (a
       // static disable in cordis.patch.yml would also hit the DSH kernel).
-      const patches = appBoot.readProfilePatches(BIN_NAME, profileContextFor(plan.bundles), { ...profile, layers: [...plan.layers] })
+      const patches = appBoot.readProfilePatches(BIN_NAME, profileContextFor(plan.layers.map(layer => layer.packageName)), { ...profile, layers: [...plan.layers] })
       patches.push(...plan.disableRows)
       await mountAndAudit(patches, warn, stopping)
     },

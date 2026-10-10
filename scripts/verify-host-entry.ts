@@ -98,7 +98,7 @@ const located = (dir: string, env: NodeJS.ProcessEnv = {}, platform: NodeJS.Plat
 // npm on Unix: a link into the package.
 const npmBin = binDir('npm-bin')
 symlinkSync(join(hostDir, 'lib', 'bin.js'), join(npmBin, 'dsh'))
-check('an npm link resolves by realpath', JSON.stringify(located(npmBin)) === JSON.stringify({ packageDir: hostDir, launcher: join(npmBin, 'dsh'), via: 'link' }), located(npmBin))
+check('an npm link resolves by realpath', JSON.stringify(located(npmBin)) === JSON.stringify({ packageDir: hostDir, via: 'link' }), located(npmBin))
 // pnpm's global bin: a cmd-shim sh script relative to its own directory.
 const pnpmHome = binDir('pnpm-home')
 const pnpmGlobal = join(pnpmHome, 'global', '5', 'node_modules', '@deepseek-ai')

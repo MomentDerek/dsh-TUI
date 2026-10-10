@@ -7,7 +7,7 @@
  */
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
-import { lastBootMark, markBoot } from '../utils/bootTrace.js'
+import { markBoot } from '../utils/bootTrace.js'
 import { configuredBackend, entryKernel, hostProfile } from '../hostEntryRoute.js'
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
 import { HOST_NOTICE_ENV, type KernelBackendId } from '../kernelPrefs.js'
@@ -20,19 +20,18 @@ import { installEntrySignals, type ProcessExitSeam } from './process-exit.js'
 import { disposeRootSettled, trackComposition } from './root-dispose.js'
 
 markBoot('entry-start')
-/**
- * bin/dsh-tui.js `MSG.noDsh` verbatim. Declared before the top-level await
- * below: `runInEntry` reads it while this module's evaluation is suspended there.
- */
-const NO_DSH = {
-  en: '[dsh-tui] dsh CLI not found. Install the official client first:\n  npm install -g @deepseek-ai/dsh',
-  zh: '[dsh-tui] 未检测到 dsh CLI。请先安装官方客户端：\n  npm install -g @deepseek-ai/dsh',
-}
 // DSH's native flock loader reads `process.report.getReport()`; with sockets
 // already open, the network section's reverse lookups block the event loop.
 if (process.report !== undefined) (process.report as { excludeNetwork?: boolean }).excludeNetwork = true
 const profile = hostProfile()
 await runInEntry(entryKernel(process.env, { configured: configuredBackend(profile) }))
+
+/** bin/dsh-tui.js `MSG.noDsh`, newline-terminated. */
+function noDshGuidance(): string {
+  return process.env.DSH_TUI_LANG === 'en'
+    ? '[dsh-tui] dsh CLI not found. Install the official client first:\n  npm install -g @deepseek-ai/dsh\n'
+    : '[dsh-tui] 未检测到 dsh CLI。请先安装官方客户端：\n  npm install -g @deepseek-ai/dsh\n'
+}
 
 function delegateToDsh(): void {
   const appArgs = process.argv.slice(2)
@@ -56,7 +55,7 @@ function delegateToDsh(): void {
   for (const [signal, forward] of forwarders) process.on(signal, forward)
   child.on('error', error => {
     process.stderr.write(`dsh-tui: cannot start dsh (${error.message})\n`)
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') process.stderr.write(`${NO_DSH[process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh']}\n`)
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') process.stderr.write(noDshGuidance())
     process.exit(1)
   })
   child.on('exit', (code, signal) => {
@@ -126,7 +125,7 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     // No dsh at all: stop with the install guidance rather than delegate into
     // a spawn failure (on Windows `shell: true` hides the ENOENT).
     if (kernel === 'dsh' && error instanceof Error && error.message === NO_DSH_ON_PATH) {
-      process.stderr.write(`${NO_DSH[process.env.DSH_TUI_LANG === 'en' ? 'en' : 'zh']}\n`)
+      process.stderr.write(noDshGuidance())
       process.exit(1)
     }
     hostNotice = noteHostUnavailable(kernel, error)
@@ -162,7 +161,6 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
     seam: exitSeam,
     disposeRoot: () => disposeEntryRoot(ctx),
     log: logRestartEvent,
-    where: lastBootMark,
   })
   const slot = kernel === 'dsh' && root !== undefined ? publishEntrySlot() : undefined
   const composeSeam: HostComposeSeam | undefined = slot === undefined && root !== undefined && kernel !== 'dsh' ? {} : undefined
@@ -181,53 +179,42 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // fail-loud would exit 1 before the exit funnel ran.
   if (root !== undefined && processGuardActive()) root.uninstallFailLoud()
   if (root === undefined || (slot === undefined && kernel === 'dsh')) return
-  const hostRoot = root
-  // A root dispose lets the Loader settle first: HMR deadlocks when disposed
-  // while its watchers start (./root-dispose.ts).
-  const runComposition = async (
-    firstFrameFlushed: () => Promise<void> | undefined,
-    compose: (stopping: () => boolean) => Promise<void>,
-  ): Promise<{ readonly failed: false; readonly disposing: boolean } | { readonly failed: true; readonly error: unknown }> => {
-    await firstFrameFlushed()
-    markBoot('entry-first-frame-flushed')
-    markBoot('entry-compose-start')
-    armRootCapabilityGuard(ctx)
-    const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
-    const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
-    try {
-      await compose(() => composition.disposing)
-      return { failed: false, disposing: composition.disposing }
-    } catch (error) {
-      return { failed: true, error }
-    } finally {
-      composition.done()
-      releaseRootGuard?.()
-      markBoot('entry-compose-end')
-    }
+  // The "starting" frame must reach the terminal before the composition's
+  // synchronous stretch.
+  await (slot ?? composeSeam)?.firstFrameFlushed?.()
+  markBoot('entry-compose-start')
+  armRootCapabilityGuard(ctx)
+  const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
+  const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
+  let failure: { readonly error: unknown } | undefined
+  try {
+    await root.compose(line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }, () => composition.disposing)
+  } catch (error) {
+    failure = { error }
+  } finally {
+    composition.done()
+    releaseRootGuard?.()
+    markBoot('entry-compose-end')
   }
   if (slot === undefined) {
     // A light-profile failure ends the process loudly: a kernel whose plugin
     // ecosystem did not come up must not pass as a boot.
-    const outcome = await runComposition(() => composeSeam?.firstFrameFlushed?.(), stopping => hostRoot.composeLite(line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }, stopping))
-    if (!outcome.failed) {
+    if (failure === undefined) {
       composeSeam?.composeSucceeded?.()
       return
     }
-    const { error } = outcome
+    const { error } = failure
     handleStartupError(ctx, error instanceof HostComposeError && error.logPath !== undefined ? `${error.message} — startup report: ${error.logPath}` : error)
     return
   }
-  // DSH: past the mount nothing writes to the terminal; a failure lands in the
-  // screen. The "starting" frame must reach the terminal before the
-  // composition's synchronous stretch.
-  const outcome = await runComposition(() => slot.firstFrameFlushed?.(), stopping => hostRoot.compose(line => { slot.composeWarning?.(line) }, stopping))
-  if (outcome.failed) {
-    const { error } = outcome
+  // DSH: past the mount nothing writes to the terminal; a failure lands in the screen.
+  if (failure !== undefined) {
+    const { error } = failure
     if (error instanceof HostComposeError) slot.composeFailed?.(error.original, error.logPath)
     else slot.composeFailed?.(error)
     return
   }
-  if (outcome.disposing) return
+  if (composition.disposing) return
   if (!slot.rowSeen) slot.composeFailed?.(new Error(`the ${profile} profile has no dsh-tui row`))
   else slot.composeSucceeded?.()
 }

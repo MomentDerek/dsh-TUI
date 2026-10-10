@@ -9,32 +9,22 @@
 /** `dsh-base` carries DSH's agent, llm, tools and workspace core rows. */
 export const LITE_PROFILE_EXCLUDED_BUNDLES: readonly string[] = ['@deepseek-ai/dsh-base']
 
-/** One row the light composition disables, and the services that make it inert. */
-export interface LiteProfileRowDisable {
-  /** The Loader entry id (`cordis.patch.yml` `insert` ids, process-global). */
-  readonly id: string
-  /** Injected services no remaining layer provides, as the Loader reports them. */
-  readonly missing: readonly string[]
-  /** Where the row comes from. */
-  readonly from: string
-}
-
 /**
- * Rows trimmed out of a light composition: each injects a service only the
- * excluded bundles provide, so it would sit pending forever and turn "N
- * entries did not activate" into a permanent state instead of a fault.
+ * Loader entry ids (`cordis.patch.yml` `insert` ids) trimmed out of a light
+ * composition: each injects a service only the excluded bundles provide, so it
+ * would sit pending forever and turn "N entries did not activate" into a
+ * permanent state instead of a fault. Missing services noted per row.
  */
-export const LITE_PROFILE_ROW_DISABLES: readonly LiteProfileRowDisable[] = [
-  { id: 'dsh-tui-workspace', missing: ['sessionPersistence'], from: '@deepseek-ai/dsh-workspace, this package\'s patch layer' },
-  { id: 'dsh-tui-agent-preset-registry', missing: ['sessionProjections'], from: '@deepseek-ai/dsh-agent-preset-registry, this package\'s patch layer' },
-  { id: 'dsh-tui-cordis-host-runner', missing: ['tools'], from: '@deepseek-ai/dsh-cordis-host-runner, this package\'s patch layer' },
-  { id: 'dsh-tui-auth', missing: ['llm', 'commands'], from: '@deepseek-harness-tui/dsh-tui/oauth, this package\'s patch layer' },
-  { id: 'dsh-tui', missing: ['agents', 'workspaceRegistry'], from: '@deepseek-harness-tui/dsh-tui, this package\'s patch layer: the DSH front door, which the entry itself replaces on these kernels' },
+export const LITE_PROFILE_ROW_DISABLES: readonly string[] = [
+  'dsh-tui-workspace', // sessionPersistence
+  'dsh-tui-agent-preset-registry', // sessionProjections
+  'dsh-tui-cordis-host-runner', // tools
+  'dsh-tui-auth', // llm, commands
+  'dsh-tui', // agents, workspaceRegistry: the DSH front door, which the entry itself replaces
 ]
 
 /** What a composition needs to mount a light profile. */
 export interface LiteProfilePlan<Layer extends { readonly packageName: string }> {
-  readonly bundles: readonly string[]
   readonly layers: readonly Layer[]
   /** The excluded bundles that were present and therefore left out. */
   readonly excluded: readonly string[]
@@ -53,17 +43,10 @@ export function liteProfilePlan<Layer extends { readonly packageName: string }>(
   const dropped = profile.layers.filter(layer => excluded.has(layer.packageName))
   const trimmed = dropped.length > 0
   return {
-    bundles: layers.map(layer => layer.packageName),
     layers,
     excluded: dropped.map(layer => layer.packageName),
     // With every layer still there, the services exist and the rows work.
-    disableRows: trimmed ? LITE_PROFILE_ROW_DISABLES.map(row => ({ id: row.id, disabled: true as const })) : [],
+    disableRows: trimmed ? LITE_PROFILE_ROW_DISABLES.map(id => ({ id, disabled: true as const })) : [],
     trimmed,
   }
-}
-
-/** One line naming what was left out, for the composition's warning sink. */
-export function liteProfileNotice(plan: LiteProfilePlan<{ readonly packageName: string }>): string | undefined {
-  if (!plan.trimmed) return undefined
-  return `dsh-tui: light profile: ${plan.excluded.join(', ')} left out of ${plan.bundles.length + plan.excluded.length} bundles; disabled ${plan.disableRows.map(row => row.id).join(', ')} (their injected services come from the excluded bundles)\n`
 }
