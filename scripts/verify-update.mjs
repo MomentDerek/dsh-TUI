@@ -516,7 +516,11 @@ check('deadlock: 0.7.2 dropped the hard inject', !isBootDeadlockTarget('0.7.2'))
 check('deadlock: 0.8.0 is fine', !isBootDeadlockTarget('0.8.0'))
 check('deadlock: invalid input is never a deadlock target', !isBootDeadlockTarget('banana'))
 
-const compiledSource = readFileSync(compiledModulePath, 'utf8')
+// Once another bundle entry shares update.ts, the bundle turns update.js into
+// a re-export file and the body moves to chunks/update-*.js: read the body.
+const compiledShell = readFileSync(compiledModulePath, 'utf8')
+const compiledBodyChunk = /from\s*['"]\.\/(chunks\/update-[^'"]+\.js)['"]/.exec(compiledShell)?.[1]
+const compiledSource = compiledBodyChunk === undefined ? compiledShell : readFileSync(join(compiledRoot, compiledBodyChunk), 'utf8')
 // P1: the node restart must NOT go through a shell — assert the compiled
 // restart spawn call has no shell option while the dsh call does. The
 // restart spawn now lives inside restartTui() (shared by /restart and the
