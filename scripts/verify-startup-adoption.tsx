@@ -112,7 +112,9 @@ const launch = (startup: Startup): ChannelLaunchOptions => ({
   model: 'Claude', provider: 'claude', cwd: LAUNCH, activity: false, backendLabel: 'Claude',
   startup,
   openSession: target => {
-    const next = fakeSession(`33333333-3333-4333-8333-33333333333${opened.length}`, target.kind === 'create' ? target.cwd : LAUNCH)
+    const next = fakeSession(`33333333-3333-4333-8333-33333333333${opened.length}`, target.kind === 'create' ? target.cwd : LAUNCH, {
+      subagents: { interrupt: () => Promise.resolve(true), history: () => Promise.resolve(null) } as never,
+    })
     opened.push(next)
     return Promise.resolve(next)
   },
@@ -174,6 +176,7 @@ const notices = (channel: { rows: readonly { kind: string; text: string }[] }): 
   const ok = await channel.newSession()
   check('/new retries through openSession', ok && opened.length === before + 1)
   check('ready after /new', channel.ready && channel.agentId === opened[before]!.ref.sessionId)
+  check('the subagent control follows the /new session', channel.subagentControl.history !== undefined)
   channel.releaseContributions()
 }
 

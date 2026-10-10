@@ -849,7 +849,10 @@ export function createCoreChannel(
     state,
     rowIds,
     resetProjection: feed.resetProjection,
-    resetActivity: () => { activity.reset() },
+    resetActivity: candidate => {
+      activity.reset()
+      if (activityOwned()) state.subagentControl = subagentControlFor(candidate)
+    },
     snapshotOf,
     resetControls: controls.reset,
     bind: seed => feed.bind(seed),

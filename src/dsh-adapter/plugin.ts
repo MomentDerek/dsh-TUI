@@ -1046,8 +1046,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const bootAttemptId = `${process.pid.toString(36)}-${Date.now().toString(36)}`
   /** The live DSH agent behind the channel; none before DSH has composed
    *  (the in-process DSH kernel) or off DSH. */
-  const liveDshAgent = (): Agent | undefined =>
-    (ctx.get('agents') as { get(id: ReturnType<typeof SessionId>): Agent | undefined } | undefined)?.get(SessionId(channel.agentId))
+  const liveDshAgent = (): Agent | undefined => dshAgentOn(ctx, channel.agentId)
   const refreshLastRunRecord = (): void => {
     // An observational composition (replay/embedding) is not "the instance the
     // user ran last" — it must not overwrite the interactive record.
@@ -2029,7 +2028,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * has not persisted it and the replacement must start fresh. */
   const handoffSessionId = (): string => {
     if (backendStart !== undefined) return backendStart.persisted(channel.agentId, channel.rows) ? channel.agentId : ''
-    return isUnstoredFreshSession(ctx.agents.get(SessionId(channel.agentId))?.session) ? '' : channel.agentId
+    return isUnstoredFreshSession(liveDshAgent()?.session) ? '' : channel.agentId
   }
   const handoffHint = backendStart === undefined ? undefined : (sessionId: string): string => backendStart.resumeCommand(sessionId)
   const funnel = createExitFunnel({
@@ -3067,6 +3066,13 @@ export function runCrashExit(deps: CrashExitDeps): void {
   deps.finish(`dsh-tui crashed: ${detail.message}`)
 }
 
+/** The DSH agent `agentId` names; none where the root carries no DSH
+ *  registry (the standalone entry before DSH composes, or a non-DSH kernel
+ *  on a bare root without `ctx.agents`). */
+function dshAgentOn(ctx: Context, agentId: string): Agent | undefined {
+  return (ctx.get('agents') as { get(id: ReturnType<typeof SessionId>): Agent | undefined } | undefined)?.get(SessionId(agentId))
+}
+
 /**
  * The crash tail's resume markers (runCrashExit's writeResumeMarkers), separate
  * so scripts/verify-shutdown-fallback can drive it on a bare Context. A crash
@@ -3097,7 +3103,7 @@ export function writeCrashResumeMarkers(deps: {
   if (backendStart === undefined) {
     if (isExitResumable({
       pendingCount: channel.pending.length,
-      liveAgent: (ctx.get('agents') as { get(id: ReturnType<typeof SessionId>): Agent | undefined } | undefined)?.get(SessionId(channel.agentId)),
+      liveAgent: dshAgentOn(ctx, channel.agentId),
       startupAgent: deps.startupAgent,
     })) {
       deps.writeResumeTarget(channel.agentId)
@@ -3482,8 +3488,8 @@ function disposeRootAndThen(ctx: Context, done: () => void, fallback: number | (
   void disposeRootSettled(ctx, () => withHostRootCapability(() => ctx.root.fiber.dispose())).finally(() => unloadBackends()).then(
     () => {
       clearTimeout(timer)
-      // The root teardown's length (design 2.5: one 20s teardown seen in the
-      // 2.2 spike); restart.log only, never the terminal.
+      // The root teardown's length (a 20s teardown has been seen);
+      // restart.log only, never the terminal.
       logRestartEvent('dispose: root disposed', { ms: Date.now() - startedAt })
       done()
     },
