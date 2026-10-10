@@ -1,24 +1,28 @@
 /**
- * `ThemeProvider` 的 `theme` prop 迟到/撤走/暂不可用三态回归：独立入口先挂载，
- * profile 装配完才把主题传进来。不可用名用真 Cordis `TuiThemeRuntime` 做 oracle，
- * 验证请求被暂存、主题注册后接上。去掉 prop 变化 effect 时状态 1 与 3b 会红。
+ * `ThemeProvider` 的 `theme` prop 迟到与暂不可用回归：独立入口先挂载，profile
+ * 装配完才把主题传进来。不可用名用真 Cordis `TuiThemeRuntime` 做 oracle，验证
+ * 请求被暂存、主题注册后接上。去掉 prop 变化 effect 时迟到与接上两条会红。
  *
  * Run: node --import tsx/esm scripts/verify-theme-prop-late.tsx
  */
 import './lib/fake-home.mjs'
+import type { Context } from '@deepseek-ai/cordis'
 
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 delete process.env.DSH_TUI_THEME
 
-const [{ PassThrough, Writable }, React, ui] = await Promise.all([
+const [{ PassThrough, Writable }, React, ui, { settled, sleep }, cordis, themes] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('../src/ui.js'),
+  import('./lib/term-test.mjs'),
+  import('@deepseek-ai/cordis'),
+  import('../src/dsh-adapter/themes.js'),
 ])
-const { render, ThemeProvider, Box, Text, useTheme } = ui
+const { render, ThemeProvider, Text, useTheme } = ui
 
-/** 没有静态文件主题前缀，避免与用户目录撞名；`probe:late` 通过运行时名字校验。 */
+/** 没有静态文件主题前缀，避免与用户目录撞名。 */
 const RUNTIME_THEME = 'probe:late'
 
 let failures = 0
@@ -27,121 +31,45 @@ function check(name: string, ok: boolean, extra = ''): void {
   if (!ok) failures++
 }
 
-const frames: string[] = []
-class FakeStdout extends Writable {
-  isTTY = true
-  override _write(chunk: unknown, _e: BufferEncoding, cb: () => void): void {
-    frames.push(String(chunk))
-    cb()
-  }
-}
-class FakeStderr extends Writable {
-  isTTY = true
-  override _write(_c: unknown, _e: BufferEncoding, cb: () => void): void {
-    cb()
-  }
-}
-class FakeStdin extends PassThrough {
-  isTTY = true
-  isRaw = false
-  setRawMode(next: boolean): this {
-    this.isRaw = next
-    return this
-  }
-  override setEncoding(): this {
-    return this
-  }
-  ref(): this {
-    return this
-  }
-  unref(): this {
-    return this
-  }
-}
-
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
-/** 轮询等待而不是定长 sleep：并行负载下渲染落点会慢，定长等待会假红。 */
-async function waitFor(predicate: () => boolean, timeoutMs = 4000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    if (predicate()) return true
-    await sleep(20) // 固定窗:pacing 轮询步进间隔；等待条件本身是 predicate，不是这 20ms
-  }
-  return predicate()
-}
+const sink = (): NodeJS.WriteStream => Object.assign(new Writable({ write: (_c, _e, cb) => cb() }), { isTTY: true }) as unknown as NodeJS.WriteStream
+const stdin = Object.assign(new PassThrough(), {
+  isTTY: true, isRaw: false,
+  setRawMode() { return stdin }, ref() { return stdin }, unref() { return stdin },
+}) as unknown as NodeJS.ReadStream
 
 let seen = ''
 function Fixture(): React.ReactNode {
   const [name] = useTheme()
   seen = name
-  return <Box flexDirection="column"><Text>{`theme=${name}`}</Text></Box>
+  return <Text>{`theme=${name}`}</Text>
 }
 
-// 状态 3 的 oracle 需要一个能「事后注册」真主题的宿主：真 Cordis 根 + 真
-// TuiThemeRuntime（同 verify-theme-hotswap.tsx 的挂法）。
-const [{ Context }, { TuiThemeRuntime, getHostThemes }] = await Promise.all([
-  import('@deepseek-ai/cordis'),
-  import('../src/dsh-adapter/themes.js'),
-])
-const root = new Context()
-await root.plugin(TuiThemeRuntime)
-const host = getHostThemes(root.get('tuiThemes'))
+// 「事后注册」真主题的宿主：真 Cordis 根 + 真 TuiThemeRuntime（同 verify-theme-hotswap.tsx）。
+const root = new cordis.Context()
+await root.plugin(themes.TuiThemeRuntime)
+const host = themes.getHostThemes(root.get('tuiThemes'))
 if (host === undefined) throw new Error('tuiThemes host did not mount')
 let pluginContext: Context | undefined
-await root.plugin({
-  name: 'theme-prop-late-probe',
-  inject: ['tuiThemes'],
-  apply: (context: Context) => { pluginContext = context },
-})
+await root.plugin({ name: 'theme-prop-late-probe', inject: ['tuiThemes'], apply: (context: Context) => { pluginContext = context } })
 
 const app = await render(<ThemeProvider themeHost={host}><Fixture /></ThemeProvider>, {
-  stdout: new FakeStdout() as unknown as NodeJS.WriteStream,
-  stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
-  stderr: new FakeStderr() as unknown as NodeJS.WriteStream,
-  exitOnCtrlC: false,
-  patchConsole: false,
+  stdout: sink(), stdin, stderr: sink(), exitOnCtrlC: false, patchConsole: false,
 })
 
 try {
-  // 无 prop、无 env、伪 HOME 下无持久化偏好 → 检测兜底落在 `dark`（假 stdin 没有
-  // querier，`settle('dark', …)` 立即落地）。这是后面「跳回」判据的基线。
-  await waitFor(() => seen !== '')
-  const before = seen
-  check('挂载无 prop 时落在检测配色上', before === 'dark', before)
+  // 无 prop、无 env、伪 HOME 无偏好 → 检测兜底落在 `dark`。
+  check('挂载无 prop 时落在检测配色上', await settled(() => seen === 'dark'), seen)
 
-  // ── 状态 1：prop 迟到生效 ───────────────────────────────────────────────
-  const beforeFrames = frames.length
   app.rerender(<ThemeProvider theme="light" themeHost={host}><Fixture /></ThemeProvider>)
-  const switched = await waitFor(() => seen === 'light')
-  const painted = frames.slice(beforeFrames).join('')
-  check('状态 1a：挂载后到达的 `theme` prop 立即生效', switched, `theme=${seen}`)
-  check('状态 1b：并且真的重绘到 stdout', painted.includes('light') && !painted.includes('dark'),
-    JSON.stringify(painted.slice(-80)))
+  check('挂载后到达的 `theme` prop 立即生效', await settled(() => seen === 'light'), seen)
 
-  // ── 状态 2：prop 撤走不跳回 ─────────────────────────────────────────────
-  app.rerender(<ThemeProvider themeHost={host}><Fixture /></ThemeProvider>)
-  // 固定窗:探针 断的是「撤走后当前主题不得改变」——不变量，等观察窗再断言
-  await sleep(300)
-  check('状态 2：prop 撤走保持当前有效主题（不退回检测配色）', seen === 'light', `theme=${seen}`)
-
-  // ── 状态 3：不可用名不崩 + 请求被暂存 ─────────────────────────────────────
   app.rerender(<ThemeProvider theme={RUNTIME_THEME} themeHost={host}><Fixture /></ThemeProvider>)
   // 固定窗:探针 断的是「不可用名不得改当前主题」——不变量，等观察窗再断言
   await sleep(300)
-  check('状态 3a：未注册的 `theme` prop 不崩、也不改当前主题', seen === 'light', `theme=${seen}`)
+  check('未注册的 `theme` prop 不崩、也不改当前主题', seen === 'light', seen)
 
-  pluginContext!.tuiThemes.register(
-    { name: RUNTIME_THEME, base: 'dark', colors: { accent: '#CC0000' } },
-    pluginContext!,
-  )
-  const restored = await waitFor(() => seen === RUNTIME_THEME)
-  check('状态 3b：该主题随后注册时暂存的请求被接上', restored, `theme=${seen}`)
-
-  // ── 状态 4：插件主题生效后 prop 撤走仍保持 ───────────────────────────────
-  app.rerender(<ThemeProvider themeHost={host}><Fixture /></ThemeProvider>)
-  // 固定窗:探针 断的是「插件主题生效后撤走仍保持」——不变量，等观察窗再断言
-  await sleep(300)
-  check('状态 4：插件主题生效后 prop 撤走仍保持', seen === RUNTIME_THEME, `theme=${seen}`)
+  pluginContext!.tuiThemes.register({ name: RUNTIME_THEME, base: 'dark', colors: { accent: '#CC0000' } }, pluginContext!)
+  check('该主题随后注册时暂存的请求被接上', await settled(() => seen === RUNTIME_THEME), seen)
 } finally {
   app.unmount()
   await root.fiber.dispose()

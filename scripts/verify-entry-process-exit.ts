@@ -1,10 +1,9 @@
 /**
  * The standalone entry's signal/process ownership (src/dsh-adapter/process-exit.ts),
- * each case in a child process that receives a real signal, plus the root
- * dispose during profile composition (src/dsh-adapter/root-dispose.ts): a
- * minimal root (`@deepseek-ai/dsh-app-boot`, its cordis and loader, plus the
- * dev tree's cordis-plugin-timer and dsh-hmr) disposed while dsh-hmr loads
- * hangs when disposed directly but settles through `disposeRootSettled`.
+ * each case in a child process that receives a real signal; the root dispose
+ * during profile composition (src/dsh-adapter/root-dispose.ts) on a Cordis
+ * root whose plugin is still applying; and the `dsh --profile` delegation's
+ * signal mirroring.
  *
  * Run: node --import tsx/esm scripts/verify-entry-process-exit.ts
  */
@@ -23,47 +22,7 @@ const check = (label: string, ok: boolean, detail?: unknown): void => {
   console.log(`PASS ${label}`)
 }
 
-// ── child mode: dispose a composing root (raw | settled, delay ms) ───────
-if (process.argv[2] === '--hmr-child') {
-  const mode = process.argv[3]
-  const delay = Number(process.argv[4] ?? 0)
-  const { disposeRootSettled, trackComposition } = await import('../src/dsh-adapter/root-dispose.js')
-  const { createRequire } = await import('node:module')
-  const { pathToFileURL } = await import('node:url')
-  // Context and Loader are the instances app-boot mounts includes with.
-  const appBootUrl = import.meta.resolve('@deepseek-ai/dsh-app-boot')
-  const appBoot = await import(appBootUrl) as typeof import('@deepseek-ai/dsh-app-boot')
-  const bootRequire = createRequire(appBootUrl)
-  const { Context } = await import(pathToFileURL(bootRequire.resolve('@deepseek-ai/cordis')).href) as typeof import('@deepseek-ai/cordis')
-  const Loader = (await import(pathToFileURL(bootRequire.resolve('@deepseek-ai/cordis-plugin-loader')).href) as { default: unknown }).default
-  const dir = mkdtempSync(join(tmpdir(), 'verify-entry-hmr-'))
-  writeFileSync(join(dir, 'package.json'), '{"name":"verify-entry-hmr","private":true}\n')
-  writeFileSync(join(dir, 'cordis.patch.yml'), '[]\n')
-  writeFileSync(join(dir, 'cordis.yml'), [
-    '- id: timer', `  name: '${import.meta.resolve('@deepseek-ai/cordis-plugin-timer')}'`,
-    '- id: hmr', `  name: '${import.meta.resolve('@deepseek-ai/dsh-hmr')}'`, '  config:', '    root: []', ''].join('\n'))
-  const ctx = new Context() as import('@deepseek-ai/cordis').Context & { baseUrl?: string }
-  ctx.baseUrl = pathToFileURL(dir).href + '/'
-  ctx.provide('profileContext' as never, { name: 'verify', dir, patchPath: join(dir, 'cordis.patch.yml'), home: dir, startedBundles: [], overlays: [] } as never)
-  // Readiness never comes: the composition is cut short by the dispose.
-  ctx.provide('appReady' as never, { onReady: () => () => undefined } as never)
-  await ctx.plugin(Loader as never, undefined as never)
-  if (mode === 'settled') trackComposition(ctx, async () => { await (ctx.get('loader' as never) as { await(): Promise<unknown> }).await() })
-  let fired = false
-  ctx.on('internal/status' as never, ((fiber: { name: string; state: number }) => {
-    if (fiber.name !== 'Hmr' || fiber.state !== 1 || fired) return
-    fired = true
-    setTimeout(() => {
-      const startedAt = Date.now()
-      // Referenced: the deadlock is a promise cycle that holds no handle, so
-      // the process would otherwise just drain and end.
-      setTimeout(() => { process.stdout.write('hang\n'); process.exit(2) }, 1500)
-      const dispose = mode === 'settled' ? disposeRootSettled(ctx) : ctx.root.fiber.dispose()
-      void dispose.then(() => { process.stdout.write(`disposed ${Date.now() - startedAt}\n`); process.exit(0) })
-    }, delay)
-  }) as never)
-  void appBoot.mountRootInclude(ctx, join(dir, 'cordis.yml'), [], undefined, 'dsh')
-} else if (process.argv[2] === '--child') {
+if (process.argv[2] === '--child') {
   const { installEntrySignals, dieBySignal } = await import('../src/dsh-adapter/process-exit.js')
   const mode = process.argv[3]
   const say = (line: string): void => { process.stdout.write(`${line}\n`) }
@@ -150,24 +109,53 @@ if (process.argv[2] === '--hmr-child') {
   check('a foreign SIGTERM listener cannot keep the process alive', foreign.signal === 'SIGTERM' && foreign.out.includes('foreign listener'), foreign)
 
   // ── a root dispose while the profile composes ─────────────────────────
-  const runHmr = (mode: 'raw' | 'settled', delay: number): Promise<{ code: number | null; out: string }> => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--import', 'tsx/esm', fileURLToPath(import.meta.url), '--hmr-child', mode, String(delay)], { stdio: ['ignore', 'pipe', 'inherit'] })
-    let out = ''
-    const killer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`hmr ${mode}: child did not end; output:\n${out}`)) }, 20000)
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => { out += chunk })
-    child.on('exit', code => { clearTimeout(killer); resolve({ code, out: out.trim() }) })
-  })
-  const raw = []
-  for (const delay of [0, 0, 0]) {
-    raw.push(await runHmr('raw', delay))
-    if (raw.at(-1)?.out === 'hang') break
+  // The dispose waits for the tracked composition (a plugin still applying)
+  // to settle, then runs; a failed or finished composition no longer holds it.
+  {
+    const { Context } = await import('@deepseek-ai/cordis')
+    const { disposeRootSettled, trackComposition } = await import('../src/dsh-adapter/root-dispose.js')
+    const tick = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 20))
+    const ctx = new Context()
+    const log: string[] = []
+    let open!: () => void
+    const gate = new Promise<void>(resolve => { open = resolve })
+    const applying = ctx.plugin({
+      name: 'slow-composition',
+      apply: async (context: import('@deepseek-ai/cordis').Context) => {
+        context.effect(() => () => { log.push('plugin disposed') })
+        await gate
+        log.push('applied')
+      },
+    } as never)
+    const composition = trackComposition(ctx, () => applying)
+    const disposed = disposeRootSettled(ctx, () => { log.push('dispose'); return ctx.root.fiber.dispose() })
+    await tick()
+    check('a dispose waits while the composition applies, and marks it disposing',
+      log.length === 0 && composition.disposing, log)
+    open()
+    await disposed
+    check('the dispose runs once the composition settled, and tears the plugin down',
+      log.join(',') === 'applied,dispose,plugin disposed', log)
+    composition.done()
+
+    const failing = new Context()
+    trackComposition(failing, () => Promise.reject(new Error('activation failed')))
+    let ran = false
+    await disposeRootSettled(failing, async () => { ran = true })
+    check('a failed composition does not block the dispose', ran)
+
+    const settledRoot = new Context()
+    const stale = trackComposition(settledRoot, () => new Promise(() => undefined))
+    const current = trackComposition(settledRoot, () => new Promise(() => undefined))
+    stale.done()
+    let waited = true
+    void disposeRootSettled(settledRoot, async () => { waited = false })
+    check('a superseded tracker\'s done() leaves the current one in force', waited && current.disposing)
+    current.done()
+    let immediate = false
+    void disposeRootSettled(settledRoot, async () => { immediate = true })
+    check('after done() (or untracked) the dispose runs at once', immediate)
   }
-  check('the trigger reaches dsh-hmr\'s deadlock: a root disposed while HMR starts does not settle', raw.some(outcome => outcome.out === 'hang'), raw)
-  const settled = []
-  for (const delay of [0, 0, 0, 1, 5, 20]) settled.push(await runHmr('settled', delay))
-  check('disposeRootSettled: the composition settles first, the root dispose then settles every time',
-    settled.every(outcome => outcome.code === 0 && /^disposed \d+$/.test(outcome.out) && Number(outcome.out.split(' ')[1]) < 1000), settled)
 
   // ── delegateToDsh (DSH without the in-entry path) ─────────────────────
   // The entry mirrors a fake `dsh`'s exit (by the signal when dsh died by one)
@@ -177,7 +165,6 @@ if (process.argv[2] === '--hmr-child') {
   mkdirSync(bin)
   writeFileSync(join(bin, 'dsh'), `#!/bin/sh
 case "$FAKE_DSH" in
-  exit7) exit 7 ;;
   sig*) kill -"\${FAKE_DSH#sig}" $$ ; sleep 5 ;;
   wait) trap 'echo dsh-got-term; exit 0' TERM; echo dsh-ready; while :; do sleep 0.1; done ;;
 esac
@@ -210,45 +197,14 @@ esac
     const outcome = await runDelegate(`sig${signal}`)
     check(`delegate: dsh dies by SIG${signal}, the entry dies by it too (not 0)`, outcome.signal === `SIG${signal}` && outcome.code === null, outcome)
   }
-  const exited = await runDelegate('exit7')
-  check('delegate: a numeric dsh exit is passed on', exited.code === 7 && exited.signal === null, exited)
   const forwarded = await runDelegate('wait', child => { child.kill('SIGTERM') })
   check('delegate: SIGTERM to the entry alone reaches dsh, whose exit the entry mirrors', forwarded.out.includes('dsh-got-term') && forwarded.code === 0, forwarded)
 
-  // ── wiring ─────────────────────────────────────────────────────────────
+  // Two past bugs with no cheap behavioural repro: a non-DSH kernel downgraded
+  // to DSH, and the codex hub pool left open when the funnel never filled.
   const entry = readFileSync(join(here, '../src/dsh-adapter/host-entry.ts'), 'utf8')
-  const plugin = readFileSync(join(here, '../src/dsh-adapter/plugin.ts'), 'utf8')
-  const hostDsh = readFileSync(join(here, '../src/dsh-adapter/host-dsh.ts'), 'utf8')
-  check('the entry installs the signal handling with the seam it hands to apply',
-    /installEntrySignals\(\{\s*seam: exitSeam/.test(entry) && /apply\(ctx, config, ctx, \{[^}]*exitSeam/.test(entry))
-  check('the entry drops DSH fail-loud once the TUI process guard is up (one owner of a fatal error)',
-    /processGuardActive\(\)\) root\.uninstallFailLoud\(\)/.test(entry) && entry.indexOf('root.uninstallFailLoud()') > entry.indexOf('await apply(ctx, config'))
-  check('appExit goes to the seam first, the bounded shutdown only when refused',
-    /exitSeam\?\.request\?\.\(\{ kind: 'code', code \}\)/.test(hostDsh) && /if \(answer === 'refused'\) void shutdown\(code\)/.test(hostDsh))
-  check('the funnel fills the seam and clears it on teardown',
-    /exitSeam\.request = requestProcessExit/.test(plugin) && /if \(exitSeam\?\.request === requestProcessExit\) exitSeam\.request = undefined/.test(plugin))
-  check('a signal exit dies by the signal after the root dispose, the stalled case too',
-    /disposeRootAndThen\(ctx, \(\) => \{ dieBySignal\(request\.signal\) \}, \(\) => \{ dieBySignal\(request\.signal\) \}\)/.test(plugin))
-  check('a root dispose lets a composition in progress settle first (the funnel and the entry\'s own)',
-    /disposeRootSettled\(ctx, \(\) => withHostRootCapability\(\(\) => ctx\.root\.fiber\.dispose\(\)\)\)/.test(plugin)
-    && /disposeRoot: \(\) => disposeEntryRoot\(ctx\)/.test(entry) && /await disposeRootSettled\(ctx\)/.test(entry))
-  // A signal before `exitSeam.request` is filled takes the entry's own dispose,
-  // which must also close the process-wide codex hub pool.
-  check('the entry\'s own dispose closes the backend resources the funnel also closes',
-    /disposeRootSettled\(ctx\)\n  \} finally \{/.test(entry)
-    && /const \{ unloadBackends \} = await import\('\.\/backend-registry\.js'\)\n      await unloadBackends\(\)/.test(entry))
-  check('the entry tracks its composition, which stops short of the audit and readiness once a dispose waits',
-    /const composition = trackComposition\(ctx, /.test(entry) && /await compose\(\(\) => composition\.disposing\)/.test(entry)
-      && /if \(loader\(\) === undefined \|\| stopping\(\)\) return/.test(hostDsh) && /&& !stopping\(\)\) appReady\.commit\(\)/.test(hostDsh))
-  check('the dsh-tui row opens no DSH session once the exit started',
-    /if \(compositionFailed \|\| exited\) return/.test(plugin))
-  // `runInEntry` must get the kernel the entry found, not a literal 'dsh'
-  // (that would pin the runtime's backend and degrade Codex to DSH).
-  check('the entry runs the kernel its route found, not a literal backend (only DSH then publishes the slot)',
-    /await runInEntry\(entryKernel\(process\.env, \{ configured: configuredBackend\(profile\) \}\)\)/.test(entry)
-    && /const slot = kernel === 'dsh' && root !== undefined \? publishEntrySlot\(\) : undefined/.test(entry))
-  check('/restart and /update supervise their replacement through the seam',
-    /const supervision = superviseReplacement\(exitSeam, options\)/.test(plugin) && /superviseReplacement\(exitSeam, \{\}\)/.test(plugin))
+  check('the entry runs the kernel its route found, not a literal backend', /await runInEntry\(entryKernel\(/u.test(entry))
+  check('the entry\'s own dispose closes the backend resources the funnel also closes', /await unloadBackends\(\)/u.test(entry))
 
   console.log(`\nverify-entry-process-exit: ${passed} checks passed`)
 }

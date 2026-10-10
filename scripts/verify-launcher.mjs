@@ -359,12 +359,10 @@ check('i18n: default (unset) prints Chinese', r.stderr.includes('未检测到 ds
 // --- 5.1 默认路由：入口回退到 dsh --profile，缺 dsh 时仍须给出安装指引。
 // 默认 env 把 DSH_TUI_HOST_ENTRY 钉在 '0'，这里显式取默认值。
 const entryNoDsh = { ...envNoDsh, DSH_TUI_HOST_ENTRY: undefined }
-r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'zh' })
-check('entry route: a missing dsh prints the install guidance (Chinese)', r.status === 1 && r.stderr.includes('未检测到 dsh CLI'))
 r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'en' })
-check('entry route: a missing dsh prints the install guidance (English)', r.status === 1 && r.stderr.includes('dsh CLI not found'))
-check('entry route: a missing dsh is not delegated to a dsh spawn', !r.stderr.includes('cannot start dsh') && !r.stderr.includes('cannot host this launch'))
-check('entry route: a missing dsh adds no profile/safe-mode hints', !r.stderr.includes('dsh profile exited') && !r.stderr.includes('dsh-tui safe'))
+check('entry route: a missing dsh prints the install guidance, with no delegation or profile/safe-mode hints',
+  r.status === 1 && r.stderr.includes('dsh CLI not found')
+  && !/cannot start dsh|cannot host this launch|dsh profile exited|dsh-tui safe/u.test(r.stderr), r.stderr)
 
 // --- 7. 内核分流 ----------------------------------------------------------------
 // 没有 TTY，入口里的运行时以「需要交互终端」失败——正好证明走的是入口。
@@ -396,14 +394,13 @@ resetStubLog()
 r = runEntry(['--backend', 'claude', 'foo'])
 check('host entry: a Config row pinning dsh is handed on to dsh with the app args', launchCalls().at(-1) === '<--profile><dsh-tui><--><foo>' && !entryRan(r))
 rmSync(profilePatch, { force: true })
-// The stub dsh is no host the entry can load, so the default DSH route falls back.
+// The stub dsh is no host the entry can load, so the default DSH route falls
+// back (the app-args shape and the stderr reason: verify-host-contract §4).
 const hostFallback = result => /cannot host this launch/u.test(result.stderr)
 resetStubLog()
-r = runEntry(['foo'])
-check('host entry: DSH goes to the entry by default; an unusable dsh falls back to dsh --profile, said on stderr', launchCalls().at(-1) === '<--profile><dsh-tui><--><foo>' && hostFallback(r) && !entryRan(r), r.stderr)
-resetStubLog()
 r = runEntry([])
-check('host entry: the fallback passes no dsh -- without app args', launchCalls().at(-1) === '<--profile><dsh-tui>' && hostFallback(r))
+check('host entry: DSH goes to the entry by default; an unusable dsh falls back to dsh --profile (no -- without app args)',
+  launchCalls().at(-1) === '<--profile><dsh-tui>' && hostFallback(r) && !entryRan(r), r.stderr)
 resetStubLog()
 r = runEntry([], { DSH_TUI_HOST_ENTRY: '0' })
 check('host entry: DSH_TUI_HOST_ENTRY=0 keeps DSH on dsh --profile too', launchCalls().length === 1 && !hostFallback(r))

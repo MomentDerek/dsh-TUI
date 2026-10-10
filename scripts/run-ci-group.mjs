@@ -349,10 +349,7 @@ const GROUPS = {
     ["verify-migrate-hint-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-hint-lifecycle.tsx']],
 // 退出收尾运行时未命中回退：找不到 Ink runtime 时必须走完整 unmount 恢复终端。
     ["verify-shutdown-fallback", ['node', '--import', 'tsx/esm', 'scripts/verify-shutdown-fallback.tsx']],
-// 崩溃收尾的 resume marker：无 agents 的裸根上查 DSH 注册表不抛错、不丢 last-run 记录。
-    ["verify-resume-markers-crash-exit", ['node', '--import', 'tsx/esm', 'scripts/verify-resume-markers-crash-exit.ts']],
-// 独立入口的进程所有权：信号经退出漏斗、以同一信号结束；组合期间释放根先等
-// Loader 收尾（dsh-hmr 启动中被释放会死锁，最小根复现）。
+// 独立入口的进程所有权：信号经退出漏斗、以同一信号结束；组合期间释放根先等组合收尾。
     ["verify-entry-process-exit", ['node', '--import', 'tsx/esm', 'scripts/verify-entry-process-exit.ts']],
 // 退出鼠标残留回归（issue #522）：detach 闩锁后自愈探针不再重写
 // ENABLE_MOUSE_TRACKING；unmount 在末帧渲染抛错时仍同步写完整清理

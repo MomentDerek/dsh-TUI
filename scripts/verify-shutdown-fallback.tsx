@@ -243,10 +243,11 @@ const crashWithMarkers = (deps: Omit<CrashMarkerDeps, 'writeResumeTarget' | 'ref
     startupAgent: agentWith([]),
   })
   check('dsh crash: an empty session writes no target (and clears nothing)', empty.dshTargets.length === 0 && empty.lastRunRefreshes === 1)
-  // The wiring: the funnel's crash branch goes through the helper.
-  const pluginSource = readFileSync(new URL('../src/dsh-adapter/plugin.ts', import.meta.url), 'utf8')
-  check('funnel wiring: the crash branch writes markers through writeCrashResumeMarkers',
-    /writeResumeMarkers: \(\) => \{\s*writeCrashResumeMarkers\(/u.test(pluginSource))
+  // The DSH branch on a bare root (no `agents`) must not throw; runCrashExit
+  // swallows a marker throw, so the refresh after the lookup tells.
+  const bareDsh = crashWithMarkers({ ctx: new Context(), backendStart: undefined, channel: { agentId: dshId, pending: [], rows: [] }, startupAgent: undefined })
+  check('bare-root dsh crash: no throw (the record refreshed), no target, the crash line once',
+    bareDsh.lastRunRefreshes === 1 && bareDsh.dshTargets.length === 0 && bareDsh.finish.length === 1, JSON.stringify(bareDsh))
 }
 
 console.log(results.join('\n'))

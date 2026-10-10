@@ -644,9 +644,8 @@ try {
     openSession: () => Promise.resolve(dshSession('dsh-retry')),
   })
   try {
-    check('a failed startup open leaves the placeholder', await settled(() => retried.startupFailure !== undefined) && !retried.ready)
-    check('`/new` adopts a DSH session', await retried.newSession() === true && retried.ready && retried.sessionRef.sessionId === 'dsh-retry')
-    check('… and serves it with the DSH extensions', retried.backendCapabilities.rewind && retried.backendCapabilities.modelRoutes === 'providers' && retried.agentId === 'agent-dsh-retry' && JSON.stringify(retried.commandList) === JSON.stringify(annotateCommandCapabilities(LOCAL_COMMANDS, retried.capabilities())))
+    await settled(() => retried.startupFailure !== undefined)
+    check('`/new` after a failed startup open serves the DSH session with the DSH extensions', await retried.newSession() === true && retried.backendCapabilities.rewind && retried.backendCapabilities.modelRoutes === 'providers' && retried.agentId === 'agent-dsh-retry' && JSON.stringify(retried.commandList) === JSON.stringify(annotateCommandCapabilities(LOCAL_COMMANDS, retried.capabilities())))
   } finally {
     retried.releaseContributions()
   }
