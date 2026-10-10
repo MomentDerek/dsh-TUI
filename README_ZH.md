@@ -150,9 +150,13 @@ CLI 形态：任意终端运行 `dsh-tui migrate ...`，与 TUI 内执行同一�
 
 **VS Code**：用集成终端，或用 `dsh-tui-vscode` 扩展。见 [VS Code 使用指南](docs/vscode.md)。**Herdr**：在 [Herdr](https://herdr.dev) 窗格运行 `dsh-tui`，经其本地集成 API 报告 `idle` / `working` / `blocked`。
 
-裸 `--resume`（`-c`、`--continue`）恢复最终选定后端的上次会话。
-未知的后端 id 回落 DSH 时，读取 DSH 的恢复记录。
-显式 `--resume <id>` 则把该 id 交给选定后端。
+裸 `--resume`（`-c`、`--continue`）恢复本次启动所选后端自己的上次会话。
+启动恢复只针对所选后端：该后端没有上次会话，或派生出来的目标不属于最终启动的后端
+（未知后端 id 回落 DSH、`--backend` 指向未安装的后端、未设 `--backend` 而跟着记忆的
+内核走），一律明确报错并以退出码 1 收束——不静默冷启动、不恢复别的后端的会话、不新建
+会话。显式 `--resume <id>` 则把该 id 原样交给选定后端。
+唯一的例外是安全模式的「重试正常启动」：它按 `last-run.json` 记录的内核与会话重试，
+记录里的内核已经不在时降级为告警 + 冷启动——那是用户最后的退路。
 
 ### 实验性：Claude 后端
 

@@ -173,9 +173,17 @@ Full guide: [Session migration](docs/migrate.en.md).
 
 **VS Code**: use the integrated terminal or the `dsh-tui-vscode` extension. See [VS Code guide](docs/vscode.en.md). **Herdr**: run `dsh-tui` in a [Herdr](https://herdr.dev) pane; `idle` / `working` / `blocked` are reported through its local integration API.
 
-Bare `--resume` (`-c`, `--continue`) reopens the selected backend's last session.
-If an unknown backend id falls back to DSH, it uses DSH's resume marker.
-An explicit `--resume <id>` passes that id to the selected backend.
+Bare `--resume` (`-c`, `--continue`) reopens the last session of the backend this
+launch selected. Startup recovery only ever targets that backend: a backend with no
+last session, or a derived target that belongs to a different backend than the one
+that actually booted (an unknown backend id falling back to DSH, `--backend` naming
+a backend that is not installed, a remembered kernel that is not the marker's
+source), refuses with a clear error and exit code 1 — never a silent cold start,
+never another backend's session, never a new session. An explicit `--resume <id>`
+passes that id to the selected backend as-is. The one exception is safe mode's
+"retry normal startup": it retries the kernel and session recorded in
+`last-run.json`, so a record whose backend is gone degrades to a warning plus a cold
+start — that retry is the last way back.
 
 ### Experimental: Claude backend
 
