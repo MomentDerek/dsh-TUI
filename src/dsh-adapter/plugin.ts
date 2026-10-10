@@ -210,7 +210,6 @@ export interface RuntimeApplyOptions {
 }
 
 export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, configOwner: Context = ctx, runtimeOptions: RuntimeApplyOptions = {}): Promise<void> {
-  markBoot('runtime-apply')
   const config = configValues<Config>(runtimeConfig)
   // /restart handoff diagnosis: the replacement process is marked by env and
   // logs its boot progress to ~/.dsh-tui/restart.log (ordinary launches stay
@@ -699,7 +698,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // A boot that fails before the channel holds the startup must not leak an
   // unhandled rejection.
   dshStartup?.catch(() => undefined)
-  markBoot('session-open-start')
   if (backendChoice !== 'dsh') {
     try {
       const startupInput = {
@@ -769,7 +767,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     )
   let agent: Agent | undefined = resolved.agent
   const { handle, agentPreset, route: createdRoute } = resolved
-  markBoot('session-open-end')
   // Workspace ownership is a DSH session-store fact (skipped off DSH).
   // `ctx` here is the context that owns the session: this plugin's, or the
   // dsh-tui row's for the in-process DSH kernel (`attachDsh`).
@@ -2226,9 +2223,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // when the element is created, so wait for the settings first-application
   // BEFORE creating Chat: the element must see the same bootedFullscreen the
   // root tree resolves after settingsReady below.
-  markBoot('settings-wait-start')
   await settingsReady
-  markBoot('settings-wait-end')
   /**
    * One-shot workspace-home landing.
    *
@@ -2552,7 +2547,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     }
     entrySlot.attachDsh = async (rowCtx, rowRuntimeConfig) => {
       const dshCtx = rowCtx as Context
-      markBoot('entry-dsh-attach')
       // The composition failed (its row is on screen), or the process is
       // leaving (the root dispose waited for the Loader, which started this row).
       if (compositionFailed || exited) return
@@ -2595,7 +2589,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           if (target === undefined) throw new Error(unsupportedWorkspaceTarget(deferredWorkspace))
           startupMeta = { cwd: target.cwd }
         }
-        markBoot('entry-dsh-open')
         const opened = await resolveAgent(
           dshCtx,
           rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs),
@@ -2605,7 +2598,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           startupMeta,
           rowConfig.preset,
         )
-        markBoot('entry-dsh-opened')
         const session = createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle })
         // The composition failed while this opened: close the unadoptable session.
         if (compositionFailed) {
@@ -2614,7 +2606,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         }
         agent = opened.agent
         await attachWorkspaceOwnership(dshCtx, opened.agent)
-        markBoot('entry-dsh-owned')
         const route = opened.route ?? rowStartupRoute
         rowFacts.route = route
         settleDshStartup?.resolve({
@@ -2625,7 +2616,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         })
         refreshLastRunRecord()
       } catch (error) {
-        markBoot('entry-dsh-failed')
         logForDebugging(`dsh-tui: DSH session failed to open (${error instanceof Error ? error.message : String(error)})`)
         // A composition that fails reports itself (its row names the report).
         if (!await compositionSettled) return

@@ -9,7 +9,7 @@ import { isRegisteredBackend, parseBackendChoice } from './dsh-adapter/backend-r
 import { profilePatchPath, readProfileTuiSettings } from './tuiSettingsFile.js'
 
 /** The profile the launcher would have started (`dsh --profile <name>`). */
-export const HOST_PROFILE_ENV = 'DSH_TUI_PROFILE'
+const HOST_PROFILE_ENV = 'DSH_TUI_PROFILE'
 
 export function hostProfile(env: NodeJS.ProcessEnv = process.env): string {
   const name = env[HOST_PROFILE_ENV]?.trim()

@@ -44,7 +44,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
 /** Apply one path op to a detached sparse layer; empty parents are pruned. */
-export function applySettingsOp(layer: Readonly<Record<string, unknown>>, op: PathOp): Record<string, unknown> {
+function applySettingsOp(layer: Readonly<Record<string, unknown>>, op: PathOp): Record<string, unknown> {
   const [head, ...rest] = op.path
   if (head === undefined) {
     return op.op === 'set' && isRecord(op.value) ? { ...op.value } : {}
@@ -66,7 +66,7 @@ export function applySettingsOp(layer: Readonly<Record<string, unknown>>, op: Pa
  * The first boot without a document imports the profile patch's `dsh-tui`
  * row (once; a document with any `imported` mark is never re-imported).
  */
-export function loadTuiSettings(input: {
+function loadTuiSettings(input: {
   readonly file?: string
   readonly profile: string
   readonly keys: readonly string[]

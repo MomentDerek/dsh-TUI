@@ -37,7 +37,7 @@ export interface HostComposeSeam {
   composeSucceeded?: () => void
 }
 
-export const ENTRY_SLOT_KEY = Symbol.for('@deepseek-harness-tui/dsh-tui:host-entry')
+const ENTRY_SLOT_KEY = Symbol.for('@deepseek-harness-tui/dsh-tui:host-entry')
 
 type SlotHost = typeof globalThis & { [ENTRY_SLOT_KEY]?: EntrySlot }
 

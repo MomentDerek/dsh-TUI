@@ -259,7 +259,7 @@ export function isHiddenCommandName(input: string): boolean {
  * Commands that may run while the channel is not ready (`ChannelUi.ready`
  * false): the purely local ones. Everything else is refused before dispatch.
  */
-export const BOOT_SAFE_COMMAND_NAMES: ReadonlySet<string> = new Set([
+const BOOT_SAFE_COMMAND_NAMES: ReadonlySet<string> = new Set([
   'exit', 'quit', 'q',
   'help', 'tips',
   'theme', 'lang', 'vim',

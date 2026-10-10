@@ -29,7 +29,7 @@ export interface ProcessExitSeam {
 }
 
 /** dsh's PROCESS_SHUTDOWN_TIMEOUT_MS: the dispose bound. */
-export const DISPOSE_BOUND_MS = 5000
+const DISPOSE_BOUND_MS = 5000
 /** Last-resort bound for a funnel exit: outlasts its terminal cleanup plus the dispose bound. */
 const BACKSTOP_MS = DISPOSE_BOUND_MS + 2000
 /** How long a re-raised signal may be held by foreign listeners before they go. */

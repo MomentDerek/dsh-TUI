@@ -17,7 +17,6 @@ import { normalizeSplashFont, type SplashFontSetting } from '../components/splas
 import { normalizeBrandSetting, type BrandSetting } from '../branding.js'
 import { editableConfig, type RuntimeConfig } from './compat/settings.js'
 import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
-import { markBoot } from '../utils/bootTrace.js'
 import { peekEntrySlot, takeEntryAttach } from './entry-slot.js'
 
 export const name = 'dsh-tui'
@@ -447,7 +446,6 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
  * @returns a promise settling when the Loader entry has scheduled its runtime.
  */
 export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promise<void> {
-  markBoot('row-apply')
   // The entry already mounted the screen in this process (./entry-slot.ts):
   // the row only runs the DSH side and hands the session to that screen.
   const entrySlot = peekEntrySlot()

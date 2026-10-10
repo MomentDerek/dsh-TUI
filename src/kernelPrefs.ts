@@ -132,7 +132,7 @@ export const KERNEL_SWITCH_HANDOFF_ENV = 'DSH_TUI_BACKEND_HANDOFF'
  * hostEntryRoute.ts). Kept here so src/update.ts does not pull that module in.
  * `DSH_TUI_HOST_ENTRY=0` keeps every kernel on `dsh --profile`.
  */
-export const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
+const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
 /** The entry's path, set by the launcher: a replacement on Claude or DSH
  *  relaunches through it (src/update.ts restartArgv). */
 export const HOST_ENTRY_PATH_ENV = 'DSH_TUI_HOST_ENTRY_PATH'

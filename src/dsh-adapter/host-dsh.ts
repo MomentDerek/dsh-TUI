@@ -435,7 +435,7 @@ function hostVersion(host: HostDsh): string {
  * dsh `bin.js` reportStartupFailure (0.2.0-rc.2), the file half only: the
  * screen is up, so never stderr. Undefined when it could not be written.
  */
-export async function writeStartupReport(error: unknown, context: {
+async function writeStartupReport(error: unknown, context: {
   readonly home: string
   readonly version: string
   readonly profile: string
