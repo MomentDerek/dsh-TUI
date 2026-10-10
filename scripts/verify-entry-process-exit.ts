@@ -1,33 +1,10 @@
 /**
- * The standalone entry's process ownership (docs/standalone-host-design.md
- * 5.5, src/dsh-adapter/process-exit.ts), headless. Each case runs in a
- * child process (it ends by a signal) that installs the entry's signal
- * handling with a scripted exit seam, then receives a signal from here:
- *
- *  - the funnel takes it (`exiting`): no fallback dispose; the process ends
- *    by the signal when the owner says so;
- *  - nobody owns the process (`refused`, or no seam yet): the root is
- *    disposed, then the process ends by the signal — SIGTERM, SIGHUP and
- *    SIGINT alike (a numeric 143/129/130 reads as a crash to the launcher);
- *  - a second signal ends it at once, the owner still busy;
- *  - `supervising` (a /restart supervisor) arms no backstop;
- *  - the owner stalls: the backstop ends it by the signal;
- *  - a foreign listener on the signal (a plugin's) cannot keep it alive;
- *  - the entry's own, owner-less dispose closes what the funnel's teardown
- *    closes as well (the process-wide codex hub pool), and it routes the
- *    kernel it found rather than a literal backend.
- *
- * And the root dispose during the profile composition
- * (src/dsh-adapter/root-dispose.ts): a minimal root from the host packages
- * this package depends on (@deepseek-ai/dsh 0.2.0-rc.2: its cordis, Loader,
- * timer and dsh-hmr rows, a profile whose readiness never comes), disposed
- * right after dsh-hmr's fiber starts loading. Disposed directly the root
- * never settles (dsh-hmr's deadlock, at least once in a few tries — if that
- * stops reproducing, the host fixed it and the wait can be reconsidered);
- * through `disposeRootSettled` with the composition tracked it settles every
- * time.
- *
- * Plus the source wiring these cases rely on.
+ * The standalone entry's signal/process ownership (src/dsh-adapter/process-exit.ts),
+ * each case in a child process that receives a real signal, plus the root
+ * dispose during profile composition (src/dsh-adapter/root-dispose.ts): a
+ * minimal root (`@deepseek-ai/dsh-app-boot`, its cordis and loader, plus the
+ * dev tree's cordis-plugin-timer and dsh-hmr) disposed while dsh-hmr loads
+ * hangs when disposed directly but settles through `disposeRootSettled`.
  *
  * Run: node --import tsx/esm scripts/verify-entry-process-exit.ts
  */
@@ -53,8 +30,7 @@ if (process.argv[2] === '--hmr-child') {
   const { disposeRootSettled, trackComposition } = await import('../src/dsh-adapter/root-dispose.js')
   const { createRequire } = await import('node:module')
   const { pathToFileURL } = await import('node:url')
-  // The host's arrangement from the dev tree: Context and Loader are the
-  // instances app-boot mounts includes with (host-contract.ts HOST_MODULES).
+  // Context and Loader are the instances app-boot mounts includes with.
   const appBootUrl = import.meta.resolve('@deepseek-ai/dsh-app-boot')
   const appBoot = await import(appBootUrl) as typeof import('@deepseek-ai/dsh-app-boot')
   const bootRequire = createRequire(appBootUrl)
@@ -194,11 +170,8 @@ if (process.argv[2] === '--hmr-child') {
     settled.every(outcome => outcome.code === 0 && /^disposed \d+$/.test(outcome.out) && Number(outcome.out.split(' ')[1]) < 1000), settled)
 
   // ── delegateToDsh (DSH without the in-entry path) ─────────────────────
-  // The entry hands the launch to `dsh` and mirrors its exit. A fake `dsh`
-  // on PATH ends as told; the entry must end the same way — by the signal
-  // when dsh died by one (its own SIGINT/SIGTERM/SIGHUP forwarders used to
-  // catch the re-raised signal and end it with 0) — and pass a SIGTERM sent
-  // to it alone on to dsh.
+  // The entry mirrors a fake `dsh`'s exit (by the signal when dsh died by one)
+  // and forwards a SIGTERM sent to it alone.
   const sandbox = mkdtempSync(join(tmpdir(), 'verify-entry-delegate-'))
   const bin = join(sandbox, 'bin')
   mkdirSync(bin)
@@ -260,10 +233,8 @@ esac
   check('a root dispose lets a composition in progress settle first (the funnel and the entry\'s own)',
     /disposeRootSettled\(ctx, \(\) => withHostRootCapability\(\(\) => ctx\.root\.fiber\.dispose\(\)\)\)/.test(plugin)
     && /disposeRoot: \(\) => disposeEntryRoot\(ctx\)/.test(entry) && /await disposeRootSettled\(ctx\)/.test(entry))
-  // A signal that lands before the runtime filled `exitSeam.request` takes the
-  // entry's own dispose instead of the funnel's, so it must close what the
-  // funnel's teardown closes: the codex hub pool is process-wide and no
-  // session's own dispose closes it (src/backends/codex/rpc/hub.ts).
+  // A signal before `exitSeam.request` is filled takes the entry's own dispose,
+  // which must also close the process-wide codex hub pool.
   check('the entry\'s own dispose closes the backend resources the funnel also closes',
     /disposeRootSettled\(ctx\)\n  \} finally \{/.test(entry)
     && /const \{ unloadBackends \} = await import\('\.\/backend-registry\.js'\)\n      await unloadBackends\(\)/.test(entry))
@@ -272,11 +243,8 @@ esac
       && /if \(loader\(\) === undefined \|\| stopping\(\)\) return/.test(hostDsh) && /&& !stopping\(\)\) appReady\.commit\(\)/.test(hostDsh))
   check('the dsh-tui row opens no DSH session once the exit started',
     /if \(compositionFailed \|\| exited\) return/.test(plugin))
-  // The entry routes the kernel it found and hands it to `runInEntry` as it
-  // is: only DSH composes the profile and so publishes the slot, while Claude
-  // and Codex mount without it and let the runtime resolve the kernel itself.
-  // Passing the literal 'dsh' into `runInEntry` is what silently degraded
-  // Codex to DSH (`dshInEntry` then pins the runtime's backend choice).
+  // `runInEntry` must get the kernel the entry found, not a literal 'dsh'
+  // (that would pin the runtime's backend and degrade Codex to DSH).
   check('the entry runs the kernel its route found, not a literal backend (only DSH then publishes the slot)',
     /const route = entryRoute\(entryKernel\(process\.env, \{ configured: configuredBackend\(profile\) \}\)\)/.test(entry)
     && /if \(route\.kind === 'entry'\) await runInEntry\(route\.kernel\)/.test(entry)

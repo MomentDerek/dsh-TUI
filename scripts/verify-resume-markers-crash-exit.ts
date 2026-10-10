@@ -1,12 +1,8 @@
 /**
- * Regression: the exit funnel's crash tail (`writeCrashResumeMarkers`) must
- * look the DSH registry up as `ctx.get('agents')`, not `ctx.agents`, because
- * the standalone entry's Claude/Codex kernels mount the runtime on a root that
- * may not carry `agents`. A throw there would cost the last-run record and
- * could skip the terminal cleanup after the crash line.
- *
- * Drives the real createExitFunnel / runCrashExit / writeCrashResumeMarkers;
- * a Proxy records both registry access shapes.
+ * The exit funnel's crash tail (`writeCrashResumeMarkers`) must read the DSH
+ * registry as `ctx.get('agents')`: the Claude/Codex kernels mount on a root
+ * that may not carry `agents`. Drives the real funnel; a Proxy records both
+ * access shapes.
  *
  * Run: node --import tsx/esm scripts/verify-resume-markers-crash-exit.ts
  */

@@ -1995,9 +1995,8 @@ export function PromptInput({
     if (!text.startsWith('/')) return false
     const parsed = parseCommandName(text)
     if (parsed === undefined) return false
-    // Startup phase (the entry mounts before its session opens): only local
-    // commands run; the rest are refused before dispatch so the draft stays.
-    // The one chokepoint for every path that runs a command.
+    // Not ready (`ChannelUi.ready`): only boot-safe commands run; the rest
+    // are refused before dispatch so the draft stays. The one chokepoint.
     if (channel.ready === false && !isBootSafeCommand(parsed.name)) {
       notifyNotReady()
       return true
@@ -2125,8 +2124,7 @@ export function PromptInput({
         return
       }
     }
-    // Startup phase: refuse before any path that clears the draft; a
-    // boot-safe command still runs (tryRunCommand refuses the rest).
+    // Not ready: refuse before any path that clears the draft.
     if (channel.ready === false && value.trim() !== '') {
       if (tryRunCommand(value)) return
       notifyNotReady()
@@ -2733,7 +2731,7 @@ export function PromptInput({
         }
       }
       if (tryRunCommand(line)) return
-      // Startup phase: same refusal as handleEnter, keeping the line as the draft.
+      // Not ready: keep the line as the draft.
       if (channel.ready === false) {
         setInput(line)
         notifyNotReady()

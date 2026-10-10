@@ -349,12 +349,10 @@ const GROUPS = {
     ["verify-migrate-hint-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-hint-lifecycle.tsx']],
 // 退出收尾运行时未命中回退：找不到 Ink runtime 时必须走完整 unmount 恢复终端。
     ["verify-shutdown-fallback", ['node', '--import', 'tsx/esm', 'scripts/verify-shutdown-fallback.tsx']],
-// 崩溃收尾的 resume marker：裸根（独立入口的非 DSH 内核、DSH 组合前）上查
-// DSH 注册表不抛错、不丢 last-run 记录与崩溃行；无宿主 dsh 时真实根用例跳过。
+// 崩溃收尾的 resume marker：无 agents 的裸根上查 DSH 注册表不抛错、不丢 last-run 记录。
     ["verify-resume-markers-crash-exit", ['node', '--import', 'tsx/esm', 'scripts/verify-resume-markers-crash-exit.ts']],
-// 独立入口的进程所有权（设计 2.5）：信号经退出漏斗、以同一信号结束；无主时
-// 先释放根；第二次信号立即结束；监督替身时不设兜底；外来监听器留不住进程；
-// 组合期间释放根先等 Loader 收尾（dsh-hmr 启动中被释放会死锁，最小根复现）。
+// 独立入口的进程所有权：信号经退出漏斗、以同一信号结束；组合期间释放根先等
+// Loader 收尾（dsh-hmr 启动中被释放会死锁，最小根复现）。
     ["verify-entry-process-exit", ['node', '--import', 'tsx/esm', 'scripts/verify-entry-process-exit.ts']],
 // 退出鼠标残留回归（issue #522）：detach 闩锁后自愈探针不再重写
 // ENABLE_MOUSE_TRACKING；unmount 在末帧渲染抛错时仍同步写完整清理
@@ -392,15 +390,10 @@ const GROUPS = {
 // 直达启动器回归（issue #108）：参数透传、残骸 profile 重装、
 // 版本不一致提示、双语消息、shellQuote 转义规则。
     ["verify-launcher", ['node', 'scripts/verify-launcher.mjs']],
-// 本包入口的路由（设计 5.8）：入口内核判定的排序（交接 > Config 行 > DSH_TUI_BACKEND >
-// kernel.json）、读 profile 补丁的 backend 钉、restartTui 切到 Claude 时经入口重起。
+// 本包入口的路由：内核判定排序、profile 补丁的 backend 钉、重启 argv、宿主 dsh 查找。
     ["verify-host-entry", ['node', '--import', 'tsx/esm', 'scripts/verify-host-entry.ts']],
-// 第三方插件的身份准入（设计 2.7 遗留 1）：真 Cordis 组合上驱动
-// armAdmissionLoader——未装 loader 时面板落 act<N> 兜底、装上后准入发生在
-// LOADING（apply 之前，面板带 manifest id）、profile 那种裸包名 entry 走
-// require.resolve('<pkg>/package.json') 的清单查找分支；以及 tuiPluginHost
-// 始终不挂载（issue #183）时 host-wait 路有上限、到限 settle 成 refused 并
-// 留下 DSH_TUI_DEBUG 诊断，不再让 flush 无上限自续。
+// 第三方插件的身份准入：真 Cordis 组合上驱动 armAdmissionLoader，面板带 manifest id；
+// tuiPluginHost 始终不挂载（issue #183）时等待有上限、settle 成 refused。
     ["verify-admission-loader", ['node', '--import', 'tsx/esm', 'scripts/verify-admission-loader.ts']],
 // CLI 子命令回归（issue #509）：help/version 零环境应答（不触发自举
 // 与委托）、双语输出、profile 版本读取、只认第一个参数。
@@ -521,9 +514,8 @@ const GROUPS = {
 // tuiWorkspaces 服务可选化回归（issue #183）：代码层 inject 不含
 // tuiWorkspaces、消费处带本地兜底、patch 保留服务行与行级顺序保证。
     ["verify-workspaces-degrade", ['node', 'scripts/verify-workspaces-degrade.mjs']],
-// 轻量 profile 裁剪表 ↔ patch 行 id 的口对（秒级静态）：`LITE_PROFILE_ROW_DISABLES`
-// 的 id 被改名后 disable 会指向不存在的行，被裁服务重新 pending 而 patch-surface/
-// verify:build 都不红，这条在最近的关口拦住。
+// 轻量 profile 裁剪表 ↔ patch 行 id 对口（秒级静态）：行 id 改名后 disable 静默失效，
+// patch-surface 不会红。
     ["verify-lite-profile-rows", ['node', '--import', 'tsx/esm', 'scripts/verify-lite-profile-rows.mjs']],
 // 插件扩展面回归（dsh-tui-extensions）：
 //  - events：真 cordis 总线 + 真 channel——tui/input 改写/取消/崩溃
@@ -785,9 +777,8 @@ const GROUPS = {
 // langOverriddenBySettings）必须用同一个 ns —— 写死 'dsh-tui' 会让非默认挂载
 // 「写得进、读不回」，自动回顾永远关不掉。
     ["verify-settings-namespace", ['node', '--import', 'tsx/esm', 'scripts/verify-settings-namespace.ts']],
-// TUI 自有设置文档（~/.dsh-tui/settings.json，设计 5.6 (a)）：首启从 DSH profile 补丁的 dsh-tui
-// 行一次性导入（只取可编辑键、跳过 !!js、不改 profile、不重复导入），作用域按 schema 默认解析、
-// 写入持久化并通知 watcher、旧 revision 报 SETTINGS_CONFLICT，其他 ns 转给宿主设置服务。
+// TUI 自有设置文档（~/.dsh-tui/settings.json）：首启从 profile 补丁一次性导入、mutate 与
+// revision 冲突、其他 ns 转给宿主设置服务。
     ["verify-tui-settings", ['node', '--import', 'tsx/esm', 'scripts/verify-tui-settings.ts']],
 // sidePanel.panels 多选：勾选行与逗号字符串互转且保序、未注册 id 保留为占位行、
 // 插件面板注册即出现、至少保留一个、高级原始编辑（改序/手填 id、非法草稿拒绝）。
@@ -831,9 +822,8 @@ const GROUPS = {
 // /plan 参数在屏内的归一化（#1371）：补全目录自己的 `on` 令牌必须以裸命令离开屏幕，
 // `off` 与 `/plan <message>` 原样透传，裸 `/plan` 仍开 on/off 选择器。
     ["verify-plan-argument-normalization", ['node', '--import', 'tsx/esm', 'scripts/verify-plan-argument-normalization.tsx']],
-// 启动接管（独立入口，docs/standalone-host-design.md 5.3）：占位会话上先挂界面，后端打开后
-// 接管真会话（身份、cwd、能力、历史、本地行保留）；打开失败留提示行、/new 重试；打开途中
-// 释放或 /new 抢先时，迟到的会话被关闭；真实 Chat 在未就绪时 Enter 保留草稿、只放行本地命令。
+// 启动接管（独立入口）：占位会话上先挂界面，后端打开后接管真会话；打开失败留提示行、
+// /new 重试；未就绪时 Enter 保留草稿、只放行本地命令。
     ["verify-startup-adoption", ['node', '--import', 'tsx/esm', 'scripts/verify-startup-adoption.tsx']],
 // 只有 token 数没有正文的思考行：流式「思考中 · ~N tokens」、落定「已思考 · ~N tokens」，
 // 正文到达后显示正文；中英双语。
@@ -1234,8 +1224,7 @@ const GROUPS = {
 // displayName 内嵌换行入口压平（#160 窗口化列表单行契约的第一道防
 // 线）。注意必须走 tsx——脚本直接 import src/customTheme.ts。
     ["verify-themes", ['node', '--import', 'tsx/esm', 'scripts/verify-themes.mjs']],
-// ThemeProvider 的 `theme` prop 三态回归：挂载后到达的 prop 生效、prop 撤走不跳回、
-// 不可用名不崩且请求被暂存（随后注册上来要被接上，真 Cordis TuiThemeRuntime 做 oracle）。
+// ThemeProvider 的 `theme` prop 三态回归：迟到生效、撤走不跳回、不可用名暂存待注册。
     ["verify-theme-prop-late", ['node', '--import', 'tsx/esm', 'scripts/verify-theme-prop-late.tsx']],
 
 // Text 背景色回归（issue #166）：公开 themed Text 与 Box 一致支持

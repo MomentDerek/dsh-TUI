@@ -65,8 +65,8 @@ export async function createBackendHost(ctx: Context, cwd: string, stderr: (line
 
 /**
  * What the channel needs about the startup backend before its session exists,
- * plus `start()`, which opens it (mount claim, open, history). The standalone
- * entry mounts the screen in between (docs/standalone-host-design.md 5.3).
+ * plus `start()`, which opens it (mount claim, open, history); the screen
+ * mounts in between.
  * A resume failure rejects `start()`; no fresh session is started instead.
  */
 export async function prepareBackendStartup(ctx: Context, backend: AgentBackend, input: {

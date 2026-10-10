@@ -1,19 +1,8 @@
 /**
- * The TUI's own settings document (`~/.dsh-tui/settings.json`;
- * docs/standalone-host-design.md 5.6 (a)) and the settings service over it
- * (src/dsh-adapter/tui-settings.ts):
- *
- *  - the first boot imports the DSH profile patch's `dsh-tui` row once:
- *    editable keys only, `!!js` fields skipped, the source recorded, the
- *    profile patch left untouched; a later boot never re-imports;
- *  - a missing profile patch imports nothing but still marks the import;
- *  - the registered scope resolves the user layer through the schema's
- *    defaults, and its watchers see every write;
- *  - `mutate` applies set/unset path ops (empty parents pruned), persists
- *    them, and refuses a stale revision with `SETTINGS_CONFLICT`;
- *  - every other namespace goes to the delegate, and the TUI's own row
- *    replaces the delegate's row of the same namespace;
- *  - a broken document reads as an empty layer and is not re-imported over.
+ * The TUI's own settings document (`~/.dsh-tui/settings.json`) and its settings
+ * service (src/dsh-adapter/tui-settings.ts): one-time import from the profile
+ * patch's `dsh-tui` row, scope resolution, `mutate`, delegation of other
+ * namespaces, and a broken document.
  *
  * Run: node --import tsx/esm scripts/verify-tui-settings.ts
  */

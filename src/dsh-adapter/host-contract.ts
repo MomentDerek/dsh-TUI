@@ -1,9 +1,8 @@
 /**
- * The host contract of this package's entry (docs/standalone-host-design.md
- * 5.4, ADAPTER.md): what the entry loads from the installed `dsh` and what it
- * reproduces. Read by ./host-dsh.ts (the capability probe), ./contract.ts
- * (blessed type packages) and scripts/verify-host-contract.ts (probe,
- * fake hosts, replica fingerprints). Pure data, no imports.
+ * The host contract of this package's entry (ADAPTER.md): what the entry
+ * loads from the installed `dsh` and what it reproduces. Read by
+ * ./host-dsh.ts, ./contract.ts and scripts/verify-host-contract.ts.
+ * Pure data, no imports.
  */
 
 /** The host CLI package whose installation the entry loads. */
@@ -20,7 +19,7 @@ export type HostModuleVia =
   | 'app-boot'
 
 export interface HostModuleSpec {
-  /** The field of `HostDsh` it fills (./host-dsh.ts). */
+  /** The `HostDsh` field it fills. */
   readonly key: string
   readonly specifier: string
   readonly via: HostModuleVia
@@ -48,9 +47,8 @@ export const HOST_MODULES = [
 
 /**
  * The packages ./host-dsh.ts takes types from (`import type` only); each is
- * an optional peer + dev dependency and blessed. The host package itself is
- * not one (its dependency tree is the whole CLI): ./host-dsh.ts declares the
- * `profile-boot` exports it reads.
+ * an optional peer + dev dependency and blessed. Not the host package itself
+ * (its dependency tree is the whole CLI).
  */
 export const HOST_TYPE_PACKAGES = [
   '@deepseek-ai/dsh-app-boot',

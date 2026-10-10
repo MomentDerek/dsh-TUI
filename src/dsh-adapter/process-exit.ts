@@ -1,19 +1,16 @@
 /**
- * Process ownership in this package's entry (docs/standalone-host-design.md
- * 5.5): signals and exit go through the TUI's exit funnel (./plugin.ts)
- * whenever it is up (`ProcessExitSeam.request`); without an owner the entry
- * disposes the root itself, bounded. Either way a termination signal ends the
+ * Process ownership in this package's entry: signals and exit go through the
+ * TUI's exit funnel (./plugin.ts) whenever it is up; without an owner the
+ * entry disposes the root itself, bounded. Either way a termination signal ends the
  * process by that signal: the launcher treats a numeric non-zero exit as a
  * crash, and exit 0 would hide the termination from `timeout`, tmux and
  * service managers — so `runProfile`'s 0 / 130 is not reproduced. A second
  * signal forces the exit at once.
  */
 
-/** The signals the entry turns into an orderly exit. */
 export type TerminationSignal = 'SIGTERM' | 'SIGHUP' | 'SIGINT'
 export const TERMINATION_SIGNALS: readonly TerminationSignal[] = ['SIGTERM', 'SIGHUP', 'SIGINT']
 
-/** What asked the process to end. */
 export type ExitRequest =
   | { readonly kind: 'signal'; readonly signal: TerminationSignal }
   /** `ctx.appExit(code)` (dsh-cmdline): a plugin asked the app to exit. */
@@ -27,7 +24,6 @@ export type ExitRequest =
  */
 export type ExitRequestAnswer = 'exiting' | 'pending' | 'supervising' | 'refused'
 
-/** The entry's process-exit seam, shared with the runtime it mounts. */
 export interface ProcessExitSeam {
   request?: (request: ExitRequest) => ExitRequestAnswer
 }
@@ -66,7 +62,7 @@ export interface EntrySignalOptions {
   readonly where?: () => string | undefined
 }
 
-/** Install the entry's signal handling (once per process). */
+/** Once per process. */
 export function installEntrySignals(options: EntrySignalOptions): void {
   let first: TerminationSignal | undefined
   const onSignal = (signal: TerminationSignal): void => {

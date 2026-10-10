@@ -318,9 +318,7 @@ const cleanManifest = {
   const pkgDir = join(profHome, 'profiles', 'dsh-tui', 'node_modules', '@deepseek-harness-tui', 'dsh-tui')
   mkdirSync(pkgDir, { recursive: true })
   writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: PACKAGE, version: ownVersion }))
-  // The stub dsh is no installed host the package entry could load: keep the
-  // DSH launch on `dsh --profile` directly, the path this matrix is about
-  // (the entry's own fallback to it is covered by verify-launcher §7).
+  // The stub dsh is no host the entry could load: keep DSH on `dsh --profile`.
   const runFb = (env = {}) => run([], { PATH: stub.dir, DSH_STUB_STATE: stub.state, DSH_HOME: profHome, DSH_TUI_NO_DELEGATE: '1', DSH_TUI_HOST_ENTRY_DSH: '0', ...env })
   {
     const r = runFb()

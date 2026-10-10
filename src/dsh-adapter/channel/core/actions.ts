@@ -147,8 +147,7 @@ export function createCapabilityDelegates(deps: {
   }
 }
 
-/** Merge the layers and install them once (`replace`: the reinstall of a
- *  startup adoption's late extension, core/compose.ts). */
+/** Merge the layers and install them (`replace`: the adoption-window reinstall, core/compose.ts). */
 export function installChannelActions(
   readiness: ReturnType<typeof createChannelActionReadiness>,
   layers: {

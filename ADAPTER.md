@@ -93,20 +93,11 @@ manifest 一致,过期即红)。
   缺模块 / 缺导出即抛出点名原因,入口回退(DSH 内核交给 `dsh --profile`,Claude 内核无宿主解析)
   并把原因写 stderr 与界面通知。`host-dsh.ts` 用 `Pick<typeof 宿主模块, 契约导出名>` 取类型
   (`profile-boot` 除外,本地声明),契约写了 pinned 宿主不存在的导出时编译失败。
-- **复刻面**:`HOST_REPLICAS` 列出入口复刻的上游函数体(`createProcessShutdown` 的 shutdown
-  半边与超时常量、`createAppReady`、`composeProfile`、`runProfile`、app-boot `boot()`、
-  bin.js `reportStartupFailure` 与 `runCli`),`host-replica.snapshot.json` 记录它们在
-  `HOST_REPLICA_VERSION` 上的 sha256。`HOST_DEVIATIONS` 列出刻意的偏差(不复刻 `interrupt`、
-  信号以同一信号结束而非 0/130、`exitSeam`、`uninstallFailLoud` 在 `processGuardActive()` 后、
-  所有组合失败都写报告、`deferRootCapabilityGuard`、`process.report.excludeNetwork`、
-  劫持先于 TUI 模块)。
-- **门禁**:`verify:contract` 额外跑 `scripts/verify-host-contract.ts`——对逐个缺导出 / 缺模块
-  的假宿主断言点名失败、无头起入口验证回退与原因传递、核对快照与 `HOST_REPLICA_VERSION` 一致;
-  有已装宿主(PATH 上的 `dsh` 或 `DSH_TUI_CONTRACT_DSH`)时再跑生产探测并比对复刻指纹,
-  CI 无宿主时跳过这两步。已发布版本不可变,指纹只随版本线移动:移动版本线时在装有该版本
-  `dsh` 的机器上复核、把变化搬进 `host-dsh.ts`,再
-  `node --import tsx/esm scripts/verify-host-contract.ts --snapshot` 重写快照。已装宿主是
-  其他版本时指纹差异只打警告。
+- **复刻面**:`HOST_REPLICAS` 列出入口复刻的上游函数体,`host-replica.snapshot.json` 记录它们在
+  `HOST_REPLICA_VERSION` 上的 sha256;刻意的偏差逐条记在 `HOST_DEVIATIONS`(同文件),审查复刻改动时以它为准。
+- **门禁**:`verify:contract` 额外跑 `scripts/verify-host-contract.ts`(覆盖面见其头注释):假宿主回退
+  在 CI 上总跑;生产探测与复刻指纹只在有已装宿主(PATH 上的 `dsh` 或 `DSH_TUI_CONTRACT_DSH`)时跑。
+  移动版本线时在装有该版本 `dsh` 的机器上复核、把变化搬进 `host-dsh.ts`,再用 `--snapshot` 重写快照。
 
 ## Patch Surface
 

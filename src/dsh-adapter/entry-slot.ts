@@ -1,13 +1,12 @@
 /**
  * The hand-off between this package's entry and the profile's `dsh-tui` row
- * in one Cordis root (docs/standalone-host-design.md 3, 5.4): the entry mounts
- * the screen and publishes the slot, and the row then runs only the DSH side
- * through `attachDsh`. Without a slot the row takes its usual path. On
- * `globalThis` + `Symbol.for` so a row loaded from another copy of this
- * package still meets the entry. Dependency-free, so the row reads it cheaply.
+ * in one Cordis root: the entry mounts the screen and publishes the slot, and
+ * the row then runs only the DSH side through `attachDsh`. Without a slot the
+ * row takes its usual path. On `globalThis` + `Symbol.for` so a row loaded
+ * from another copy of this package still meets the entry.
  */
 
-/** What the row does in the entry's place. Hooks are filled by the entry's runtime. */
+/** Hooks are filled by the entry's runtime. */
 export interface EntrySlot {
   /** Set by the row as soon as it applies, so the entry can tell whether a
    *  `dsh-tui` row exists once the composition settled. */
@@ -29,18 +28,12 @@ export interface EntrySlot {
 }
 
 /**
- * The same hand-off for kernels with no `dsh-tui` row (Claude, Codex: the
- * entry composes the light profile itself, design 5.7). Passed in through
- * `RuntimeApplyOptions.composeSeam`, so no global symbol. Filled by the runtime.
+ * As EntrySlot, for kernels without a `dsh-tui` row (the entry composes the
+ * light profile itself). Passed through `RuntimeApplyOptions.composeSeam`.
  */
 export interface HostComposeSeam {
-  /** As {@link EntrySlot.firstFrameFlushed}. */
   firstFrameFlushed?: () => Promise<void>
-  /**
-   * The light composition settled and was audited: the runtime re-reads what
-   * it resolved at mount time (runtime themes, the `/settings` section) and
-   * re-renders once. Never called on a failed composition.
-   */
+  /** Re-reads mount-time resolutions (runtime themes, `/settings` section) and re-renders once. */
   composeSucceeded?: () => void
 }
 

@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 /**
- * 轻量 profile 的裁剪表 ↔ patch 行 id 静态对口门禁。
- *
- * `LITE_PROFILE_ROW_DISABLES`（src/dsh-adapter/lite-profile.ts）的每个 `id` 必须是
- * `cordis.patch.yml` 里真实的 insert 行 id：改名后 disable 静默失效、被裁服务重新
- * pending，而 `verify:patch-surface` / `verify:build` 都不红。断言：表非空且无重复；
- * 每个 id 都在 patch 的 insert id 里；每条 `missing` 非空。解析口径同
- * `scripts/verify-patch-surface.ts` 的 `parsePatch`。
+ * 门禁：`LITE_PROFILE_ROW_DISABLES` 的每个 `id` 必须是 `cordis.patch.yml` 里真实的
+ * insert 行 id——改名后 disable 静默失效，而 `verify:patch-surface` 不会红。
  *
  * 跑法：node --import tsx/esm scripts/verify-lite-profile-rows.mjs
  */

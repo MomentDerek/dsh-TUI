@@ -1,8 +1,8 @@
 /**
- * The TUI's own settings document, `~/.dsh-tui/settings.json`
- * (docs/standalone-host-design.md 5.6): the `/settings` user layer of the
- * `dsh-tui` namespace for every kernel. A boot that finds no document imports
- * the DSH profile patch's `dsh-tui` row once; the patch is never written.
+ * The TUI's own settings document, `~/.dsh-tui/settings.json`: the
+ * `/settings` user layer of the `dsh-tui` namespace for every kernel. A boot
+ * that finds no document imports the DSH profile patch's `dsh-tui` row once;
+ * the patch is never written.
  * Unlike the other ~/.dsh-tui preferences a failed write throws: the settings
  * screen reports it.
  */

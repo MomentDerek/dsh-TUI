@@ -189,7 +189,7 @@ export interface RuntimeApplyOptions {
   /**
    * Mount before the non-DSH startup session opens and adopt it once open
    * (standalone entry only; the profile path's DSH fallback needs the open to
-   * settle before the mount). docs/standalone-host-design.md 5.3.
+   * settle before the mount).
    */
   readonly deferBackendOpen?: boolean
   /** The DSH profile for a host whose argv has no `--profile`: `/update` and the settings import use it. */
@@ -201,18 +201,11 @@ export interface RuntimeApplyOptions {
   readonly entrySlot?: EntrySlot
   /** Light-profile compose seam for kernels without a `dsh-tui` row (standalone entry only, never with `entrySlot`). */
   readonly composeSeam?: HostComposeSeam
-  /**
-   * The kernel the entry routed to (../hostEntryRoute.ts). Its rebuilt Config
-   * lacks the patch's Config row, so the runtime must not resolve the chain
-   * again. Unset on the profile path.
-   */
+  /** The entry's rebuilt Config lacks the patch's Config row: do not re-resolve the kernel. */
   readonly entryKernel?: KernelBackendId
   /** Why the entry is not using the installed dsh: shown once as a warning notice. */
   readonly hostNotice?: string
-  /**
-   * The entry's process-exit seam (./process-exit.ts): filled with this
-   * runtime's exit funnel once mounted, cleared on teardown.
-   */
+  /** Filled with this runtime's exit funnel once mounted, cleared on teardown. */
   readonly exitSeam?: ProcessExitSeam
 }
 
@@ -295,8 +288,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
 
   // Validate settings before creating an agent or taking over the terminal.
   const tuiSettingsNs = resolveSettingsNamespace(configOwner, Config) as SettingsNamespace
-  // The TUI's own settings layer (~/.dsh-tui/settings.json; design 5.6 (a)):
-  // the same document on every kernel and entry. Other namespaces still go
+  // The TUI's own settings layer (~/.dsh-tui/settings.json): the same
+  // document on every kernel and entry. Other namespaces still go
   // to the host's settings service (absent in the standalone entry).
   const tuiSettings = createTuiSettingsService({
     ns: tuiSettingsNs,
@@ -306,7 +299,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   })
 
   // The in-process DSH kernel's screen mounts before DSH has composed: what
-  // needs DSH's services runs later, in `attachDsh` (see RuntimeApplyOptions).
+  // needs DSH's services runs later, in `attachDsh`.
   const entrySlot = runtimeOptions.entrySlot
   const dshInEntry = entrySlot !== undefined
   const composeSeam = runtimeOptions.composeSeam
@@ -561,8 +554,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       'The bundle patch is older than the installed dsh-tui package — update the globally installed dsh-tui launcher to match the profile (issue #183).',
     )
   }
-  // v0.15 identity: admit third-party activations from their package-root
-  // `dsh-plugin.json` (./admission-loader.ts).
+  // Admit third-party activations from their package-root `dsh-plugin.json`.
   armAdmissionLoader(ctx)
   // The in-process DSH kernel mounts before the profile's workspace providers
   // exist: a provider URI resolves in `attachDsh`, and an unresolvable one
@@ -621,7 +613,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // warning, never a crashed boot. `envKnown` carries that into the resolver for
   // the one source that arrives raw; the other three are parsed above/beside.
   const rememberedBackend = readKernelPrefs().backend
-  // The entry already routed the kernel (see RuntimeApplyOptions.entryKernel).
   const entryKernel = runtimeOptions.entryKernel
   const backendChoice: KernelBackendId = entryKernel ?? (dshInEntry ? DSH_BACKEND_ID : resolveRememberedBackend({
     ...(handoffBackend === undefined ? {} : { handoff: handoffBackend }),
@@ -686,7 +677,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   let backendStart: Awaited<ReturnType<typeof openBackendStartup>> | undefined
   /** The startup session still opening (`deferBackendOpen`); the channel adopts it. */
   let backendStartup: Promise<{ readonly session: AgentSession; readonly history: readonly AgentEvent[] }> | undefined
-  /** Set once the channel holds `backendStartup` (its binding then owns the session). */
+  /** Once set, the channel's binding owns the session. */
   let backendStartupAdopted = false
   let backendFallbackNotice: string | undefined
   const deferBackendOpen = runtimeOptions.deferBackendOpen === true
@@ -776,7 +767,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       meta,
       config.preset,
     )
-  // The DSH startup agent; the in-process DSH kernel's arrives with `attachDsh`.
   let agent: Agent | undefined = resolved.agent
   const { handle, agentPreset, route: createdRoute } = resolved
   markBoot('session-open-end')
@@ -864,11 +854,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   } = {}
   /**
    * The in-process DSH kernel's `/new` while no DSH session was adopted (its
-   * startup open failed): `resolveAgent` plus workspace ownership on the row's
-   * context. Installed by `attachDsh`; the adopted session's extensions take over.
+   * startup open failed). Installed by `attachDsh`.
    */
   let openDshSession: ((cwd: string) => Promise<AgentSession>) | undefined
-  /** The in-process DSH kernel's composition failed (`composeFailed`). */
   let compositionFailed = false
   /** How the in-process DSH kernel's composition ended: a failing startup open
    *  waits for it, so a failed composition (the root cause) is reported. */
@@ -974,7 +962,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // 的改动由 applyBrand 实时接上（branding.ts 负责解析）。
     brand: config.brand,
   })
-  // The channel's binding owns the deferred open from here.
   backendStartupAdopted = backendStartup !== undefined
   // Register the live Channel for the adapter Kernel. The Channel driver
   // resolves it lazily from the composition root, so this can be called after
@@ -994,8 +981,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // at that point. The kernel-switch branch skips the refresh because the
   // replacement writes its own record when it boots.
   const bootAttemptId = `${process.pid.toString(36)}-${Date.now().toString(36)}`
-  /** The live DSH agent behind the channel; none before DSH has composed
-   *  (the in-process DSH kernel) or off DSH. */
+  /** None before DSH has composed (the in-process DSH kernel) or off DSH. */
   const liveDshAgent = (): Agent | undefined => dshAgentOn(ctx, channel.agentId)
   const refreshLastRunRecord = (): void => {
     // An observational composition (replay/embedding) is not "the instance the
@@ -1105,8 +1091,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   })
   // Old hosts register a settings.yaml scope. 0.1.7 projects the plugin's
   // volatile Config fields instead; both paths apply edits without remounting.
-  // The TUI's settings no longer wait for the host's settings service: the
-  // file-backed scope applies before the first mount on every host.
+  // File-backed settings apply before the first mount.
   ;((settingsCtx: { settings: typeof tuiSettings; effect: Context['effect'] }) => {
     const scope = createSettingsScope<SettingsValue>(configOwner, settingsCtx.settings,
       tuiSettingsNs,
@@ -1520,8 +1505,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // channel.ts reads through the same fallback, so both sides meet in the
   // same registry either way.
   // The in-process DSH kernel registers into the local host first and moves
-  // the section to the composition's service once it exists
-  // (`rehomeSettingsSection`), where the channel then reads it.
+  // the section to the composition's service once it exists.
   let rehomeSettingsSection = (): void => undefined
   {
     let settingsSections = getHostSettingsSections(
@@ -1862,8 +1846,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   bindApprovalStore(ctx, approvalStore)
   // A non-DSH backend answers its own permission prompts: the DSH answerer
   // is not registered for it.
-  // The in-process DSH kernel installs it from its dsh-tui row (`attachDsh`):
-  // the approval service is not there before DSH has composed.
+  // The in-process DSH kernel installs it in `attachDsh`.
   const mountDshApprovals = (dshCtx: Context): void => {
     if (dshCtx.get('approval') !== undefined && backendStart === undefined) {
       dshCtx.on('approval/request', (req, next) =>
@@ -2154,7 +2137,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   })
   const handleExit = funnel.handleExit
   const exitSeam = runtimeOptions.exitSeam
-  /** The entry's signals and DSH's `appExit`, into this funnel. */
   const requestProcessExit = (request: ExitRequest): ExitRequestAnswer => {
     // A handoff is under way: no backstop, which could kill the supervisor of
     // a replacement already up; superviseReplacement takes the seam over.
@@ -2298,7 +2280,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // 品牌镜像初值（branding.ts）：首帧渲染前铺好，避免 Claude 后端先画一屏
   // 蓝再变橙。Chat 里的 effect 会在品牌解析变化时跟进更新这个镜像。
   setActiveBrand(resolveBrand(config.brand, backendChoice))
-  // Rebuilt by `refreshHostServices` when services arrive after the mount.
   const liveThemeHost = (): TuiThemeHost | undefined => getHostThemes(ctx.get('tuiThemes') as TuiThemeRuntime | undefined)
   const buildChat = (): React.ReactElement => React.createElement(Chat, {
     channel,
@@ -2431,7 +2412,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   armFirstFrameAck(process.stdout)
   markBoot('render-start')
   // The entry's composition right after the mount freezes the event loop for
-  // a while (design 6.1): it waits for the first frame to reach the terminal.
+  // a while: it waits for the first frame to reach the terminal.
   const awaitsFirstFrame = entrySlot !== undefined || composeSeam !== undefined
   let frameFlushed = (): void => undefined
   const firstFrame = awaitsFirstFrame ? new Promise<void>(resolve => { frameFlushed = resolve }) : undefined
@@ -2530,10 +2511,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     await new Promise<void>(resolve => { process.stdout.write('', () => { resolve() }) })
   }
   /**
-   * Services composed after the mount (`attachDsh`, or the seam's
-   * `composeSucceeded`): re-read what the screen took as values at mount —
-   * Chat's stores and theme host, the toast sink, and the /settings section,
-   * which moves to the composition's sections service.
+   * Services composed after the mount: re-read what the screen took as values
+   * at mount (Chat's stores, theme host, toast sink, /settings section).
    */
   const refreshHostServices = (): void => {
     rehomeSettingsSection()
@@ -2569,7 +2548,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       try {
         channel.pushLocal(t('startup-open-failed', { backend: backendLabel('dsh'), err: reason.split('\n')[0] ?? reason }), [hint])
       } catch {
-        // The screen is gone; the debug log above has it.
       }
     }
     entrySlot.attachDsh = async (rowCtx, rowRuntimeConfig) => {
@@ -2971,16 +2949,14 @@ export function runCrashExit(deps: CrashExitDeps): void {
   deps.finish(`dsh-tui crashed: ${detail.message}`)
 }
 
-/** The DSH agent `agentId` names; none where the root has no `ctx.agents`
- *  (before DSH composes, or a non-DSH kernel on a bare root). */
+/** None where the root has no `ctx.agents` (before DSH composes, or a non-DSH kernel). */
 function dshAgentOn(ctx: Context, agentId: string): Agent | undefined {
   return (ctx.get('agents') as { get(id: ReturnType<typeof SessionId>): Agent | undefined } | undefined)?.get(SessionId(agentId))
 }
 
 /**
  * The crash tail's resume markers (exported for scripts/verify-shutdown-fallback).
- * Leaves the marker a clean exit would, never CLEARS one, then refreshes the
- * last-run record so the launcher's retry reopens this session.
+ * Leaves the marker a clean exit would, never CLEARS one.
  */
 export function writeCrashResumeMarkers(deps: {
   readonly ctx: Context
@@ -3232,10 +3208,9 @@ function preservedSessionTail(sessionId: string, hint: (sessionId: string) => st
 }
 
 /**
- * The entry's signals while following a replacement (./process-exit.ts):
- * SIGTERM is forwarded to it; SIGINT/SIGHUP already reach it through the
- * process group and are not sent twice. A replacement that dies by a
- * termination signal ends this process the same way.
+ * The entry's signals while following a replacement: SIGTERM is forwarded;
+ * SIGINT/SIGHUP already reach it through the process group. A replacement
+ * that dies by a termination signal ends this process the same way.
  */
 function superviseReplacement<T extends TuiRestartOptions>(exitSeam: ProcessExitSeam | undefined, options: T): T {
   if (exitSeam === undefined) return options
@@ -3370,7 +3345,7 @@ function disposeRootAndThen(ctx: Context, done: () => void, fallback: number | (
     else fallback()
   }, 5000)
   timer.unref()
-  // A composition still running into this root settles first (./root-dispose.ts).
+  // A composition still running into this root settles first.
   // The pooled, process-wide resources of every backend this process actually
   // loaded are closed here — after the fiber, never before (P0 D4-P2/P3).
   void disposeRootSettled(ctx, () => withHostRootCapability(() => ctx.root.fiber.dispose())).finally(() => unloadBackends()).then(

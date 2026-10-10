@@ -115,12 +115,8 @@ sourcePaths['@deepseek-ai/dsh-session-persistence-jsonl'] = [
   if (newest !== undefined) sourcePaths['@deepseek-ai/dsh-session-format'] = [newest.declaration]
 }
 
-// The standalone entry's host types (src/dsh-adapter/host-dsh.ts, `import type`
-// only) describe the host line in src/dsh-adapter/host-contract.ts. An older
-// line never runs the entry: its capability probe fails and the launcher falls
-// back to `dsh --profile`. Checking an older line therefore pins those
-// packages to the installed declarations, like the persistence pins above;
-// the contract's own line keeps them source-authoritative.
+// The entry's host types describe the host-contract line; an older line never
+// runs the entry (its probe fails), so there they pin to installed declarations.
 {
   const contract = readFileSync(join(tuiRoot, 'src/dsh-adapter/host-contract.ts'), 'utf8')
   const hostLine = /export const HOST_REPLICA_VERSION = '([^']+)'/.exec(contract)?.[1]

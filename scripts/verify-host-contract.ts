@@ -1,24 +1,10 @@
 /**
  * The standalone entry's host contract (src/dsh-adapter/host-contract.ts,
- * ADAPTER.md). Part of `verify:contract`:
- *
- *  1. the contract's packages are blessed, optional at run time, and every
- *     module it loads belongs to a declared package;
- *  2. the capability probe (`loadHostDsh`, the production code) passes on the
- *     installed host (the `dsh` on PATH, or the package dir in
- *     DSH_TUI_CONTRACT_DSH); skipped without one — the host CLI is no
- *     dependency of this package, so CI has none;
- *  3. it fails, naming the gap, on fake hosts that each lack one listed
- *     export, one module, or app-boot itself (and loads the complete fake, so
- *     every failure is the one removed piece);
- *  4. the entry falls back on such a host: `dsh --profile` takes the launch
- *     and the reason reaches stderr and the delegated screen
- *     (`DSH_TUI_HOST_NOTICE`), headless with a fake `dsh` on PATH;
- *  5. host-replica.snapshot.json records HOST_REPLICAS on HOST_REPLICA_VERSION;
- *     on an installed host of that version the reproduced upstream bodies
- *     still hash to it (a changed body fails with the pieces to review), on
- *     another version the differences are warnings. Published versions are
- *     immutable, so the hashes move only with the line: review when moving it.
+ * ADAPTER.md), part of `verify:contract`: manifest consistency, the capability
+ * probe on fake hosts and (when one is found via PATH or DSH_TUI_CONTRACT_DSH)
+ * the installed host, the `dsh --profile` fallback, and the replica
+ * fingerprints in host-replica.snapshot.json. No installed host in CI, so
+ * those parts skip there.
  *
  * Run: node --import tsx/esm scripts/verify-host-contract.ts [--snapshot]
  * (`--snapshot` rewrites the fingerprints from an installed host on the line.)

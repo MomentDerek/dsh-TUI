@@ -180,9 +180,8 @@ const deferredGuardRoots = new WeakSet<object>()
 /**
  * Hold the root-capability guard back on `root` until the returned release
  * runs. The entry mounts the TUI before composing the profile into the same
- * root (docs/standalone-host-design.md 5.7), and DSH's plugins use root
- * capabilities while they activate, which the guard would refuse. Fiber
- * tracking starts at once either way.
+ * root, and DSH's plugins use root capabilities while they activate, which
+ * the guard would refuse. Fiber tracking starts at once either way.
  */
 export function deferRootCapabilityGuard(root: Context): () => void {
   deferredGuardRoots.add(root as object)

@@ -103,11 +103,7 @@ if (probeMode) {
     KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs,
     resolveRememberedBackend, resolveResumeTarget, isRegisteredBackend, parseBackendChoice,
     DSH_BACKEND_ID,
-    // These cases pin the `dsh --profile` path (DSH_TUI_HOST_ENTRY=0 below), so
-    // the boot is never the entry's in-process DSH row: the kernel comes from the
-    // env/Config ranking alone. Nothing is handed in from an entry either, so
-    // the compiled `apply` sees an empty options object — no kernel route
-    // (`RuntimeApplyOptions.entryKernel`, replayed as a declaration below).
+    // These cases pin the `dsh --profile` path, so `apply` gets no entry kernel route.
     dshInEntry: false,
     runtimeOptions: {},
     config: {
@@ -196,11 +192,8 @@ async function compiledStartup() {
   assert.ok(submit, 'compiled initial prompt submission branch exists')
   let target
   /**
-   * Only the boot's own startup reaches `resolveAgent` at the top level of
-   * `apply`. The DSH-in-entry path (`attachDsh`, Phase 2) opens its session
-   * inside a nested function with a target of its own
-   * (`rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs)`); walking into it
-   * would take that expression for the boot's resume target.
+   * Only top-level `resolveAgent` calls in `apply`: the DSH-in-entry path
+   * (`attachDsh`) has its own nested resume target that must not be taken.
    */
   const isNestedFunction = node => ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node) || ts.isMethodDeclaration(node)
@@ -270,9 +263,7 @@ try {
     ...(isWin ? { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, PATHEXT: process.env.PATHEXT } : {}),
     HOME: temp, USERPROFILE: temp, DSH_HOME: dshHome,
     DSH_TUI_ARGV_PROBE: '1', DSH_TUI_ARGV_STARTUP: startupFile, NODE_OPTIONS: '--no-deprecation',
-    // These cases pin the argv handed to `dsh --profile`. A Claude launch now
-    // goes to the package's own entry instead (verify-launcher.mjs §7), so
-    // the routing is off here to keep the Claude resume cases on that path.
+    // A Claude launch would go to the entry; routing is off to keep these on `dsh --profile`.
     DSH_TUI_HOST_ENTRY: '0',
   }
   const cases = [

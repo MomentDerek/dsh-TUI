@@ -1,10 +1,8 @@
 /**
  * Fingerprints of the upstream bodies the standalone entry reproduces
- * (src/dsh-adapter/host-contract.ts HOST_REPLICAS). Reads the bundled JS of a
- * package's `lib/*.js` as text (never imports it), cuts one top-level
- * `function` or `const` out by name and hashes it. The bundler keeps these
- * names and its output is stable per version, so a hash change means the
- * upstream body changed.
+ * (host-contract.ts HOST_REPLICAS): cuts one top-level `function`/`const` by
+ * name out of a package's bundled `lib/*.js` text (never imported) and hashes
+ * it. Bundler output is stable per version, so a hash change means the body changed.
  */
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'

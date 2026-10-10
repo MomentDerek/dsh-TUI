@@ -2,9 +2,8 @@
  * What a channel composition needs from its host, without naming Cordis:
  * service lookups, a logger, the lifetime hook, the DecisionEvents dispatch
  * and gate, and the DSH-only `agent/pre-step` waterfall. Implemented by
- * `cordis-host.ts` (in the single-root entry the Cordis root is the host,
- * docs/standalone-host-design.md 5.1). Lookups for services the host does not
- * mount return undefined, and every consumer degrades on that.
+ * `cordis-host.ts`. Lookups for services the host does not mount return
+ * undefined, and every consumer degrades on that.
  */
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { AdapterRuntimeOptions } from '../../adapter/kernel/runtime.js'
@@ -51,7 +50,6 @@ export interface ChannelHost extends ServiceLookup {
   markDecisionDispatchTopology(): () => void
   /** The in-package settings-sections host, used when no row provides one. */
   localSettingsSections(): TuiSettingsSectionsHost
-  /** Hear about named services coming or going after construction (a
-   *  profile composed after the screen mounted); absent = never. */
+  /** Hear about named services coming or going after construction; absent = never. */
   watchServices?(listener: (name: string) => void): () => void
 }

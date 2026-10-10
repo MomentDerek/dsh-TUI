@@ -1,5 +1,5 @@
 /**
- * Which process hosts a launch (docs/standalone-host-design.md 5.8): every
+ * Which process hosts a launch (docs/standalone-host-design.md): every
  * kernel runs in this package's entry by default, DSH included unless
  * `DSH_TUI_HOST_ENTRY_DSH=0` hands it back to `dsh --profile`. The launcher
  * repeats the cheap half inline; the entry decides again here with the
@@ -15,7 +15,6 @@ export { hostEntryDshEnabled } from './kernelPrefs.js'
 /** The profile the launcher would have started (`dsh --profile <name>`). */
 export const HOST_PROFILE_ENV = 'DSH_TUI_PROFILE'
 
-/** The profile a launch belongs to. */
 export function hostProfile(env: NodeJS.ProcessEnv = process.env): string {
   const name = env[HOST_PROFILE_ENV]?.trim()
   return name === undefined || name === '' ? 'dsh-tui' : name
@@ -51,7 +50,7 @@ export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
   })
 }
 
-/** Where the entry sends a launch (docs/standalone-host-design.md 5.8). */
+/** Where the entry sends a launch. */
 export type EntryRoute =
   /** Run this kernel in this process: DSH composes the profile, the others
    *  the light profile (given a usable installed dsh). */
@@ -59,7 +58,7 @@ export type EntryRoute =
   /** Hand the launch to `dsh --profile <profile>` unchanged. */
   | { readonly kind: 'delegate' }
 
-/** How the entry routes the kernel {@link entryKernel} found: only DSH can be delegated. */
+/** Only DSH can be delegated. */
 export function entryRoute(kernel: KernelBackendId, env: NodeJS.ProcessEnv = process.env): EntryRoute {
   if (kernel !== 'dsh') return { kind: 'entry', kernel }
   return hostEntryDshEnabled(env) ? { kind: 'entry', kernel } : { kind: 'delegate' }

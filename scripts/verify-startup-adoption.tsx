@@ -1,30 +1,9 @@
 /**
- * Startup adoption (docs/standalone-host-design.md 5.3): the standalone
- * entry mounts the screen on a placeholder session while the backend opens,
- * then the channel adopts the real session.
- *
- * Channel level (real `createChannel`, fake sessions, a hand-settled open):
- *  - before the open settles the channel is not ready, names no session and
- *    the placeholder serves nothing; a local row printed meanwhile survives
- *    the adoption;
- *  - the adoption binds the real session once: ready, its id, its cwd (a
- *    resumed session runs where it was recorded), its capability snapshot
- *    and subagent control, its history painted, the placeholder closed;
- *  - a failed open leaves the placeholder bound with a notice row naming the
- *    error and one of its own naming `/new` (a notice is one line); `/new`
- *    then opens through `openSession` and is ready;
- *  - a channel released mid-open closes the session when it arrives, with no
- *    notice;
- *  - `/new` run while the open is still going wins: the startup session is
- *    closed on arrival and no failure notice appears.
- *
- * Screen level (real `Chat` over a not-ready channel, in the composer and
- * on the first-boot landing page, whose Enter has its own submit path):
- * Enter on a typed prompt keeps the draft and says the backend is still
- * starting (on the landing page in its Tips row); a non-local command is
- * refused the same way; a local one (`/help`) runs; after the adoption Enter
- * sends to the real session. A failed open closes the landing page, so the
- * failure row and its `/new` hint show, and the draft moves to the composer.
+ * Startup adoption: the standalone entry mounts on a placeholder session and
+ * the channel adopts the real one when the backend opens. Covers the channel
+ * (real `createChannel`, fake sessions, hand-settled open: success, failure,
+ * release mid-open, `/new` racing it) and the screen (real `Chat`, composer
+ * and first-boot landing page, before and after adoption).
  *
  * Run: node --import tsx/esm scripts/verify-startup-adoption.tsx
  */

@@ -4,8 +4,7 @@ import { appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSy
 import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-// Per-function paths: the `semver` root pulls in all its modules, and this
-// file loads before the first frame (docs/standalone-host-design.md 6.1).
+// Per-function imports: this file loads before the first frame.
 import gt from 'semver/functions/gt.js'
 import gte from 'semver/functions/gte.js'
 import lt from 'semver/functions/lt.js'

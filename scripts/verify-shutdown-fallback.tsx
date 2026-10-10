@@ -160,12 +160,8 @@ check('runtime-present shutdown prints the notice', captured.chunks.join('').inc
 }
 
 // ── Cases E/F: the crash tail's resume markers per kernel ─────────────────
-// The standalone entry (src/dsh-adapter/host-entry.ts) runs the Claude kernel
-// on a bare `new Context()`: no `agents` service. The marker write used to
-// look the DSH session up first, unconditionally — a TypeError there was
-// swallowed by runCrashExit and skipped the Claude backend preference and the
-// last-run record, so the launcher's crash retry reopened the wrong session.
-// Drives the REAL runCrashExit around the REAL writeCrashResumeMarkers.
+// The standalone entry runs the Claude kernel on a bare `new Context()` (no
+// `agents` service); the marker write must not fail there.
 type CrashMarkerDeps = Parameters<typeof writeCrashResumeMarkers>[0]
 const crashWithMarkers = (deps: Omit<CrashMarkerDeps, 'writeResumeTarget' | 'refreshLastRunRecord'>) => {
   const record = { dshTargets: [] as string[], lastRunRefreshes: 0, finish: [] as string[], logged: [] as string[] }
@@ -224,10 +220,8 @@ const crashWithMarkers = (deps: Omit<CrashMarkerDeps, 'writeResumeTarget' | 'ref
   const agentWith = (events: unknown[]) => ({ session: { events } }) as never
   const userMessage = { type: 'user/message', seq: 1, time: 0, data: { source: { kind: 'user' } } }
   const looked: unknown[] = []
-  // A REAL Cordis root with the DSH registry provided. The crash tail reaches
-  // that registry through the service lookup (`ctx.get('agents')`, the shape
-  // liveDshAgent() uses), so a bare object carrying an `agents` property would
-  // stop observing the contract the moment the lookup shape changed.
+  // A real Cordis root, not a bare object with `agents`: the crash tail goes
+  // through `ctx.get('agents')`.
   const dshCtx = (live: unknown): Context => {
     const root = new Context()
     root.provide('agents' as never, { get: (id: unknown) => { looked.push(id); return live } } as never)

@@ -128,9 +128,8 @@ export function writeKernelPrefs(
 export const KERNEL_SWITCH_HANDOFF_ENV = 'DSH_TUI_BACKEND_HANDOFF'
 
 /**
- * The package's own entry, which hosts every kernel by default
- * (docs/standalone-host-design.md 5.8; routing in hostEntryRoute.ts). Kept
- * here so src/update.ts does not pull the routing module in.
+ * The package's own entry, which hosts every kernel by default (routing in
+ * hostEntryRoute.ts). Kept here so src/update.ts does not pull that module in.
  * `DSH_TUI_HOST_ENTRY=0` keeps every kernel on `dsh --profile`.
  */
 export const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
@@ -138,7 +137,6 @@ export const HOST_ENTRY_ENV = 'DSH_TUI_HOST_ENTRY'
  *  while it runs in the entry, relaunches through it (src/update.ts restartArgv). */
 export const HOST_ENTRY_PATH_ENV = 'DSH_TUI_HOST_ENTRY_PATH'
 
-/** Whether the host entry is switched off. */
 export function hostEntryDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[HOST_ENTRY_ENV] === '0'
 }

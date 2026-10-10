@@ -2479,10 +2479,8 @@ export function Chat({
     })()
   }
 
-  /**
-   * The startup phase's refusal (`ChannelUi.ready`) for paths that bypass the
-   * composer: true, after a notice, when `name` (undefined: plain text) must wait.
-   */
+  /** Not-ready refusal (`ChannelUi.ready`) for paths that bypass the composer:
+   *  true, after a notice, when `name` (undefined: plain text) must wait. */
   const refusedAtStartup = (name: string | undefined): boolean => {
     if (channel.ready !== false || (name !== undefined && isBootSafeCommand(name))) return false
     channel.notify(t('startup-not-ready', { backend: kernelCurrentOption?.shortLabel ?? channel.backendCapabilities.backendId }), { color: 'warning', timeoutMs: 2500 })
@@ -2596,7 +2594,6 @@ export function Chat({
     rawInput = '',
     images: readonly ComposerImageRef[] = [],
   ): boolean | Promise<boolean> => {
-    // Startup phase: paths that bypass the composer's tryRunCommand land here.
     if (refusedAtStartup(name)) return true
     switch (name) {
       case 'activity': {

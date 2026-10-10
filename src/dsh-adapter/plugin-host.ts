@@ -237,7 +237,7 @@ export class TuiPluginHostRuntime extends Service implements TuiPluginHost {
 
   /** @internal Start the Kernel after the whole plugin-host row (including
    * sibling storage/observer services) is mounted. Triggered only by the
-   * deferred effect in the constructor (see the end of `apply()`). */
+   * constructor's deferred effect. */
   startKernelRuntime(): void {
     const state = hostStateFor(this)
     const kernelRuntime = state.kernelRuntime
@@ -985,7 +985,4 @@ export function apply(ctx: Context): void {
   // messages.observe (C-042): the grant-gated observation broker the
   // channel publishes mapped session events into.
   ctx.plugin(TuiMessageObserverRuntime)
-  // The Kernel start is deliberately NOT triggered here: the host service
-  // above is not constructed yet (`ctx.get('tuiPluginHost')` is undefined).
-  // The constructor's deferred effect starts it once every sibling is ACTIVE.
 }

@@ -20,8 +20,7 @@ export function mountChannelUi(
   channel: ChannelState,
   pluginHost: unknown,
   mode: AdapterMode,
-  /** Look the plugin host up per probe instead (the plugin-host row can
-   *  compose after the mount); absent = `pluginHost` as given. */
+  /** Look the plugin host up per probe (late row); absent = `pluginHost`. */
   resolvePluginHost?: () => unknown,
 ): { channel: ChannelUi; dispose(): void } {
   // A registration, rather than Channel object equality, is the authority for

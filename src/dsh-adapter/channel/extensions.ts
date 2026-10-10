@@ -96,12 +96,9 @@ async function listSessionsSnapshot(ctx: Context): Promise<readonly SessionSumma
 
 /**
  * Attach the DSH specialists to a core whose bound session is a DSH session.
- * Called inside `createChannel`'s construction transaction (a throw here is
- * rolled back by the caller through the core's owner), or, for a channel
- * mounted on a startup placeholder, inside the tail of the adoption that
- * binds the DSH session (`core.extendOnAdopt`; a throw fails that adoption).
- * Either way the binding already holds the DSH session, so every read of
- * `binding.agent` below is a read at attach time.
+ * Called inside `createChannel`'s construction transaction, or inside the
+ * adoption that binds a placeholder's DSH session (`core.extendOnAdopt`); a
+ * throw fails either. The binding already holds the DSH session.
  */
 export function attachDshExtensions(
   core: CoreChannel,

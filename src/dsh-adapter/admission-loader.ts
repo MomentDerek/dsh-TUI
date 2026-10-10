@@ -1,9 +1,7 @@
 /**
- * v0.15 admission loader (docs/standalone-host-design.md 5.7): the dsh CLI
- * loads plugins; this side owns only the identity step. It watches the
- * composition for plugin activations, reads each entry's package-root
- * `dsh-plugin.json` and admits it through `getHostAdmission()`, binding the
- * identity to the plugin's own fiber. A refused activation keeps running (an
+ * Admits third-party plugin activations via their package-root
+ * `dsh-plugin.json` (`getHostAdmission()`), binding the identity to the
+ * plugin's own fiber. A refused activation keeps running (an
  * unload would rewrite the user's profile) but stays outside every mediated
  * capability. Listeners and the retry timer ride the caller's `ctx.effect`.
  */
@@ -104,7 +102,7 @@ export function armAdmissionLoader(
     // the fiber's lifetime (a restart reuses it; the package cannot move).
     if (!manifests.has(fiber)) manifests.set(fiber, manifestPathOf(loader, fiber))
     const resolved = manifests.get(fiber)
-    // Not a Community v0.15 component (no manifest at its package root):
+    // No manifest at its package root:
     // nothing to admit, and no retry will change that.
     if (resolved === undefined) {
       settle(fiber, 'skipped')

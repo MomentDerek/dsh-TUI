@@ -208,9 +208,8 @@ const sleep = (ms: number): Promise<void> =>
 }
 
 // ---------------------------------------------------------------------------
-// 4. A useInput that mounts after detachForShutdown (a late React commit
-// while the exit funnel settles)
-// must not re-enter raw mode: the funnel's DBP/DFE are already written.
+// 4. A useInput that mounts after detachForShutdown must not re-enter raw
+// mode: the funnel's DBP/DFE are already written.
 // ---------------------------------------------------------------------------
 {
   const stdout = fakeTTY()
@@ -254,11 +253,8 @@ const sleep = (ms: number): Promise<void> =>
 
 // ---------------------------------------------------------------------------
 // 6. An <AlternateScreen> deleted after detachForShutdown must not write
-// EXIT_ALT_SCREEN. Found by the Phase 1 acceptance (J): after a DSH → Claude
-// switch released the root, Chat re-rendered, read the ended channel and
-// threw; the root error boundary swapped the tree for its error view and
-// AlternateScreen's cleanup left the alt screen the replacement was about to
-// draw on. The control group (no detach) proves the case does delete it.
+// EXIT_ALT_SCREEN: on a DSH → Claude switch the replacement draws on that alt
+// screen. The control group (no detach) proves the case does delete it.
 // ---------------------------------------------------------------------------
 for (const detach of [false, true]) {
   const stdout = fakeTTY()

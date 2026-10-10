@@ -1,7 +1,7 @@
 /**
- * The session a channel holds while its real one is still opening
- * (docs/standalone-host-design.md 5.3): the screen mounts against it, and
- * the channel adopts the real session once the backend's open settles.
+ * The session a channel holds while its real one is still opening: the
+ * screen mounts against it, and the channel adopts the real session once the
+ * backend's open settles.
  *
  * It serves nothing: no capabilities, an empty history, no events, and a
  * submit that is never delivered (the composer refuses to send while the

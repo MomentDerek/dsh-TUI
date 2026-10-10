@@ -17,8 +17,7 @@ export function createWorkspaceActions(
     notify: ChannelState['notify']
   },
 ) {
-  // `deps.service` is read per call: the host's workspace row can compose
-  // after the mount.
+  // `deps.service` is read per call (late row).
   const { notify } = deps
   const listWorkspaces = () => deps.service.list(state.cwd)
   const resolveWorkspace = (uri: string) => deps.service.resolve(uri, state.cwd)

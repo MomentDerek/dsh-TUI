@@ -25,19 +25,11 @@ const rules = [
   ['compiler-generated component input', /(?:from\s*|import\s*\()['"]react\/compiler-runtime['"]|react\.early_return_sentinel|react\.memo_cache_sentinel/],
   ['retired helper namespace', /(?:src\/|\.\.\/|types\/)cc\/|cc\.d\.ts/],
   ['product comparison wording', /Claude Code[- ](?:style|风格)|mirroring Claude Code|ported CC|\bCC[- ](?:style|parity)|Claude-Code-identical/],
-  // The barrel import drags all 640 lodash-es modules into the first frame
-  // (docs/standalone-host-design.md 6.1). Per-path imports keep it out —
-  // src/ink/ink.tsx already imports lodash-es/noop.js and
-  // lodash-es/throttle.js by path. Every form that names the package root is
-  // caught: `from 'lodash-es'` (import/export), the side-effect
-  // `import 'lodash-es'`, `require('lodash-es')` and the dynamic
-  // `import('lodash-es')`; a per-path specifier still does not match, since
-  // the quote must follow the package name.
+  // The barrel import drags all 640 lodash-es modules into the first frame;
+  // per-path specifiers don't match since the quote must follow the name.
   ['lodash-es barrel import', /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)['"]lodash-es['"]/],
-  // Same for `semver`: its root requires all 46 modules, a per-function path
-  // (`semver/functions/gt.js`) about a dozen. src/update.ts and
-  // src/ink/terminal.ts load before the first frame. Only `src/` ships, so
-  // maintainer scripts keep the root import.
+  // Same for `semver` (root: 46 modules, per-function path: about a dozen).
+  // Only `src/` ships, so maintainer scripts keep the root import.
   ['semver barrel import', /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)['"]semver['"]/, ['docs/', 'scripts/']],
 ]
 const files = ['src', 'scripts', 'docs'].flatMap(name => collect(resolve(root, name)))

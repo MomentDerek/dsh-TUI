@@ -22,7 +22,7 @@ import type { ChannelState } from '../types.js'
 
 /**
  * The host services a channel composition reads, looked up per read: the
- * profile's `tui*` rows can compose after the mount (docs/standalone-host-design.md 5.1).
+ * profile's `tui*` rows can compose after the mount.
  */
 export interface CoreHost {
   readonly adapterRuntime: AdapterRuntimeOptions

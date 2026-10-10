@@ -1,25 +1,9 @@
 /**
- * `ThemeProvider` 的 `theme` prop 三态回归。
- *
- * 被保护的那条改动是 ThemeProvider 里「prop 的**变化**」那个 effect：`theme` prop
- * 可能挂载后才到（独立入口先挂载、profile 装配完的那次 rerender 才把定好的主题
- * 传进来）。只在挂载时读一次（`useState` 初始化）会让屏幕停在检测配色上，所以
- * prop 一到就要落成当前请求并立即生效。与它相邻的是既有的
- * `[active, redetectAutoBase, runtimeThemeSnapshot]` 恢复 effect（职责：请求的名字
- * 在运行时插件里暂时消失/晚注册时，注册回来要接上）。
- *
- * 本脚本钉住三件事，缺一个都可能让「迟到生效」悄悄退化：
- *   1. prop 迟到生效（含 stdout 真的重绘，不只是 hook 里的名字变了）；
- *   2. prop 撤走不跳回：撤走不是一次请求变更，当前有效主题必须保持；
- *   3. prop 是不可用名（插件主题此刻还没注册）时不崩、不改当前主题，且**请求被
- *      暂存**——随后该主题注册上来时必须被接上。第 3 条是这条改动唯一多覆盖的
- *      语义，也是它 vs 恢复 effect 的分界线，所以用真 Cordis `TuiThemeRuntime`
- *      做 oracle，而不是只看名字没变。
- *
- * 判别力：去掉该 effect 时状态 1 与 3b 会红。
+ * `ThemeProvider` 的 `theme` prop 迟到/撤走/暂不可用三态回归：独立入口先挂载，
+ * profile 装配完才把主题传进来。不可用名用真 Cordis `TuiThemeRuntime` 做 oracle，
+ * 验证请求被暂存、主题注册后接上。去掉 prop 变化 effect 时状态 1 与 3b 会红。
  *
  * Run: node --import tsx/esm scripts/verify-theme-prop-late.tsx
- * 退出码：0 = 全部通过；1 = 有断言失败（逐条打印）。
  */
 import './lib/fake-home.mjs'
 

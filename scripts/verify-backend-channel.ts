@@ -15,12 +15,8 @@
  *  - fence events of a replaced session by binding generation.
  *
  * A DSH channel built from the same entry point keeps its full command list
- * (capability snapshot = every built-in, `commandList` untouched). A channel
- * mounted on a startup placeholder that adopts a DSH session (or retries a
- * failed startup with a `/new` that opens one) gets the DSH extensions then
- * and answers like the channel built for DSH; the late-extension window is
- * one adoption wide and `extend` still refuses a started core otherwise
- * (docs/standalone-host-design.md 5.3, D1).
+ * (capability snapshot = every built-in, `commandList` untouched). A startup
+ * placeholder that adopts a DSH session gets the DSH extensions then, once.
  *
  * A non-DSH session is served by the same channel core as DSH, so the
  * backend-neutral features reach it too: the IDE selection channel (consumed
@@ -585,12 +581,8 @@ try {
 
 // ── a startup placeholder adopting a DSH session gets the DSH extensions ──
 {
-  // docs/standalone-host-design.md 5.3 (D1): a channel mounted on a
-  // placeholder learns its backend at the first adoption. A DSH session
-  // adopted then must be served exactly as a channel built for it: the DSH
-  // snapshot, command list and composition facts, the agent's identity, and
-  // the DSH actions (model, mode, presets, resume, the agent view). The
-  // agent id differs from its session id here, so an identity written by the
+  // An adopted DSH session must answer exactly like a channel built for it.
+  // The agent id differs from its session id, so an identity written by the
   // core after the extension would show.
   const { createStartingSession } = await import('../src/agent/starting-session.js')
   const { createDshSession } = await import('../src/dsh-adapter/backend/session.js')

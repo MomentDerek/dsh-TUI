@@ -49,11 +49,9 @@ export interface ChannelUi {
   readonly version: number
   /**
    * Whether a live session stands behind this channel. `false` only while
-   * the startup session is still opening (the standalone entry mounts the
-   * screen first; docs/standalone-host-design.md 5.3) or after that open
-   * failed: typing is accepted, but the composer refuses to send and only
-   * the purely local commands run (`isBootSafeCommand`). Every other channel
-   * is always `true`.
+   * the startup session is still opening or after that open failed: typing
+   * is accepted, but the composer refuses to send and only the purely local
+   * commands run (`isBootSafeCommand`).
    */
   readonly ready: boolean
   /** Why the startup session failed to open, while it stays unopened (the

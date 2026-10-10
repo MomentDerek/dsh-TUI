@@ -800,9 +800,8 @@ const startDshSession = (dshArgs, profile = PROFILE, env = process.env) =>
     })
   })
 
-// entry 子进程的 Node 编译缓存（docs/standalone-host-design.md 6.1）：纯 env 注入，
-// 替身进程继承。用户显式设过 `NODE_COMPILE_CACHE`（含空串）不覆盖；目录建不出来
-// 就不注入。
+// entry 子进程的 Node 编译缓存：纯 env 注入，替身进程继承。用户显式设过
+// `NODE_COMPILE_CACHE`（含空串）不覆盖。
 // 路径沿用 `join(homedir(), '.dsh-tui', …)` 写法，**不要**抽成共用的模块级常量：
 // verify-safe-mode.mjs 把 readLastRunRecord 至「TTY 判定」注释之间的源码切进只注入
 // 少数全局的 vm 沙箱，区间内引用的外部常量会是 `undefined`，套件静默转红。
@@ -818,8 +817,7 @@ const withCompileCache = env => {
   return { ...env, NODE_COMPILE_CACHE: cacheDir }
 }
 
-// 本包自己的入口（docs/standalone-host-design.md 5.8）：`node <入口> <应用参数>`，
-// 所有内核默认都走这里。结果模型与 startDshSession 相同。
+// 本包自己的入口：`node <入口> <应用参数>`。结果模型与 startDshSession 相同。
 const startEntrySession = (entry, appArgs, env = process.env) =>
   new Promise(resolve => {
     const child = spawn(process.execPath, [entry, ...appArgs], { stdio: 'inherit', env: withCompileCache(env) })
@@ -1624,7 +1622,7 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // the app-level separator too, and replay this same argv on a safe retry.
   const firstArgs = [...hostArgs, ...(args.length > 0 ? ['--', ...args] : [])]
 
-  // 内核分流（docs/standalone-host-design.md 5.8）：默认所有内核都走本包入口，入口
+  // 内核分流（docs/standalone-host-design.md）：默认所有内核都走本包入口，入口
   // 再按 profile 补丁的 Config 行判定（src/hostEntryRoute.ts）。DSH_TUI_HOST_ENTRY_DSH=0
   // 只让 DSH 内核回到 `dsh --profile`，DSH_TUI_HOST_ENTRY=0 让所有内核回去；dsh 自己的
   // hostArgs（--version、--dump-config* 等）始终交给 dsh。启动器零 lib 依赖、读不到

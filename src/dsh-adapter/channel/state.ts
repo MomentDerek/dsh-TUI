@@ -149,10 +149,9 @@ export interface ChannelLaunchOptions {
   /** The `/settings` service (../tui-settings.ts); absent → the host's `settings`. */
   settingsService?: unknown
   /**
-   * The startup session still opening (docs/standalone-host-design.md 5.3):
-   * the channel starts on a placeholder (`ready` false) and `start()` adopts
-   * the real one once this settles; a rejection stays on the placeholder and
-   * `/new` retries. `route`/`agentPreset` override the construction options.
+   * The startup session still opening: the channel starts on a placeholder
+   * (`ready` false) and `start()` adopts the real one once this settles; a
+   * rejection stays on the placeholder and `/new` retries. `route`/`agentPreset` override the construction options.
    */
   startup?: Promise<ChannelStartup>
   /** How a user re-enters a session of this backend from a shell (the

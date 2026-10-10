@@ -1,7 +1,6 @@
 /**
  * The `dsh-tui` settings namespace served from the TUI's own document
- * (../tuiSettingsFile.ts, docs/standalone-host-design.md 5.6) instead of the
- * DSH profile, so every kernel reads and writes one user layer. Same shape as
+ * (../tuiSettingsFile.ts) instead of the DSH profile, so every kernel reads and writes one user layer. Same shape as
  * the settings service the plugin and channel already consume; every other
  * namespace goes to `delegate` (the host's settings service, when mounted).
  */

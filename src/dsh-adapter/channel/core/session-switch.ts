@@ -419,7 +419,7 @@ export function createBackendOpener(deps: {
   /** Forget the replaced session's backend commands and reports. */
   resetControls(): void
   bind(seed: readonly AgentEvent[]): void
-  /** The core's late-extension window, before the bind (core/compose.ts `attachOnAdopt`). */
+  /** Runs before the bind (core/compose.ts `attachOnAdopt`). */
   attach?(candidate: AgentSession): void
   /** The bound session (its backend-qualified reference is the ledger key). */
   bound(): AgentSession

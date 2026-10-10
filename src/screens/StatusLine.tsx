@@ -437,9 +437,8 @@ const selectionBadge = formatSelectionBadge(channel.selection)
           </Text>
         ),
       }
-  // The placeholder's backend is still opening (the standalone entry mounts
-  // before it; for DSH, before the profile composed): say so up front, so
-  // the frame drawn before DSH's synchronous load is not a silent one.
+  // The placeholder's backend is still opening: say so up front, so the
+  // frame drawn before DSH's synchronous load is not a silent one.
   const startingPart: FieldPart | undefined = channel.ready === false && channel.startupFailure === undefined
     ? {
         key: 'starting',

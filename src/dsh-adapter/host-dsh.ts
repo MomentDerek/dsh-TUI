@@ -1,17 +1,7 @@
 /**
- * The installed DSH host, loaded into this package's own entry
- * (docs/standalone-host-design.md 5.4, Phase 2 "single root"): the entry's
- * Cordis root is built from the host's own `cordis`, and a profile is composed
- * into it after the screen mounted — the whole profile on the DSH kernel
- * (`HostRoot.compose`), the light profile elsewhere (`HostRoot.composeLite`,
- * ./lite-profile.ts). No `runProfile`, no second root.
- *
- * Every host module comes from the `dsh` on PATH by realpath (or through its
- * launcher shim; `findHostDsh`), imported by file URL; `@deepseek-ai/*` is
- * `import type` here only. The module list, the replicated upstream code and
- * the deliberate deviations are ./host-contract.ts (HOST_MODULES,
- * HOST_REPLICAS, HOST_DEVIATIONS) and ADAPTER.md.
- *
+ * Loads the installed dsh's modules and builds the entry's single Cordis root.
+ * Host modules come from the `dsh` on PATH by realpath, imported by file URL;
+ * `@deepseek-ai/*` is `import type` here only (contract: ./host-contract.ts).
  * Never writes to stdout: before the mount host warnings go to stderr, the
  * composition takes the caller's sink.
  */
@@ -41,19 +31,11 @@ const FIBER_ACTIVE = 2
 
 type Warn = (line: string) => void
 
-/**
- * The exports the contract lists for one host module (./host-contract.ts):
- * picking them from the real module type fails the build when the contract
- * names an export the pinned host does not declare.
- */
+/** Picking from the real module type fails the build when the contract names an undeclared export. */
 type ContractExports<K extends (typeof HOST_MODULES)[number]['key']> = Extract<(typeof HOST_MODULES)[number], { key: K }>['exports'][number]
 
 type AppBootModule = Pick<typeof AppBoot, ContractExports<'appBoot'>>
-/**
- * `@deepseek-ai/dsh/profile-boot`, declared locally: the host CLI is not a
- * dependency (its tree is the whole CLI). verify:contract probes these exports
- * on an installed host.
- */
+/** `@deepseek-ai/dsh/profile-boot`, declared locally: the host CLI is not a dependency. */
 interface ProfileBootModule {
   prepareProfile(name: string, userLayer?: boolean, fromDefaultProfile?: string): AppBoot.Profile
   readonly INSTALL_ANCHOR: string
@@ -65,14 +47,11 @@ type HttpProxyModule = Pick<typeof HttpProxy, ContractExports<'httpProxy'>>
 type LaunchEnvironmentModule = Pick<typeof LaunchEnvironment, ContractExports<'launchEnvironment'>>
 type AppReadyService = NonNullable<Cmdline.CmdlineHost['ready']>
 
-/** The module whose `createRequire` resolves the `via: 'app-boot'` modules. */
 const APP_BOOT = HOST_MODULES.find(spec => spec.key === 'appBoot')!.specifier
 
-/** The host modules the entry uses, all from one installation. */
 export interface HostDsh {
-  /** The host package directory (`@deepseek-ai/dsh`). */
   readonly packageDir: string
-  /** Its `package.json` version (reported, not gated on: the exports are). */
+  /** Reported, not gated on: the exports are. */
   readonly version: string
   readonly Context: new () => Context
   readonly appBoot: AppBootModule
@@ -89,7 +68,7 @@ export type HostDshLocation =
   | { readonly packageDir: string; readonly launcher: string; readonly via: 'link' | 'shim' | 'beside' | 'volta' }
   | { readonly reason: string }
 
-/** `findHostDsh`'s reason when PATH has no `dsh` at all (host-entry.ts tells it apart). */
+/** `findHostDsh`'s reason when PATH has no `dsh` at all. */
 export const NO_DSH_ON_PATH = 'no dsh on PATH'
 
 /**
@@ -127,7 +106,6 @@ export function findHostDsh(env: NodeJS.ProcessEnv = process.env, platform: Node
   return { reason: NO_DSH_ON_PATH }
 }
 
-/** The host package containing `path`, walking up. */
 function hostPackageAbove(path: string): string | undefined {
   for (let up = dirname(path); ; up = dirname(up)) {
     if (isHostPackage(up)) return up
@@ -192,11 +170,7 @@ export function launcherScriptPaths(text: string): string[] {
   return found
 }
 
-/**
- * Expand a launcher's own-directory variables and resolve against it, with the
- * path rules of `platform` (the native ones in a launch; exported so the
- * win32 expansion is tested off Windows).
- */
+/** Expand a launcher's own-directory variables and resolve with `platform`'s path rules. */
 export function resolveLauncherPath(script: string, base: string, platform: NodeJS.Platform): string | undefined {
   let path = script
     .replace(/^\$\{?basedir\}?/u, base)
@@ -220,10 +194,8 @@ function isHostPackage(dir: string): boolean {
 }
 
 /**
- * Load the host modules by realpath; throws naming what is missing (no
- * host, a module that does not import, an export the entry needs). The
- * capability probe: the caller falls back on any throw and shows its
- * message.
+ * The capability probe: throws naming what is missing (no host, a module that
+ * does not import, an export the entry needs); the caller falls back.
  */
 export async function loadHostDsh(packageDir: string | undefined = undefined): Promise<HostDsh> {
   if (packageDir === undefined) {
@@ -236,7 +208,6 @@ export async function loadHostDsh(packageDir: string | undefined = undefined): P
     const manifest = JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')) as { version?: unknown }
     if (typeof manifest.version === 'string') version = manifest.version
   } catch {
-    // isHostPackage read it a moment ago; a vanished file fails the imports below.
   }
   const hostRequire = createRequire(join(packageDir, 'package.json'))
   const importFrom = async (require: NodeJS.Require, specifier: string): Promise<unknown> => {
@@ -254,7 +225,6 @@ export async function loadHostDsh(packageDir: string | undefined = undefined): P
   } catch (error) {
     throw new Error(`dsh ${version} at ${packageDir}: ${APP_BOOT} does not resolve (${error instanceof Error ? error.message.split('\n')[0] : String(error)})`, { cause: error })
   }
-  // ./host-contract.ts: every module, and every export read from it.
   const loaded = await Promise.all(HOST_MODULES.map(spec => importFrom(spec.via === 'app-boot' ? appBootRequire : hostRequire, spec.specifier)))
   const modules = new Map<string, unknown>(HOST_MODULES.map((spec, index) => [spec.key, loaded[index]]))
   for (const spec of HOST_MODULES) {
@@ -278,21 +248,14 @@ export async function loadHostDsh(packageDir: string | undefined = undefined): P
   }
 }
 
-/** The entry's root, prepared; for the DSH kernel, ready to compose. */
 export interface HostRoot {
   readonly ctx: Context
   /**
-   * Compose the profile into `ctx` (DSH kernel only). Rejects with the
-   * Loader's or the audit's error; the tree stays up. `stopping`: a root
-   * dispose is waiting (./root-dispose.ts), so skip the audit and readiness.
+   * DSH kernel only. Rejects with the Loader's or the audit's error; the tree
+   * stays up. `stopping`: a root dispose is waiting, so skip audit and readiness.
    */
   compose(warn: Warn, stopping?: () => boolean): Promise<void>
-  /**
-   * Compose the light profile into `ctx` (non-DSH kernels only): this package's
-   * rows and the profile's third-party bundles without `dsh-base`
-   * (./lite-profile.ts, design 5.7). Same contract as {@link compose}; throws
-   * when the root was prepared for DSH.
-   */
+  /** Non-DSH kernels only (./lite-profile.ts). Same contract as {@link compose}. */
   composeLite(warn: Warn, stopping?: () => boolean): Promise<void>
   /**
    * Remove the fail-loud handlers (DSH kernel; a no-op otherwise) once the
@@ -303,9 +266,8 @@ export interface HostRoot {
 }
 
 export interface PrepareHostRootOptions {
-  /** The profile the launch belongs to. */
   readonly profile: string
-  /** The app arguments (`ctx.cmdlineArgs`). */
+  /** `ctx.cmdlineArgs`. */
   readonly args: readonly string[]
   /** Compose the profile later (the DSH kernel); else only the resolution. */
   readonly dsh: boolean
@@ -314,35 +276,30 @@ export interface PrepareHostRootOptions {
 }
 
 /**
- * Build the entry's Cordis root from the host's `cordis` and install the
- * host's module resolution on it — before the caller imports any TUI
- * module, so the TUI and the DSH plugins composed later resolve shared
- * packages (react, schemastery, the `@deepseek-ai/*` peers) the same way.
- * Both kernels do this: without it the TUI's `@deepseek-ai/*` peers resolve
- * only through `$DSH_HOME/profiles/node_modules`, which a fresh install may
- * not have. The DSH kernel also gets the rest of `runProfile`'s prepare.
+ * Build the entry's root from the host's `cordis` and install the host's
+ * module resolution on it before any TUI module is imported, so the TUI and
+ * the DSH plugins resolve shared packages (react, schemastery, the
+ * `@deepseek-ai/*` peers) the same way. Both kernels: otherwise the peers
+ * resolve only through `$DSH_HOME/profiles/node_modules`, which a fresh
+ * install may not have. The DSH kernel also gets the rest of `runProfile`'s prepare.
  */
 export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOptions): Promise<HostRoot> {
   const { appBoot, profileBoot } = host
   // bin.js: the `.env` layers fill unset variables before anything reads them
   // (the dsh-tui row's `!!js process.env.DSH_TUI_*` included).
   const environment = appBoot.loadLayeredEnv(BIN_NAME)
-  // 1–2. composeProfile: load the profile, rewrite its empty root config, and
-  // compute the runtime resolution (no `--patch` overlays from the launcher).
+  // 1–2. composeProfile (no `--patch` overlays from the launcher).
   const profile = profileBoot.prepareProfile(options.profile, true, undefined)
   const resolution = await appBoot.createRuntimeResolution({ installAnchor: profileBoot.INSTALL_ANCHOR, profile })
   const rootConfig = join(profile.dir, profileBoot.PROFILE_ROOT_FILENAME)
-  // 3. runProfile: the proxy policy before anything opens a connection (DSH
-  // only: the Claude kernel never had it in the entry).
+  // 3. Proxy policy (DSH kernel only).
   const disposeProxy = options.dsh
     ? await host.httpProxy.installProxyFromEnvironment(environment, message => { process.stderr.write(`${BIN_NAME}: ${message}\n`) })
     : undefined
   const ctx = new host.Context()
   if (disposeProxy !== undefined) ctx.effect(() => () => { void Promise.resolve(disposeProxy()).catch(() => undefined) }, 'dsh-tui host proxy')
-  // 4. boot() prelude (boot() itself always creates its own root). Both
-  // kernels: the light profile mounts a Loader include on the non-DSH kernels
-  // too (`composeLite`), and its patch expressions read `dshHomePath` and
-  // resolve bare package names against `baseUrl` (./lite-profile.ts).
+  // 4. boot() prelude, both kernels: the light profile's patch expressions read
+  // `dshHomePath` and resolve bare package names against `baseUrl`.
   ;(ctx as Context & { baseUrl?: string }).baseUrl = pathToFileURL(dirname(rootConfig)).href + '/'
   ctx.provide('dshHomePath', host.homePaths.dshHomePath)
   ctx.on('internal/update' as never, ((_config: unknown, _noSave: unknown, next: () => unknown) => {
@@ -354,8 +311,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
   let uninstallFailLoud = (): void => undefined
   let profileContext: AppBoot.ProfileContext | undefined
   if (options.dsh) {
-    // 5. runProfile: fail-loud (removable here, unlike runProfile's), then the
-    // profile facts and the launch environment.
+    // 5. runProfile: fail-loud (removable here, unlike runProfile's).
     uninstallFailLoud = appBoot.installFailLoud(BIN_NAME, process, async () => { await ctx.fiber.dispose() })
     profileContext = {
       name: options.profile,
@@ -372,9 +328,9 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     ctx.provide(host.launchEnvironmentKey, environment)
   }
   try {
-    // 6. runProfile: the resolution hijack (both kernels).
+    // 6. The resolution hijack (both kernels).
     await ctx.plugin(appBoot.PluginPackages as never, { resolution } as never)
-    // 7. runProfile: the app arguments and the exit / readiness seams.
+    // 7. App arguments and the exit / readiness seams.
     if (options.dsh) {
       host.cmdline.provideCmdline(ctx, {
         args: options.args,
@@ -397,8 +353,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     uninstallFailLoud: () => { uninstallFailLoud() },
     async compose(warn, stopping = () => false) {
       if (!options.dsh || profileContext === undefined) throw new Error('dsh-tui: this root was prepared without the DSH profile')
-      // boot(): the warnings and errors logged while the tree starts, kept
-      // for the startup report.
+      // boot(): warnings and errors logged while the tree starts, for the startup report.
       const startupLogs: unknown[] = []
       const diagnostics = new host.Context() as Context & { logger: { exporter(exporter: unknown): unknown } }
       diagnostics.logger = (ctx as Context & { logger: { exporter(exporter: unknown): unknown } }).logger
@@ -409,8 +364,6 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         },
       })
       try {
-        // boot() tail: mount the profile's patch stack over its empty root
-        // config, wait for the tree, audit it; runProfile then commits ready.
         await appBoot.mountRootInclude(ctx, rootConfig, appBoot.readProfilePatches(BIN_NAME, profileContext, profile), undefined, BIN_NAME)
         const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
         await loader()?.await()
@@ -420,9 +373,8 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
         if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined && !stopping()) appReady.commit()
       } catch (error) {
-        // boot() attaches the root config and the startup logs to an audit
-        // failure; unlike bin.js, a report is saved for every failure (the
-        // screen stays up and shows its path).
+        // Unlike bin.js, a report is saved for every failure (the screen
+        // stays up and shows its path).
         if (error instanceof appBoot.StartupError) {
           Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: startupLogs }, enumerable: false, configurable: true, writable: true })
         }
@@ -445,10 +397,9 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         // not fatal (the screen is mounted; failing would cost every plugin).
         warn(`dsh-tui: light profile: ${options.profile} lists none of ${plan.excludedBundles.join(', ')}; composing it whole\n`)
       }
-      // What was left out, on the caller's warning sink.
       const notice = liteProfileNotice(plan)
       if (notice !== undefined) warn(notice)
-      // runProfile's profile facts; `startedBundles` names what is really composed.
+      // `startedBundles` names what is really composed.
       const liteContext: AppBoot.ProfileContext = {
         name: options.profile,
         dir: profile.dir,
@@ -471,7 +422,6 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
         if (loader() === undefined || stopping()) return
         await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
       } catch (error) {
-        // Same failure contract as compose, without startup logs.
         if (error instanceof appBoot.StartupError) {
           Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: [] }, enumerable: false, configurable: true, writable: true })
         }
@@ -489,7 +439,6 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
 
 /** A composition failure, with the startup report saved for it. */
 export class HostComposeError extends Error {
-  /** The report's path; undefined when it could not be written. */
   readonly logPath: string | undefined
   constructor(readonly original: unknown, logPath: string | undefined) {
     super(original instanceof Error ? original.message : String(original), { cause: original })
@@ -507,10 +456,8 @@ function hostVersion(host: HostDsh): string {
 }
 
 /**
- * dsh `bin.js` reportStartupFailure (0.2.0-rc.2), the file half: a private,
- * uniquely named report under `$DSH_HOME/logs`. The terminal half is the
- * caller's (the screen is up: never stderr).
- * @returns the report's path, or undefined when it could not be written.
+ * dsh `bin.js` reportStartupFailure (0.2.0-rc.2), the file half only: the
+ * screen is up, so never stderr. Undefined when it could not be written.
  */
 export async function writeStartupReport(error: unknown, context: {
   readonly home: string
@@ -550,10 +497,7 @@ export async function writeStartupReport(error: unknown, context: {
   return logPath
 }
 
-/**
- * dsh `profile-boot` createAppReady (0.2.0-rc.2): the readiness signal
- * committed once boot and host setup succeeded.
- */
+/** dsh `profile-boot` createAppReady (0.2.0-rc.2). */
 function createAppReady(): { readonly service: AppReadyService; commit(): void } {
   let ready = false
   const listeners = new Set<() => void>()
@@ -577,11 +521,7 @@ function createAppReady(): { readonly service: AppReadyService; commit(): void }
   }
 }
 
-/**
- * dsh `profile-boot` createProcessShutdown (0.2.0-rc.2), the `shutdown` half
- * only (`interrupt` is ./process-exit.ts): dispose, then set the exit code; a
- * stalled dispose exits after the bound.
- */
+/** dsh `profile-boot` createProcessShutdown (0.2.0-rc.2), the `shutdown` half only. */
 function createProcessShutdown(dispose: () => Promise<unknown>, timeoutMs = PROCESS_SHUTDOWN_TIMEOUT_MS): (code: number) => Promise<void> {
   let pending: Promise<void> | undefined
   let settled = false

@@ -1,31 +1,9 @@
 /**
- * Admission-loader regression (docs/standalone-host-design.md 5.7).
- *
- * Before this loader existed, nothing in the product called
- * `getHostAdmission`: a third-party row activated without any manifest, so
- * every activation stayed anonymous — panels registered under the `act<N>`
- * fallback namespace, and DecisionEvents / storage.local refused the caller.
- * The acceptance fixtures had to play the loader themselves.
- *
- * This script drives the real thing on a real Cordis composition:
- *
- *  1. control — a loader entry whose package carries a package-root
- *     `dsh-plugin.json` activates with NO admission loader armed; its
- *     `apply` registers a panel, which lands in the `act<N>` namespace;
- *  2. armed — the same package on a second composition with the real
- *     `armAdmissionLoader()` armed: admission happens during LOADING (before
- *     the row's own callback), so the panel registers under the manifest id;
- *  3. bare — the same, but the entry is named by a BARE package specifier the
- *     way a real profile row is, so the `require.resolve('<pkg>/package.json')`
- *     branch of the manifest lookup runs instead of the absolute-path one;
- *  4. host-missing — `tuiPluginHost` never mounts (issue #183): the wait must
- *     be bounded, settle as refused, and leave an opt-in diagnostic.
- *
- * HOME/USERPROFILE are redirected to a throwaway dir before any `src/` import
- * (scripts/lib/fake-home.mjs): DATA_DIR is an import-time constant, and the
- * real plugin-host row mounted below appends its effect ledger to
- * `~/.dsh-tui/effect-ledger.jsonl`. Running this script must never touch the
- * user's real home.
+ * Admission loader (src/dsh-adapter/admission-loader.ts) on a real Cordis
+ * composition: a row whose package carries `dsh-plugin.json` registers its
+ * panel under the manifest id when armed (absolute and bare specifiers) and
+ * under `act<N>` when not; a missing `tuiPluginHost` settles refused, bounded.
+ * fake-home must load first: the plugin-host row writes the effect ledger.
  *
  * Run: node --import tsx/esm scripts/verify-admission-loader.ts
  */
@@ -59,11 +37,8 @@ const packageDir = join(dir, 'third-party-package')
 mkdirSync(packageDir)
 writeFileSync(join(dir, 'marker'), '')
 /**
- * A second loading root, so the bare-specifier case is reachable: the Loader's
- * own import and `resolveEntryFile`'s `require.resolve` both resolve relative
- * to the composition's baseUrl (the root cordis.yml), not to this process's
- * cwd — a bare package name therefore needs a `node_modules` under that root.
- * The real profile resolves third-party rows exactly this way.
+ * A second loading root for the bare-specifier case: bare names resolve relative
+ * to the composition's baseUrl, not the cwd, so they need a `node_modules` there.
  */
 const loadRoot = join(dir, 'load-root')
 const BARE_PACKAGE = '@dsh-tui-verify/bare-third-party'
@@ -119,11 +94,7 @@ interface MountedComposition {
   report: string
 }
 
-/**
- * One composition: the loader, the real plugin-host row, tuiPanels. `withHost`
- * false models the host-missing path (issue #183: stale patch, `tuiPluginHost`
- * never mounts while third-party rows still activate).
- */
+/** One composition: the loader, the real plugin-host row, tuiPanels. `withHost` false models issue #183. */
 async function mount(
   armed: boolean,
   retryAttempts?: number,
@@ -175,19 +146,9 @@ check('armed: admission lands before apply, so the panel carries the manifest id
   armedIds.length === 1 && armedIds[0] === 'verify-admitted:demo')
 
 // ── nested entry id: the shape a real profile actually produces ────────────
-// `loader.locate(fiber)` returns `fiber.entry.id`, and a profile nests rows
-// behind group ids separated by `:` — the live dsh-tui profile carries
-// `include:dsh-tui-agent-preset-registry:agent-instructions`. `EntryTree.
-// resolve` does NOT return undefined for such an id, it **throws** (`cannot
-// resolve entry <id>`). The loader walks every activating fiber, so one
-// unresolvable entry among the profile's own rows used to take the whole
-// process down from inside the `internal/status` listener: every PTY case
-// ended in `dsh-tui crashed: cannot resolve entry …`. The pass must be
-// skipped for it and every other activation still handled.
+// A nested id (`a:b`) makes `EntryTree.resolve` throw: the pass must skip it
+// and still handle every other activation.
 const nested = await mount(true)
-// A genuine nested entry: a Group row owns the child, so the child's id grows
-// a `:` segment. Its `name` is the same fixture as the top-level one; only the
-// id differs, which is exactly what the fence has to survive.
 const groupFile = join(dir, 'nested-group.mjs')
 writeFileSync(groupFile, `import { Group } from ${JSON.stringify(
   pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@deepseek-ai', 'cordis-plugin-loader', 'lib', 'index.js')).href,
@@ -198,10 +159,7 @@ const nestedReport = join(dir, 'nested-report.jsonl')
 writeFileSync(nestedReport, '')
 await nested.root.loader.create({ id: 'include', name: groupFile, group: true, config: [] })
 await nested.root.loader.await()
-// The child's OWN id already contains the separator, so `grp:child` cannot
-// resolve: that is the failing shape, without waiting for a Group plugin to
-// reparent the entry. `writePackage` is the fixture this pass must still
-// admit, on the same composition and after the unresolvable one.
+// The child's own id contains the separator, so it cannot resolve.
 await nested.root.loader.create({
   id: 'dsh-tui-agent-preset-registry:agent-instructions',
   name: writePackage('verify-nested'),
@@ -222,9 +180,7 @@ check('nested id: an unresolvable entry id does not tear the loader down',
 check('nested id: the other activation on the same composition is still admitted',
   readFileSync(nested.report, 'utf8').includes('verify-after-nested:demo'), readFileSync(nested.report, 'utf8'))
 
-// The identity is bound to the plugin's own activation: unloading the row
-// (dispose the entry fiber) must release it — re-activating the same entry
-// admits again instead of failing COMPONENT_ALREADY_ADMITTED.
+// Unloading the row must release its identity, so re-activation is admitted again.
 const entryId = 'verify-admitted'
 const entry = armed.root.loader.resolve(entryId) as { fiber?: { dispose?: () => Promise<unknown> } } | undefined
 await entry?.fiber?.dispose?.()
@@ -235,12 +191,8 @@ check('armed: a fresh activation is admitted again (identity is per-activation)'
   readFileSync(armed.report, 'utf8').includes('verify-admitted-2:demo') || again.includes('verify-admitted-2:demo'))
 
 // ── armed + BARE specifier: the profile's real third-party row name ───────
-// Every case above drives an ABSOLUTE entry path, which takes
-// resolveEntryFile's `isAbsolute` branch. A real profile row names a package
-// ("@scope/pkg"), which takes the `require.resolve('<pkg>/package.json')`
-// branch instead — the one the manifest lookup actually depends on. Resolve
-// that branch on its own first (the observable that the loader consumes), then
-// drive it end to end through the Loader.
+// The cases above use absolute paths; a profile row names a package, which takes
+// the `require.resolve('<pkg>/package.json')` branch. Resolve it alone, then via the Loader.
 writeFileSync(join(barePackageDir, 'dsh-plugin.json'), manifestOf('verify-bare'))
 writeFileSync(join(barePackageDir, 'main.js'), ENTRY_SOURCE)
 const requireFromLoadRoot = createRequire(LOAD_BASE_URL)
@@ -252,7 +204,6 @@ try {
 }
 check('bare specifier: require.resolve(<pkg>/package.json) resolves under the load root',
   bareResolved === join(barePackageDir, 'package.json'), bareResolved)
-// The manifest walk must land on the fixture's package root (one dsh-plugin.json).
 check('bare specifier: the manifest sits at the resolved package root',
   bareResolved.startsWith(dir) && bareResolved === join(barePackageDir, 'package.json'))
 
@@ -267,9 +218,7 @@ check('bare specifier: the manifest id is found through the package-root walk',
   bareIds.length === 1 && bareIds[0] === 'verify-bare:demo')
 
 // ── host-missing: bounded retry, then settle + loud diagnostic ────────────
-// issue #183's shape: a third-party row activates while `tuiPluginHost` never
-// mounts. The row is past the manifest gate, so it stays pending; unbounded,
-// that keeps the flush timer re-arming itself for ever.
+// issue #183: `tuiPluginHost` never mounts; unbounded, the flush timer would re-arm for ever.
 const ARM_TICKS = 4
 const debugLines: string[] = []
 const stderrWrite = process.stderr.write

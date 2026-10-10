@@ -147,13 +147,7 @@ export function createCoreChannel(
 
   let extension: ChannelExtension = {}
   let started = false
-  /**
-   * The single late-extension window (docs/standalone-host-design.md 5.3,
-   * D1): a placeholder-mounted channel learns its real session only at the
-   * first adoption (the startup open, or a `/new` / `/resume` retry), so one
-   * hook registered before `start` may `extend` the core inside that
-   * adoption's tail. `extend` throws at every other time after `start`.
-   */
+  /** One hook may extend the core during the first adoption; extend throws otherwise. */
   let adoptHook: ((session: AgentSession) => void) | undefined
   let adoptWindow = false
 
@@ -760,7 +754,7 @@ export function createCoreChannel(
       activity: { apply: (event, replaying) => { if (activityOwned()) activity.apply(event, replaying) } },
       trajectory: { observe: (event, replaying) => { if (trajectoryOwned()) agentTrajectory.observe(event, replaying) } },
       checkContextWarning, notify: (...args) => notify(...args),
-      // Read per event: the tuiRenderers row can compose after the mount.
+      // Read per event (late row).
       get renderer() { return host.rendererRuntime },
       selectionAttached: messageId => selectionAttachments.take(messageId),
     },
@@ -1017,11 +1011,8 @@ export function createCoreChannel(
       extension: extension.delegates,
     }, replace)
   }
-  /**
-   * Run the `adoptHook` window (see above) in the adoption tail, then serve
-   * its contributions as `start` would. After the core wrote the session's
-   * state, before the bind; a throw fails the adoption transaction.
-   */
+  /** Runs `adoptHook` after the core wrote the session's state, before the
+   *  bind; a throw fails the adoption transaction. */
   const attachOnAdopt = (candidate: AgentSession): void => {
     const hook = adoptHook
     if (hook === undefined) return

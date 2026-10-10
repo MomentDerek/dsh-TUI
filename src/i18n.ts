@@ -698,9 +698,7 @@ const dict = {
   'new-session-while-working': { zh: '回合运行中，无法新建会话', en: 'Cannot start a new session while a turn is running' },
   'new-session-unavailable': { zh: '新建会话不可用——agents 服务未加载', en: 'New session unavailable — agents service not loaded' },
   'new-session-failed': { zh: '新建会话失败 · {{err}}', en: 'New session failed · {{err}}' },
-  // ── startup phase (standalone entry; docs/standalone-host-design.md 5.3) ──
-  // The screen mounts on a placeholder session while the backend opens:
-  // typing works, sending waits (`ChannelUi.ready === false`).
+  // ── startup phase (`ChannelUi.ready === false`) ──
   'startup-not-ready': { zh: '{{backend}} 还在启动——就绪后按 Enter 发送', en: '{{backend}} is still starting — press Enter to send once it is ready' },
   'startup-open-failed': { zh: '{{backend}} 会话没能打开：{{err}}', en: '{{backend}} session failed to open: {{err}}' },
   'startup-open-failed-hint': { zh: '/new 重试 · /kernel 切换内核 · /quit 退出', en: '/new to retry · /kernel to switch kernel · /quit to exit' },

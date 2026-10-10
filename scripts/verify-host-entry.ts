@@ -1,31 +1,9 @@
 /**
- * The host entry's routing (docs/standalone-host-design.md 5.8), pure parts:
- *
- *  - `entryKernel` ranks a kernel-switch handoff over the profile patch's
- *    Config row over DSH_TUI_BACKEND over kernel.json, like the plugin;
- *  - `configuredBackend` reads the dsh-tui row's `backend` from the profile
- *    patch (and nothing else's), tolerating `!!js` and a missing file;
- *  - `restartArgv` relaunches a replacement on the Claude kernel through the
- *    host entry (only the app arguments after dsh's `--` carry over; a
- *    kernel switch drops resume flags), leaves every other relaunch on its
- *    own script, and never re-targets the entry onto itself; with the DSH
- *    kernel in the entry (`dshInEntry`, the default) a DSH replacement goes
- *    to the entry too;
- *  - `entryRoute` runs Claude and Codex alike in the entry without composing
- *    the profile (only DSH composes it, and only while the Phase 2 default
- *    and `DSH_TUI_HOST_ENTRY` allow), so a codex launch keeps the kernel the
- *    entry found instead of being degraded to DSH;
- *  - the DSH kernel runs in the entry unless `DSH_TUI_HOST_ENTRY_DSH=0` or
- *    `DSH_TUI_HOST_ENTRY=0`;
- *  - `findHostDsh` follows the first `dsh` on PATH to the installed host
- *    through an npm link, a pnpm cmd-shim script, a wrapper script, an npm
- *    `.cmd` shim's script path and a volta shim, and gives a reason when it
- *    cannot (a script starting something else, a binary, no dsh);
- *  - the launcher-path expansion with win32 path rules (`path.win32`, no
- *    Windows needed): npm's `.cmd` (`%dp0%`, `%~dp0`) and `.ps1`
- *    (`$basedir`, `$PSScriptRoot`) shims, drive-relative and UNC bases.
- *
- * The launcher half (bin/dsh-tui.js) is covered by verify-launcher.mjs §7.
+ * The host entry's pure routing parts: `entryKernel`, `configuredBackend`,
+ * `restartArgv`, `entryRoute`, the DSH-in-entry switches, `findHostDsh`
+ * across npm/pnpm/volta/wrapper shims, and launcher-path expansion under
+ * `path.win32` rules (no Windows needed). The launcher half (bin/dsh-tui.js)
+ * is in verify-launcher.mjs.
  *
  * Run: node --import tsx/esm scripts/verify-host-entry.ts
  */

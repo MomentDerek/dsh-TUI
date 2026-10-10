@@ -147,8 +147,7 @@ const HOST_CONTRACT_IMPORTERS = [HOST_DSH, 'dsh-adapter/contract.ts']
 const HOST_LITERAL_EXCEPTIONS = new Set(['dsh-adapter/contract.ts @deepseek-ai/dsh/package.json'])
 const STRING_LITERAL = /(['"`])(@deepseek-ai\/[^'"`\s]*)\1/gu
 
-/** The host-only specifiers, read from the contract's source text (the gate
- *  must not import src/). The host package itself and its subpaths count. */
+/** The host-only specifiers, read from the contract's source text (the gate must not import src/). */
 function readHostOnlySpecifiers(): Set<string> {
   const source = readFileSync(join(SRC, HOST_CONTRACT), 'utf8')
   const host = /export const HOST_PACKAGE = '([^']+)'/u.exec(source)?.[1]
@@ -372,9 +371,8 @@ for (const file of files) {
   for (const ref of refs) {
     const where = `${path}:${ref.line}`
     if (under(path, CORE_DIR)) {
-      // The core is built against ChannelHost (channel/channel-host.ts), so
-      // a host that owns the process can compose it without a Cordis root
-      // (docs/standalone-host-design.md 5.1).
+      // The core is built against ChannelHost, so a process-owning host can
+      // compose it without a Cordis root.
       if (ref.specifier.startsWith('@deepseek-ai/')) {
         violations.push(`${where} imports '${ref.specifier}'; channel core must not import @deepseek-ai/* (take host services through ChannelHost)`)
       }

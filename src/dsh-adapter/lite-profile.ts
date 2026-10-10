@@ -1,13 +1,8 @@
 /**
- * The light profile for the non-DSH kernels (docs/standalone-host-design.md
- * 5.7): this package's layers plus the profile's declared third-party
- * bundles, composed into the entry's root with `dsh-base` left out, so the
- * `tui*` services and third-party plugin rows exist without DSH. One root
- * rather than a second one: a second root's rows stay pending unless every
- * entry service is copied over, and its effects need a second dispose point.
- * The row table below is guarded by scripts/verify-lite-profile-rows.mjs.
- * Where the plugin registry belongs is still open (issue #1247), so row ids
- * stay data.
+ * The light profile for non-DSH kernels: this package's layers plus the
+ * profile's third-party bundles, composed into the entry's root without
+ * `dsh-base`. One root, since a second root's rows stay pending unless every
+ * entry service is copied over. Rows guarded by scripts/verify-lite-profile-rows.mjs.
  * Pure data and functions: no `@deepseek-ai/*` import, no I/O.
  */
 
@@ -18,12 +13,9 @@ export const LITE_PROFILE_EXCLUDED_BUNDLES: readonly string[] = ['@deepseek-ai/d
 export interface LiteProfileRowDisable {
   /** The Loader entry id (`cordis.patch.yml` `insert` ids, process-global). */
   readonly id: string
-  /**
-   * The services the row injects that no remaining layer provides, as the
-   * Loader reports them (`pending (waiting for services: …)`).
-   */
+  /** Injected services no remaining layer provides, as the Loader reports them. */
   readonly missing: readonly string[]
-  /** Where the row comes from, so a review can check the claim. */
+  /** Where the row comes from. */
   readonly from: string
 }
 
@@ -54,17 +46,14 @@ export interface LiteProfileLayer {
 
 /** What a composition needs to mount a light profile. */
 export interface LiteProfilePlan<Layer extends LiteProfileLayer = LiteProfileLayer> {
-  /** Bundle names actually composed, in profile order. */
   readonly bundles: readonly string[]
-  /** The layers to compose, in profile order. */
   readonly layers: readonly Layer[]
   /** The excluded bundles that were present and therefore left out. */
   readonly excluded: readonly string[]
   /** The bundles this plan leaves out (the request, present or not). */
   readonly excludedBundles: readonly string[]
-  /** The rows the composition disables, with why (for the warning sink). */
   readonly rowDisables: readonly LiteProfileRowDisable[]
-  /** The disable rows to append after the profile's own patch layers. */
+  /** Appended after the profile's own patch layers. */
   readonly disableRows: readonly LiteProfileDisableRow[]
   /** Whether a loaded layer was left out; false lets the caller reuse the full composition. */
   readonly trimmed: boolean

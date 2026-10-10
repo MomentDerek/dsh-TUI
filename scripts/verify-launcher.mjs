@@ -355,26 +355,18 @@ check('i18n: DSH_TUI_LANG=zh prints Chinese', r.stderr.includes('未检测到 ds
 r = runBin([], envNoDsh)
 check('i18n: default (unset) prints Chinese', r.stderr.includes('未检测到 dsh CLI'))
 
-// --- 5.1 默认路由（entry）缺 dsh（F1 回归）：DSH_TUI_HOST_ENTRY_DSH 未设时启动
-// 器走本包入口，入口用不了已装 dsh 就回退到 `dsh --profile`——那条 spawn 同样
-// 没有 dsh 可用，安装指引必须重新出现（host-entry.ts 的 delegateToDsh 带同一份
-// `MSG.noDsh`）。默认 env 把 DSH_TUI_HOST_ENTRY_DSH 钉在 '0'，本节的三条断言都
-// 落在 `dsh --profile` 出口，故这里显式让它取默认值。
+// --- 5.1 默认路由：入口回退到 dsh --profile，缺 dsh 时仍须给出安装指引。
+// 默认 env 把 DSH_TUI_HOST_ENTRY_DSH 钉在 '0'，这里显式取默认值。
 const entryNoDsh = { ...envNoDsh, DSH_TUI_HOST_ENTRY_DSH: undefined }
 r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'zh' })
 check('entry route: a missing dsh prints the install guidance (Chinese)', r.status === 1 && r.stderr.includes('未检测到 dsh CLI'))
 r = runBin([], { ...entryNoDsh, DSH_TUI_LANG: 'en' })
 check('entry route: a missing dsh prints the install guidance (English)', r.status === 1 && r.stderr.includes('dsh CLI not found'))
-// 入口自己给出指引后就停：不回退去 spawn 一个不存在的 dsh，启动器也不再追加
-// 指向 `dsh --profile` 的 profileExited / safeHint。
 check('entry route: a missing dsh is not delegated to a dsh spawn', !r.stderr.includes('cannot start dsh') && !r.stderr.includes('cannot host this launch'))
 check('entry route: a missing dsh adds no profile/safe-mode hints', !r.stderr.includes('dsh profile exited') && !r.stderr.includes('dsh-tui safe'))
 
-// --- 7. 内核分流（docs/standalone-host-design.md 5.8）---------------------------
-// 判定为 Claude 的启动走本包入口 lib/types/dsh-adapter/host-entry.js，不再
-// `dsh --profile`。这里没有 TTY，入口里的运行时按契约以「需要交互终端」失败——
-// 正好证明走的是入口（stub 日志里没有 profile 启动）。入口自己再读 profile 补丁
-// 的 Config 行：钉在 DSH 上时原样交给 dsh。
+// --- 7. 内核分流 ----------------------------------------------------------------
+// 没有 TTY，入口里的运行时以「需要交互终端」失败——正好证明走的是入口。
 setProfileVersion(ownVersion)
 const entryRan = result => /interactive terminal/u.test(`${result.stderr}${result.stdout}`)
 const kernelPrefs = join(tmp, '.dsh-tui', 'kernel.json')
@@ -403,9 +395,7 @@ resetStubLog()
 r = runBin(['--backend', 'claude', 'foo'])
 check('host entry: a Config row pinning dsh is handed on to dsh with the app args', launchCalls().at(-1) === '<--profile><dsh-tui><--><foo>' && !entryRan(r))
 rmSync(profilePatch, { force: true })
-// The DSH kernel runs in the entry by default; the stub dsh is no installed
-// host the entry can load, so the entry says so on stderr and hands the
-// launch to `dsh --profile` itself (same args as the launcher would pass).
+// The stub dsh is no host the entry can load, so the default DSH route falls back.
 const hostFallback = result => /cannot host this launch/u.test(result.stderr)
 resetStubLog()
 r = runBin(['foo'], { DSH_TUI_HOST_ENTRY_DSH: undefined })
