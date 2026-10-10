@@ -82,6 +82,13 @@ Also an experimental public surface:
   `TuiSceneProps.channel`, `ready` is `false` (and `status` `'starting'`)
   while no session stands behind the channel, e.g. after the startup session
   failed to open (`startupFailure`).
+- **Claude and Codex kernels** (light profile; accepted on Claude, not yet on
+  Codex, which takes the same composition path): the entry composes this
+  package's rows and the third-party bundles the profile declares, without
+  `@deepseek-ai/dsh-base`, after the first frame, on the same terms as above.
+  A row whose `inject` names a service only DSH's core provides (`agents`,
+  `llm`, `tools`, `sessionPersistence`, …) stays pending on these kernels;
+  the `tui*` services are all there.
 
 - The core repository remains independent; community plugins live in their own
   repos.

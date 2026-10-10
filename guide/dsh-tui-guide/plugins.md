@@ -65,6 +65,10 @@
   `root.effect`、`root.on` 等）。apply 里等待会拖住组合：耗时工作脱离 apply 启动、
   不要 await。场景的 `TuiSceneProps.channel` 在没有会话撑着时（例如启动会话打开失败，
   见 `startupFailure`）`ready` 为 `false`、`status` 为 `'starting'`。
+- **Claude 与 Codex 内核**（轻量 profile；Claude 已验收，Codex 走同一条组合路径但尚未验收）：入口在首帧之后组合本包的行与 profile 声明的
+  第三方 bundle，不含 `@deepseek-ai/dsh-base`，规则同上条。`inject` 里有只由 DSH 核心
+  提供的服务（`agents`、`llm`、`tools`、`sessionPersistence` 等）的行在这两个内核下保持
+  pending；`tui*` 服务都在。
 
 核心仓库保持独立，社区插件各居其位。
 生态组织只维护收录与准入规则——不对社区插件的功能、质量或安全性

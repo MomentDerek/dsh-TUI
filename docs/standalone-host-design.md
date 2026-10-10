@@ -1169,9 +1169,8 @@ presets / efforts / resumeTo / permissionPresets / agentViewRows / cycleMode 的
 
 ### 2026-10-07 · Phase 2 第 2.2 块：根模型 spike
 
-（写于交接一节之后。）spike 代码一次性，留在 worktree
-`/home/moment/Code/working/dsh-TUI/.claude/worktrees/agent-aeb8deb9c2504a266`（未提交）的
-`scripts/spike-2.2/`：`measure-identity.mjs`、`single-root.mjs` / `run-single.mjs`、`two-root.mjs` /
+（写于交接一节之后。）spike 代码一次性、未入库（当时在独立 worktree 的
+`scripts/spike-2.2/`）：`measure-identity.mjs`、`single-root.mjs` / `run-single.mjs`、`two-root.mjs` /
 `run-two.mjs`；`plugin.ts` 只在 `apply` 顶部加了一个 `__DSH_TUI_SPIKE_SLOT__` 槽。A、B 都跑在隔离
 profile 上（`isolated-profile.mjs` 的 `dshBin`，排除 dsh-purge）；真实 profile 只做只读解析，未被
 写入（mtime 已核）。机器：3 亿次空循环空载约 1.8s。**spike 建议单根；待用户决定。**
@@ -1845,7 +1844,7 @@ PTY `accept-host-entry`：**62 用例 60 通过**。两个红例是 `dsh-in-entr
 `dsh-to-claude`、`dsh-entry-kernel-to-*`、`restart-*`。待查的是落地页输入框内容行在 30 行终端下的
 布局（实施记录里记为通过的 30/30 一轮把 `-landing` 变体算在内，环境差异还是布局回归要重新对表）。
 
-### 2026-10-09 · 交接：Phase 2 剩余（新会话从这里接手）
+### 2026-10-09 · 交接：Phase 2 剩余
 
 **执行方式（2026-10-09 约定）。**下一个会话的主 agent 只做编排：拆解、派发、收口、跑门禁、提交。
 侦察、设计、实现、审核全部由 subagent 承担（subagent 看不到本会话上下文，派活时必须把事实写进
@@ -1902,6 +1901,7 @@ node scripts/accept-host-entry.mjs             # PTY；62 例里 2 例既红，�
 架构文档；~~明确是否吸收预载的 compile cache~~**已吸收（6.1，启动器给 entry 注入 `NODE_COMPILE_CACHE`）**；明确是否吸收 `onProcessExit` 兜底。
 
 **未 push 的提交**：`ea99d038`（定位改写）、`40644af1`（merge #1380）、`fab460df`（收尾与记录）。
+（**已过时**：分支此后已 rebase 并推到 fork，这三个 SHA 不在当前分支历史里，以 `git log` 为准。）
 PR 一律走 `.agents/skills/pr`。
 
 ### 2026-10-09 · 下一步：吸收上游 #1380 的后端注册表（计划；已执行，结果见上文「已吸收上游 #1380」一节）
@@ -1909,9 +1909,6 @@ PR 一律走 `.agents/skills/pr`。
 **方向与前提。** 合并方向是 `main` → `feat/standalone-host`（`bc890963` → `b2e1a8b2`，merge-base
 `85d49e53`）。理由：#1380 已在 main 定案，动的是共享中间层；本分支 29 个提交是上层（入口与宿主
 归属）。反向合并没有意义。
-
-**接手第一件事。** 本分支工作区有 7 个未提交的文档改动（定位改写 + 设计文档修订，见上一节），
-先 commit 或 stash——不要在脏树上做合并。
 
 **体量。** `git merge-tree --write-tree --name-only feat/standalone-host main` 报 10 个文件、18 个冲突块：
 
@@ -2006,7 +2003,7 @@ CLI 退出码契约相邻，改它之前先看那一条。
 **仍待决定 / 未完成**：5.7 轻量 profile 的实现（形状 spike 进行中，本轮未改该节的形状与状态描述）；
 直启兼容路径的实现与回归；预载分支的实际清理。
 
-### 2026-10-06 · 交接：当前状态与下一步（新会话从这里接手）
+### 2026-10-06 · 交接：当前状态与下一步
 
 > **2026-10-07：Phase 1 已验收，Phase 2 计划见「Phase 2 规划」一节；2.0–2.7 已完成并提交；组合期间信号卡 5s 已查明并规避（已提交）；2026-10-08 已 rebase 到 upstream/main 85d49e53；剩 2.7 遗留与观感决定。**
 >
@@ -2028,6 +2025,8 @@ CLI 退出码契约相邻，改它之前先看那一条。
 | `fdde6be2` | 第 1、2 块：启动接管（占位会话、`ChannelUi.ready`）+ `~/.dsh-tui/settings.json` |
 | `e287998b` | 第 3 块：`host-entry.ts`、启动器分流、`restartArgv`、文档与回归 |
 | （本节） | 交接更新 |
+
+（**已过时**：分支此后两次 rebase，上表 SHA 不在当前分支历史里，以 `git log` 为准。）
 
 各块做了什么、数字、验证结果见上面「Phase 1 第 1、2 块」「Phase 1 第 3 块」两节；设计正文
 5.3 / 5.6 / 5.8 已同步实现。已定事项：5.6 选 (a)；分期修订（Phase 1 只做 DSH 无关，TuiHost
@@ -2084,23 +2083,20 @@ CLI 退出码契约相邻，改它之前先看那一条。
   未按 `85d49e53` 复核，以「2026-10-08 · rebase 到 upstream/main 85d49e53」一节为准。）
 - 本轮机器明显变慢（3 亿次空循环约 2.3s，平时约 0.3s），测时延前先跑一下这个空循环看环境。
 
-**协作约定（不变）**：本文档是方案 B 的主要参考与记录，测试发现与修正都写进实施记录；只
-暂存明确路径；提交不加 Claude 署名；未经要求不 push。
-
 （以下为 Phase 1 开工前的交接原文）
 
 **仓库与分支状态（Phase 1 开工前）**
 
-- 本 worktree：`/home/moment/Code/working/dsh-TUI-standalone`，分支 `feat/standalone-host`。
+- 本 worktree：`dsh-TUI-standalone`，分支 `feat/standalone-host`。
   - `c966caff` Phase 0（channel 核心改收 `ChannelHost`、boundary 门禁收紧、启动打点、
     基线探针、本文档）——已提交，未 push。
-- 预载方案的 rebase 分支：`/home/moment/Code/working/dsh-TUI-preboot-rebased`，分支
+- 预载方案的 rebase 分支：worktree `dsh-TUI-preboot-rebased`，分支
   `feat/preboot-fast-start-rebased`，`07a240c2`（PR #1216 的净改动压成一个提交，重建在
   ec48de22 上，含与 main 的整合修补）——已提交，未 push，PR 未更新。PR #1216 是先合入还是
   关闭，等方案 B 有结论后与 chimney 决定（本文第 8 节）。该分支本地 CI：channel-ui 组 4 个
   失败已确认与 PR 无关；render-scroll 组 3 个（含 `verify-launchpad`）、session-workspace
   组 2 个失败**未对照**，若走「先合入」必须补跑。
-- 原 PR 分支工作区 `/home/moment/Code/working/dsh-TUI-preboot`（`beb04980`）保留未动。
+- 原 PR 分支工作区 `dsh-TUI-preboot`（`beb04980`）保留未动。
 
 **Phase 1 进行到哪**
 
@@ -2265,5 +2261,4 @@ fixture 的准入去掉（无 verified identity）→ panel id 实测回 `["act1
 **协作约定**
 
 - 本文档是方案 B 的主要参考与记录：每一步、每个发现、每处设计变更都同步写进本节和相关正文。
-- 未经用户要求不提交；只暂存明确路径；提交不加 Claude 署名（无 Co-Authored-By）。
-- 验证按 AGENTS.md：改动面相关的聚焦脚本 + `pnpm build`；仓库没有 `test`/`lint` 脚本。
+- Git 与验证按 AGENTS.md（只暂存明确路径、未经要求不提交不 push；改动面相关的聚焦脚本 + `pnpm build`）。

@@ -2,8 +2,8 @@
 
 [文档索引](README.md) · [独立宿主设计](standalone-host-design.md)（6.1「DSH 加载的同步阻塞」是本文的上下文）
 
-状态：诊断完成（2026-10-09，`feat/standalone-host`，基于工作区里**未提交**的 lib 打包产物——
-`scripts/bundle-lib.mjs`，`lib/types/chunks/` 104 个 chunk）。**3.1（按路径导入 + 门禁规则）与
+状态：诊断完成（2026-10-09，`feat/standalone-host`，基于 lib 打包产物——
+`scripts/bundle-lib.mjs`，诊断时尚未提交、现已入库；`lib/types/chunks/` 104 个 chunk）。**3.1（按路径导入 + 门禁规则）与
 3.2（候选 c）已落地到源码并复测**（测量协议见 §4，**实测与复核结论见 §5**：3.1-a 的「≤3」判据
 物理不可达；**结论口径以逐轮交替对照为准：3.1 ≈ 126ms、3.2 ≈ 46ms，两项合计约 170ms**——独立
 裁定 I 推翻的是早期块级口径对 **3.2 单项**约 2.2–2.5 倍的高估，见 §5.7）；3.3 / 3.4 / 3.5 未落地，
@@ -296,7 +296,7 @@ spec ⑥-4 的裁决。与本次首帧目标无关（不在首帧路径上）：
 
 ```sh
 DSH_TUI_THEME=dark \
-NODE_COMPILE_CACHE=/home/moment/.dsh-tui/compile-cache \
+NODE_COMPILE_CACHE="$HOME/.dsh-tui/compile-cache" \
 DSH_TUI_LANG=en \
 node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 ```
@@ -340,8 +340,8 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 > **量级口径的最终修订见 §5.7**：§5.1 的 `−167ms` 是本批次的**块级点估计**，不是「扣掉漂移后的
 > 效应」；可信说法以逐轮交替对照为准（3.1 ≈ 126ms、3.2 ≈ 46ms，合计约 170ms）。
 >
-> **证据位置**：本节引用的 `implement/report.md`、`.tmp/startup-opt/*`（measure2/3、verify2 的
-> I-ruling 等）都在本地 `.tmp/`，被 `.gitignore` 排除，**不在仓库里**；复核时只能以本文转述为准。
+> **证据位置**：本节引用的测量报告（`implement/report.md`、measure2/3、verify2 的 I-ruling 等）
+> 都是本地一次性产物，**不在仓库里**；复核时只能以本文转述为准。
 
 ### 5.1 实测（`implement/report.md` 2.3，`A1 B1 A2 B2` 各 4 轮，每臂 8 轮；**块级口径，量级已由 §5.7 修订**）
 
@@ -484,9 +484,9 @@ node scripts/probe-startup-baseline.mjs --entry host --backend dsh --runs 4
 
 #### 5.7.1 独立裁定 I：推翻 H 的量级（不是方向）
 
-H（`.tmp/startup-opt/measure2/report.md`）在四臂块级设计上给出 `A−B render-done = −306.5ms`
+H（measure2 的报告）在四臂块级设计上给出 `A−B render-done = −306.5ms`
 （95% CI [262,361]，两臂「完全不重叠」，置换检验 `p = 7.4e-7`），并给出「跨 harness 保守下界 ≥167ms」。
-独立裁定 I（`.tmp/startup-opt/verify2/I-ruling.md`）逐条复核后**推翻其量级**：
+独立裁定 I（verify2 的 I-ruling）逐条复核后**推翻其量级**：
 
 - **置换检验 p 值算错 250×**：H 用 `2/C(24,12) = 7.4e-7`；该式**只在统计量取两个值时**成立。
   I 对 **中位数差**统计量精确枚举 `C(24,12) = 2,704,156` 全部组合，`ge = 504`，真实 **p = 1.86e-4**。
@@ -578,8 +578,8 @@ B 态 = `import sample from 'lodash-es/sample.js'`。本轮各自 `pnpm compile`
 **环境**：这台机器同时在跑游戏开发任务（Windows 侧的 `urhoxruntime` 等），WSL 内看不到这部分负载，
 所以每轮都另用 `typeperf` 采 Windows 总 CPU（1s 粒度），同时采 WSL 内 `/proc` 的 busy/steal 和
 其他进程的占用。口径同 §4.1：`--entry host --backend dsh`、热编译缓存、`DSH_TUI_THEME=dark`；
-每轮开始前空闲 3s，作为背景负载的读数。脚本是一次性的，未入库：
-`.tmp/first-frame-cpu/{measure,preload,analyze,ab-stats}.mjs`。
+每轮开始前空闲 3s，作为背景负载的读数。脚本是一次性的，未入库
+（measure / preload / analyze / ab-stats 四个）。
 
 #### 5.8.1 基线分段（当时工作区的 lib，即随后以 `82af3c44` 提交的打包态；10 轮，不剖析）
 
