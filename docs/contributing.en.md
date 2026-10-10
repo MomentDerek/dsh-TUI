@@ -461,17 +461,6 @@ change, also run the closest focused script:
 | Unsent-draft handoff across screens (snapshot, cursor, image bindings, ownership) | `pnpm verify:composer-draft-handoff`; end-to-end screen switching also `node scripts/verify-session-browser.mjs` |
 | Launcher `bin/dsh-tui.js` (argv parsing and delegation/bootstrap, safe mode, the `/update` launcher migration, the entry child's env) | `node scripts/verify-launcher.mjs` + `node scripts/verify-safe-mode.mjs` + `node scripts/verify-update.mjs` + `node scripts/verify-update-recovery.mjs` |
 
-The launcher row is the exception: all four scripts belong to the CI
-`input-terminal` group (required), but they are **not** in the local
-`pnpm verify:build` aggregate list — running only `verify:build` misses them,
-and launcher changes land exactly there. Always run these four on their own
-when touching `bin/dsh-tui.js`. `verify-safe-mode` and `verify-backend-registry`
-also **text-slice** marked sections out of the launcher and run them in a vm
-sandbox with a handful of injected symbols: editing inside a sliced section, or
-introducing a module-level constant inside one, turns those suites silently red
-(the function's own try/catch swallows the sandbox `ReferenceError` as "no data
-read").
-
 Most focused scripts invoked with plain `node` import `lib/types/`; run
 `pnpm build` first. Scripts that import TypeScript sources declare the
 `node --import tsx/esm <script>` form in their header.

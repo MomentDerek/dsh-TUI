@@ -1,6 +1,6 @@
 # AGENTS.md
 
-dsh-TUI 是 DeepSeek Harness 的终端界面应用（`@deepseek-harness-tui/dsh-tui`），零核心改动、只消费 DSH 的公开导出。DSH 是首要适配目标与首方后端；本包正从「DSH 的插件」演进为「拥有自身入口与组装根的终端应用」，届时 DSH 与 claude / codex 一样作为后端按需在进程内加载。Agent、会话、模型、工具、持久化与策略域仍然由 DeepSeek Harness 拥有，本包只消费它们。改动前先读 [docs/contributing.md](docs/contributing.md)（本仓库共享开发契约的权威文本）与 [ADAPTER.md](ADAPTER.md)（上游边界与契约）；整体结构见 [docs/architecture.md](docs/architecture.md)；独立宿主的方案、分期与非目标见 [docs/standalone-host-design.md](docs/standalone-host-design.md)。
+dsh-TUI 是 DeepSeek Harness 的终端界面应用（`@deepseek-harness-tui/dsh-tui`），零核心改动、只消费 DSH 的公开导出。DSH 是首要适配目标与首方后端；本包正从「DSH 的插件」演进为「拥有自身入口与组装根的终端应用」，届时 DSH 与 claude / codex 一样作为后端按需在进程内加载。Agent、会话、模型、工具、持久化与策略域仍然由 DeepSeek Harness 拥有，本包只消费它们。改动前先读 [docs/contributing.md](docs/contributing.md)（本仓库共享开发契约的权威文本）与 [ADAPTER.md](ADAPTER.md)（上游边界与契约）；整体结构见 [docs/architecture.md](docs/architecture.md)；独立宿主的方案与非目标见 [docs/standalone-host-design.md](docs/standalone-host-design.md)。
 
 ## 仓库布局
 
