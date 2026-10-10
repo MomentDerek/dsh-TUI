@@ -309,21 +309,23 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
   const shutdown = createProcessShutdown(() => ctx.fiber.dispose())
   const appReady = createAppReady()
   let uninstallFailLoud = (): void => undefined
+  // `startedBundles` names what is really composed.
+  const profileContextFor = (startedBundles: readonly string[]): AppBoot.ProfileContext => ({
+    name: options.profile,
+    dir: profile.dir,
+    patchPath: profile.patchPath,
+    installAnchor: profileBoot.INSTALL_ANCHOR,
+    startedBundles: [...startedBundles],
+    cwd: process.cwd(),
+    home: host.homePaths.resolveDshHome(),
+    overlays: [],
+    telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
+  })
   let profileContext: AppBoot.ProfileContext | undefined
   if (options.dsh) {
     // 5. runProfile: fail-loud (removable here, unlike runProfile's).
     uninstallFailLoud = appBoot.installFailLoud(BIN_NAME, process, async () => { await ctx.fiber.dispose() })
-    profileContext = {
-      name: options.profile,
-      dir: profile.dir,
-      patchPath: profile.patchPath,
-      installAnchor: profileBoot.INSTALL_ANCHOR,
-      startedBundles: profile.layers.map(layer => layer.packageName),
-      cwd: process.cwd(),
-      home: host.homePaths.resolveDshHome(),
-      overlays: [],
-      telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
-    }
+    profileContext = profileContextFor(profile.layers.map(layer => layer.packageName))
     ctx.provide('profileContext', profileContext)
     ctx.provide(host.launchEnvironmentKey, environment)
   }
@@ -348,46 +350,49 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     await ctx.fiber.dispose().catch(() => undefined)
     throw error
   }
+  const mountAndAudit = async (patches: ReturnType<typeof appBoot.readProfilePatches>, warn: Warn, stopping: () => boolean): Promise<void> => {
+    // boot(): warnings and errors logged while the tree starts, for the startup report.
+    const startupLogs: unknown[] = []
+    const diagnostics = new host.Context() as Context & { logger: { exporter(exporter: unknown): unknown } }
+    diagnostics.logger = (ctx as Context & { logger: { exporter(exporter: unknown): unknown } }).logger
+    diagnostics.logger.exporter({
+      levels: { default: 2 },
+      export: ({ ts, name, type, args }: { ts: unknown; name: unknown; type: unknown; args: unknown }) => {
+        if (type === 'warn' || type === 'error') startupLogs.push({ ts, name, type, args })
+      },
+    })
+    try {
+      await appBoot.mountRootInclude(ctx, rootConfig, patches, undefined, BIN_NAME)
+      const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
+      await loader()?.await()
+      // Disposed or about to be: no audit, and no readiness (HMR would start
+      // its profile refresh on a dying tree).
+      if (loader() === undefined || stopping()) return
+      await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
+      if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined && !stopping()) appReady.commit()
+    } catch (error) {
+      // Unlike bin.js, a report is saved for every failure (the screen
+      // stays up and shows its path).
+      if (error instanceof appBoot.StartupError) {
+        Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: startupLogs }, enumerable: false, configurable: true, writable: true })
+      }
+      const logPath = await writeStartupReport(error, {
+        home: host.homePaths.resolveDshHome(),
+        version: hostVersion(host),
+        profile: options.profile,
+        ...(error instanceof appBoot.StartupError ? {} : { configurationPath: rootConfig, messages: startupLogs }),
+      })
+      throw new HostComposeError(error, logPath)
+    } finally {
+      await diagnostics.fiber.dispose().catch(() => undefined)
+    }
+  }
   return {
     ctx,
     uninstallFailLoud: () => { uninstallFailLoud() },
     async compose(warn, stopping = () => false) {
       if (!options.dsh || profileContext === undefined) throw new Error('dsh-tui: this root was prepared without the DSH profile')
-      // boot(): warnings and errors logged while the tree starts, for the startup report.
-      const startupLogs: unknown[] = []
-      const diagnostics = new host.Context() as Context & { logger: { exporter(exporter: unknown): unknown } }
-      diagnostics.logger = (ctx as Context & { logger: { exporter(exporter: unknown): unknown } }).logger
-      diagnostics.logger.exporter({
-        levels: { default: 2 },
-        export: ({ ts, name, type, args }: { ts: unknown; name: unknown; type: unknown; args: unknown }) => {
-          if (type === 'warn' || type === 'error') startupLogs.push({ ts, name, type, args })
-        },
-      })
-      try {
-        await appBoot.mountRootInclude(ctx, rootConfig, appBoot.readProfilePatches(BIN_NAME, profileContext, profile), undefined, BIN_NAME)
-        const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
-        await loader()?.await()
-        // Disposed or about to be: no audit, and no readiness (HMR would start
-        // its profile refresh on a dying tree).
-        if (loader() === undefined || stopping()) return
-        await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
-        if (ctx.fiber.state === FIBER_ACTIVE && loader() !== undefined && !stopping()) appReady.commit()
-      } catch (error) {
-        // Unlike bin.js, a report is saved for every failure (the screen
-        // stays up and shows its path).
-        if (error instanceof appBoot.StartupError) {
-          Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: startupLogs }, enumerable: false, configurable: true, writable: true })
-        }
-        const logPath = await writeStartupReport(error, {
-          home: host.homePaths.resolveDshHome(),
-          version: hostVersion(host),
-          profile: options.profile,
-          ...(error instanceof appBoot.StartupError ? {} : { configurationPath: rootConfig, messages: startupLogs }),
-        })
-        throw new HostComposeError(error, logPath)
-      } finally {
-        await diagnostics.fiber.dispose().catch(() => undefined)
-      }
+      await mountAndAudit(appBoot.readProfilePatches(BIN_NAME, profileContext, profile), warn, stopping)
     },
     async composeLite(warn, stopping = () => false) {
       if (options.dsh) throw new Error('dsh-tui: this root was prepared for DSH; compose the whole profile instead')
@@ -399,40 +404,11 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
       }
       const notice = liteProfileNotice(plan)
       if (notice !== undefined) warn(notice)
-      // `startedBundles` names what is really composed.
-      const liteContext: AppBoot.ProfileContext = {
-        name: options.profile,
-        dir: profile.dir,
-        patchPath: profile.patchPath,
-        installAnchor: profileBoot.INSTALL_ANCHOR,
-        startedBundles: plan.bundles,
-        cwd: process.cwd(),
-        home: host.homePaths.resolveDshHome(),
-        overlays: [],
-        telemetryDisabledEnv: process.env.DSH_TELEMETRY_DISABLED,
-      }
       // The trimmed layers' patches, then the disable rows applied last (a
       // static disable in cordis.patch.yml would also hit the DSH kernel).
-      const patches = appBoot.readProfilePatches(BIN_NAME, liteContext, { ...profile, layers: [...plan.layers] })
+      const patches = appBoot.readProfilePatches(BIN_NAME, profileContextFor(plan.bundles), { ...profile, layers: [...plan.layers] })
       patches.push(...plan.disableRows)
-      try {
-        await appBoot.mountRootInclude(ctx, rootConfig, patches, undefined, BIN_NAME)
-        const loader = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
-        await loader()?.await()
-        if (loader() === undefined || stopping()) return
-        await appBoot.auditStartupEntries(ctx, BIN_NAME, warn)
-      } catch (error) {
-        if (error instanceof appBoot.StartupError) {
-          Object.defineProperty(error, 'startup', { value: { configurationPath: rootConfig, messages: [] }, enumerable: false, configurable: true, writable: true })
-        }
-        const logPath = await writeStartupReport(error, {
-          home: host.homePaths.resolveDshHome(),
-          version: hostVersion(host),
-          profile: options.profile,
-          ...(error instanceof appBoot.StartupError ? {} : { configurationPath: rootConfig, messages: [] }),
-        })
-        throw new HostComposeError(error, logPath)
-      }
+      await mountAndAudit(patches, warn, stopping)
     },
   }
 }

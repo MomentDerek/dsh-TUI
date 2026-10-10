@@ -238,7 +238,7 @@ esac
     /disposeRootSettled\(ctx\)\n  \} finally \{/.test(entry)
     && /const \{ unloadBackends \} = await import\('\.\/backend-registry\.js'\)\n      await unloadBackends\(\)/.test(entry))
   check('the entry tracks its composition, which stops short of the audit and readiness once a dispose waits',
-    /const composition = trackComposition\(ctx, /.test(entry) && /await root\.compose\([^\n]*\(\) => composition\.disposing\)/.test(entry)
+    /const composition = trackComposition\(ctx, /.test(entry) && /await compose\(\(\) => composition\.disposing\)/.test(entry)
       && /if \(loader\(\) === undefined \|\| stopping\(\)\) return/.test(hostDsh) && /&& !stopping\(\)\) appReady\.commit\(\)/.test(hostDsh))
   check('the dsh-tui row opens no DSH session once the exit started',
     /if \(compositionFailed \|\| exited\) return/.test(plugin))

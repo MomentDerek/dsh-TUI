@@ -180,64 +180,54 @@ async function runInEntry(kernel: KernelBackendId): Promise<void> {
   // One owner of a fatal error: with the TUI's process guard up, DSH's
   // fail-loud would exit 1 before the exit funnel ran.
   if (root !== undefined && processGuardActive()) root.uninstallFailLoud()
-  // A light-profile failure ends the process loudly: a kernel whose plugin
-  // ecosystem did not come up must not pass as a boot.
-  const composeLiteRoot = async (hostRoot: HostRoot): Promise<void> => {
-    await composeSeam?.firstFrameFlushed?.()
+  if (root === undefined || (slot === undefined && kernel === 'dsh')) return
+  const hostRoot = root
+  // A root dispose lets the Loader settle first: HMR deadlocks when disposed
+  // while its watchers start (./root-dispose.ts).
+  const runComposition = async (
+    firstFrameFlushed: () => Promise<void> | undefined,
+    compose: (stopping: () => boolean) => Promise<void>,
+  ): Promise<{ readonly failed: false; readonly disposing: boolean } | { readonly failed: true; readonly error: unknown }> => {
+    await firstFrameFlushed()
     markBoot('entry-first-frame-flushed')
     markBoot('entry-compose-start')
     armRootCapabilityGuard(ctx)
     const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
     const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
-    let failed = false
-    let failure: unknown
     try {
-      await hostRoot.composeLite(line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }, () => composition.disposing)
+      await compose(() => composition.disposing)
+      return { failed: false, disposing: composition.disposing }
     } catch (error) {
-      failed = true
-      failure = error
+      return { failed: true, error }
     } finally {
       composition.done()
       releaseRootGuard?.()
+      markBoot('entry-compose-end')
     }
-    markBoot('entry-compose-end')
-    if (!failed) {
+  }
+  if (slot === undefined) {
+    // A light-profile failure ends the process loudly: a kernel whose plugin
+    // ecosystem did not come up must not pass as a boot.
+    const outcome = await runComposition(() => composeSeam?.firstFrameFlushed?.(), stopping => hostRoot.composeLite(line => { logForDebugging(`dsh-tui: host composition: ${line.trimEnd()}`) }, stopping))
+    if (!outcome.failed) {
       composeSeam?.composeSucceeded?.()
       return
     }
-    const reason = failure instanceof HostComposeError && failure.logPath !== undefined
-      ? `${failure.message} — startup report: ${failure.logPath}`
-      : failure
-    handleStartupError(ctx, reason)
-  }
-  if (slot === undefined || root === undefined) {
-    if (root !== undefined && kernel !== 'dsh') await composeLiteRoot(root)
+    const { error } = outcome
+    handleStartupError(ctx, error instanceof HostComposeError && error.logPath !== undefined ? `${error.message} — startup report: ${error.logPath}` : error)
     return
   }
   // DSH: past the mount nothing writes to the terminal; a failure lands in the
   // screen. The "starting" frame must reach the terminal before the
   // composition's synchronous stretch.
-  await slot.firstFrameFlushed?.()
-  markBoot('entry-first-frame-flushed')
-  markBoot('entry-compose-start')
-  armRootCapabilityGuard(ctx)
-  // A root dispose lets the Loader settle first: HMR deadlocks when disposed
-  // while its watchers start (./root-dispose.ts).
-  const loaderOf = (): { await(): Promise<unknown> } | undefined => ctx.get('loader' as never) as { await(): Promise<unknown> } | undefined
-  const composition = trackComposition(ctx, async () => { await loaderOf()?.await() })
-  let composed = false
-  try {
-    await root.compose(line => { slot.composeWarning?.(line) }, () => composition.disposing)
-    composed = !composition.disposing
-  } catch (error) {
+  const outcome = await runComposition(() => slot.firstFrameFlushed?.(), stopping => hostRoot.compose(line => { slot.composeWarning?.(line) }, stopping))
+  if (outcome.failed) {
+    const { error } = outcome
     if (error instanceof HostComposeError) slot.composeFailed?.(error.original, error.logPath)
     else slot.composeFailed?.(error)
-  } finally {
-    composition.done()
-    releaseRootGuard?.()
+    return
   }
-  markBoot('entry-compose-end')
-  if (!composed) return
+  if (outcome.disposing) return
   if (!slot.rowSeen) slot.composeFailed?.(new Error(`the ${profile} profile has no dsh-tui row`))
   else slot.composeSucceeded?.()
 }
