@@ -18,12 +18,12 @@ export const MENTION_MAX_DIR_ENTRIES = 200
 
 /** The leaf's fs service in the shape mention expansion needs; undefined
  *  when the plugin is not mounted (mentions then stay literal text). */
-export function mentionFs(services: ServiceLookup): MentionFs | undefined {
-  return services.get('fs') as MentionFs | undefined
+export function mentionFs(ctx: ServiceLookup): MentionFs | undefined {
+  return ctx.get('fs') as MentionFs | undefined
 }
 
-export function mentionAttachments(services: ServiceLookup): MentionAttachments | undefined {
-  return services.get('attachments') as MentionAttachments | undefined
+export function mentionAttachments(ctx: ServiceLookup): MentionAttachments | undefined {
+  return ctx.get('attachments') as MentionAttachments | undefined
 }
 
 export const MENTION_IMAGE_MEDIA_TYPES: Readonly<Record<string, MentionImageMediaType>> = {

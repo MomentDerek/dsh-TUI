@@ -135,7 +135,7 @@ const positiveOr = (value: unknown, fallback: number): number =>
  * bindings minted by the public scene `stageImage()` API.
  */
 export function createComposerImages(
-  services: ServiceLookup,
+  ctx: ServiceLookup,
   owner: ChannelOwner,
   deps: {
     generation(): number
@@ -216,7 +216,7 @@ export function createComposerImages(
   ): Promise<StagedImageHandle> => {
     syncSession()
     const local = deps.localImages?.()
-    const attachments = local ?? mentionAttachments(services)
+    const attachments = local ?? mentionAttachments(ctx)
     if (attachments === undefined) throw new Error('image attachments are unavailable in this profile')
     if (generation !== stagedImageEpoch) {
       throw new Error('the session changed while the image was being staged')
@@ -306,7 +306,7 @@ export function createComposerImages(
     const stageId = randomUUID()
     stagedImages.set(stageId, attachment)
     if (path !== undefined) rememberImagePath(String(attachment.attachmentId), path)
-    const view = local !== undefined ? local.facade(attachment) : transcriptImageFromAttachment(attachment, () => services.get('attachments'))
+    const view = local !== undefined ? local.facade(attachment) : transcriptImageFromAttachment(attachment, () => ctx.get('attachments'))
     if (view !== undefined) stagedImageViews.set(stageId, view)
     while (stagedImages.size > STAGED_IMAGE_LIMIT) {
       const oldest = stagedImages.keys().next().value as string | undefined
@@ -368,7 +368,7 @@ export function createComposerImages(
     },
     stagedImageLimits(): ComposerImageLimits | undefined {
       syncSession()
-      const limits = (deps.localImages?.() ?? mentionAttachments(services))?.imageLimits
+      const limits = (deps.localImages?.() ?? mentionAttachments(ctx))?.imageLimits
       if (limits === undefined) return undefined
       return {
         maxImageBytes: limits.maxImageBytes,

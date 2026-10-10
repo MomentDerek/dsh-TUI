@@ -104,7 +104,7 @@ export interface ResumeSessionOpener {
   plan(target: { readonly sessionId: string }): ResumeSessionPlan
 }
 
-export function createSessionSwitch(host: Pick<ChannelHost, 'logger' | 'dispatchDecision' | 'dispatchNotification'>, deps: {
+export function createSessionSwitch(ctx: Pick<ChannelHost, 'logger' | 'dispatchDecision' | 'dispatchNotification'>, deps: {
   owner: Pick<ChannelOwner, 'current'>
   binding: Pick<ChannelBinding, 'session' | 'capture' | 'isCurrent' | 'prepare' | 'abandon' | 'adopt'>
   state: () => Pick<ChannelState, 'agentId' | 'cwd' | 'displayCwd' | 'working' | 'pending'>
@@ -141,7 +141,7 @@ export function createSessionSwitch(host: Pick<ChannelHost, 'logger' | 'dispatch
     // switch roll over a newer session the user switched to mid-await.
     const origin = deps.conversationKey(binding.session)
     const state = deps.state()
-    const decision = await deps.withDecisionPending('tui/session-switch', host.dispatchDecision('tui/session-switch', {
+    const decision = await deps.withDecisionPending('tui/session-switch', ctx.dispatchDecision('tui/session-switch', {
       kind,
       ...(targetSessionId === undefined ? {} : { targetSessionId }),
       sessionId: state.agentId,
@@ -165,13 +165,13 @@ export function createSessionSwitch(host: Pick<ChannelHost, 'logger' | 'dispatch
    *  the switch itself already succeeded. */
   const notifySessionSwitched = (kind: SessionSwitchedKind, sessionId: string, previousSessionId: string): void => {
     try {
-      void host.dispatchNotification('tui/session-switched', { kind, sessionId, previousSessionId, cwd: deps.state().cwd }).catch((error: unknown) => {
-        host.logger.warn('dsh-tui: tui/session-switched listener failed: %o', error)
+      void ctx.dispatchNotification('tui/session-switched', { kind, sessionId, previousSessionId, cwd: deps.state().cwd }).catch((error: unknown) => {
+        ctx.logger.warn('dsh-tui: tui/session-switched listener failed: %o', error)
       })
     } catch (error) {
       // A bare embedder's context may lack the event bus entirely; the
       // switch itself already succeeded, so this stays a log line.
-      host.logger.warn('dsh-tui: tui/session-switched dispatch failed: %o', error)
+      ctx.logger.warn('dsh-tui: tui/session-switched dispatch failed: %o', error)
     }
   }
 

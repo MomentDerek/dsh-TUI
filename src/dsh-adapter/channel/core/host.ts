@@ -43,8 +43,8 @@ export interface CoreHost {
  * is effectful state, so it is owned at acquisition: a later construction
  * failure rolls it back.
  */
-export function resolveCoreHost(host: ChannelHost, owner: Pick<ChannelOwner, 'own'>): CoreHost {
-  const adapterRuntime = host.runtime
+export function resolveCoreHost(ctx: ChannelHost, owner: Pick<ChannelOwner, 'own'>): CoreHost {
+  const adapterRuntime = ctx.runtime
   // Backstop: the extensions row installs the decision-subscription gate,
   // but the channel is the dispatch path. A stale patch without that row (or
   // a bare embed mounting neither) would otherwise leave tui/input and
@@ -56,36 +56,36 @@ export function resolveCoreHost(host: ChannelHost, owner: Pick<ChannelOwner, 'ow
   // shadowed by an early snapshot.
   const fallbackGrantStore = readGrantStore(undefined, undefined, adapterRuntime)
   const currentGrantStore = (): ReturnType<typeof readGrantStore> =>
-    getHostGrantStore(host.get('tuiPluginHost')) ?? fallbackGrantStore
-  host.installDecisionGuard(currentGrantStore())
+    getHostGrantStore(ctx.get('tuiPluginHost')) ?? fallbackGrantStore
+  ctx.installDecisionGuard(currentGrantStore())
   // The channel is the real DecisionEvents dispatch path. Record that
   // topology so the live driver can distinguish "guard installed" (not a
   // live feature) from "events can actually be dispatched here".
-  owner.own(host.markDecisionDispatchTopology())
+  owner.own(ctx.markDecisionDispatchTopology())
   // Workspace registry runtime (optional service, issue #183): mounted by
   // the bundle patch's dsh-tui-workspaces row; absent the row (stale patch
   // or a bare embedder), degrade to the local-only runtime (one per channel).
   let localWorkspaces: ReturnType<typeof createLocalWorkspaceRuntime> | undefined
   return {
     adapterRuntime,
-    get themeHost() { return getHostThemes(host.get('tuiThemes') as TuiThemeRuntime | undefined) },
+    get themeHost() { return getHostThemes(ctx.get('tuiThemes') as TuiThemeRuntime | undefined) },
     get workspaceService() {
-      return getHostWorkspaceRuntime(host.get('tuiWorkspaces') as TuiWorkspaceRuntime | undefined)
+      return getHostWorkspaceRuntime(ctx.get('tuiWorkspaces') as TuiWorkspaceRuntime | undefined)
         ?? (localWorkspaces ??= createLocalWorkspaceRuntime())
     },
-    get commandTrees() { return getHostCommandTrees(host.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined) },
+    get commandTrees() { return getHostCommandTrees(ctx.get('tuiCommandTrees') as TuiCommandTreeRuntime | undefined) },
     // Plugin scene runtime (optional, dsh-tui-scenes row): absent the row,
     // `pluginScene` simply stays undefined.
-    get sceneRuntime() { return getHostSceneRuntime(host.get('tuiScenes') as TuiSceneRuntime | undefined) },
+    get sceneRuntime() { return getHostSceneRuntime(ctx.get('tuiScenes') as TuiSceneRuntime | undefined) },
     // Falls back to the in-package local host when the composition's
     // service row is unavailable (issue #557).
     get settingsSectionsRuntime() {
-      return getHostSettingsSections(host.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined)
-        ?? host.localSettingsSections()
+      return getHostSettingsSections(ctx.get('tuiSettingsSections') as TuiSettingsSectionsRuntime | undefined)
+        ?? ctx.localSettingsSections()
     },
     // Custom-entry text renderers (optional, dsh-tui-extensions row): absent
     // the row, unknown plugin event types stay invisible in the transcript.
-    get rendererRuntime() { return getHostRenderers(host.get('tuiRenderers') as TuiRendererRuntime | undefined) },
+    get rendererRuntime() { return getHostRenderers(ctx.get('tuiRenderers') as TuiRendererRuntime | undefined) },
     currentGrantStore,
   }
 }
@@ -147,7 +147,7 @@ export function startHostSubscriptions(
  * lands on a different cwd (/resume, /workspace, issue #96) so the
  * breadcrumb never shows the previous workspace's branch.
  */
-export function createGitBranchRefresher(services: ServiceLookup, deps: {
+export function createGitBranchRefresher(ctx: ServiceLookup, deps: {
   owner: Pick<ChannelOwner, 'current'>
   state: Pick<ChannelState, 'cwd' | 'gitBranch' | 'emit'>
   /** Record the resolved branch against the bound session (the session
@@ -157,7 +157,7 @@ export function createGitBranchRefresher(services: ServiceLookup, deps: {
   return () => {
     const { state } = deps
     state.gitBranch = undefined
-    const shell = services.get('shell') as ForegroundShell | undefined
+    const shell = ctx.get('shell') as ForegroundShell | undefined
     if (!shell) return
     // Capture the requested cwd: a /resume landing while this query is in
     // flight refreshes the branch for the new cwd, so a late reply from the

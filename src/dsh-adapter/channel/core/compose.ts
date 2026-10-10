@@ -131,7 +131,7 @@ export interface ChannelExtension {
 export type CoreChannel = ReturnType<typeof createCoreChannel>
 
 export function createCoreChannel(
-  channelHost: ChannelHost,
+  ctx: ChannelHost,
   initialSession: AgentSession,
   options: ChannelLaunchOptions,
   owner: ChannelOwner,
@@ -143,7 +143,7 @@ export function createCoreChannel(
   // first, so a throw anywhere later in construction still stops it. Replaced
   // sessions are closed by the binding at adoption.
   owner.own(() => { binding.releaseOwned() })
-  const host: CoreHost = resolveCoreHost(channelHost, owner)
+  const host: CoreHost = resolveCoreHost(ctx, owner)
 
   let extension: ChannelExtension = {}
   let started = false
@@ -300,8 +300,8 @@ export function createCoreChannel(
     localImageStore ??= createLocalImageStore(() => binding.session.capabilities.images?.limits ?? NO_IMAGES)
     return localImageStore
   }
-  const composer = createComposerImages(channelHost, owner, { generation: () => state.agentBindingGeneration, localImages })
-  const files = createCoreFiles(channelHost, {
+  const composer = createComposerImages(ctx, owner, { generation: () => state.agentBindingGeneration, localImages })
+  const files = createCoreFiles(ctx, {
     owner,
     binding,
     state: () => state,
@@ -310,7 +310,7 @@ export function createCoreChannel(
     // Read late: the session controls are built after the files.
     mcpServers: () => controls.mcpServers(),
   })
-  const inputDelivery = createInputDelivery(channelHost, owner, binding, () => state,
+  const inputDelivery = createInputDelivery(ctx, owner, binding, () => state,
     (...args) => notify(...args), trackPending, untrackPending, composer,
     () => currentSelection, (messageId, info) => selectionAttachments.remember(messageId, info),
     files.fallbackFs, localImages, () => contextRegistry.consume())
@@ -436,7 +436,7 @@ export function createCoreChannel(
     subscribe: emitter.subscribe,
     emit: emitter.emit,
     emitStream: emitter.emitStream,
-    ...createSettingsHosts(channelHost, owner.assertActive),
+    ...createSettingsHosts(ctx, owner.assertActive),
     ...createPreferences(() => state),
     /** Mount-owned settings namespace: the section registers under it, so this
      *  is the only ns whose section carries the TUI's user layer. */
@@ -498,7 +498,7 @@ export function createCoreChannel(
       const fence = mcpFence()
       const auth = fence.session.capabilities.auth
       if (auth === undefined) return undefined
-      const oauth = (channelHost.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
+      const oauth = (ctx.get('dshAuth') as { api?: OAuthSetupHost } | undefined)?.api
       const backend = state.backendCapabilities.backendLabel
       return { login: async present => {
         const login = auth.login?.bind(auth)
@@ -742,7 +742,7 @@ export function createCoreChannel(
   }
 
   const controls = createSessionControls({ state: () => state, backendLabel: () => state.backendCapabilities.backendLabel })
-  const feed = createBindingFeed(channelHost, {
+  const feed = createBindingFeed(ctx, {
     owner,
     binding,
     state,
@@ -809,7 +809,7 @@ export function createCoreChannel(
 
   /** `!!` commands on their way to the session (`/new` waits them out). */
   const shellInputs = { started: 0, inFlight: 0 }
-  const sessionSwitch = createSessionSwitch(channelHost, {
+  const sessionSwitch = createSessionSwitch(ctx, {
     owner,
     binding,
     state: () => state,
@@ -868,7 +868,7 @@ export function createCoreChannel(
     canOpen: options.openSession !== undefined && options.sessionCatalog !== undefined,
   })
 
-  const local = createCoreLocalActions(channelHost, {
+  const local = createCoreLocalActions(ctx, {
     owner,
     binding,
     state,
@@ -1031,7 +1031,7 @@ export function createCoreChannel(
       extension.start?.after?.()
     }
   }
-  const refreshGitBranch = createGitBranchRefresher(channelHost, {
+  const refreshGitBranch = createGitBranchRefresher(ctx, {
     owner,
     state,
     noteBranch: branch => { extension.noteBranch?.(branch) },
@@ -1080,7 +1080,7 @@ export function createCoreChannel(
       // only after the owner is registered and the complete delegate surface
       // is installed; the outer construction transaction rolls every step back.
       extension.start?.before?.()
-      startHostSubscriptions(host, owner, state, channelHost)
+      startHostSubscriptions(host, owner, state, ctx)
       extension.start?.after?.()
       // The startup session's history, read ahead of construction, paints
       // before any live event (an extension owning the facts replays its own).
@@ -1088,7 +1088,7 @@ export function createCoreChannel(
       // The host owns the Channel lifetime. Rebinding handles the common case;
       // this effect closes the final timer and releases the DecisionEvents
       // dispatch-topology marker when the host unloads the Channel.
-      channelHost.effect?.(() => () => {
+      ctx.effect?.(() => () => {
         // The context owns the complete Channel lifetime. Keep emitter and
         // IDE-link teardown in the same finally funnel.
         state.releaseContributions()

@@ -42,7 +42,7 @@ export const NO_COMPLETION_CATALOG: CompletionCatalog = {
   },
 }
 
-export function createCoreFiles(services: ServiceLookup, deps: {
+export function createCoreFiles(ctx: ServiceLookup, deps: {
   owner: Pick<ChannelOwner, 'current' | 'signal'>
   binding: Pick<ChannelBinding, 'capture' | 'isCurrent'>
   state: () => ChannelState
@@ -56,7 +56,7 @@ export function createCoreFiles(services: ServiceLookup, deps: {
   // no fs service and the backend runs here (mentions and `@` completion).
   const localFs = createLocalFs()
   const fallbackFs = (): MentionFs | undefined => deps.localFallback() ? localFs : undefined
-  const fs = (): MentionFs | undefined => mentionFs(services) ?? fallbackFs()
+  const fs = (): MentionFs | undefined => mentionFs(ctx) ?? fallbackFs()
   const fileActions = createFileActions({
     owner: deps.owner,
     capture: () => deps.binding.capture(),

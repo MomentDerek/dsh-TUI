@@ -11,6 +11,7 @@ import { basename, dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { DATA_DIR } from './utils/paths.js'
 import { dshHomeDir } from './utils/credentials.js'
+import { isRecord } from './utils/jsonl.js'
 
 export interface TuiSettingsDocument {
   readonly version: 1
@@ -21,9 +22,6 @@ export interface TuiSettingsDocument {
 }
 
 export const TUI_SETTINGS_FILE = join(DATA_DIR, 'settings.json')
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
 
 /** The document, or undefined when there is none yet. A broken file reads as
  *  an empty layer (and is not re-imported over). Never throws. */

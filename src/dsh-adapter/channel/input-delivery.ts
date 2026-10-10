@@ -52,7 +52,7 @@ export interface UserTextOrigin {
 
 /** Input FIFO, staged attachments and decision notice timers share one lifetime. */
 export function createInputDelivery(
- host: ChannelHost, owner: ChannelOwner, binding: { readonly session: AgentSession },
+ ctx: ChannelHost, owner: ChannelOwner, binding: { readonly session: AgentSession },
  state: () => Pick<ChannelState, 'cwd' | 'agentId' | 'agentBindingGeneration'>,
  notify: ChannelState['notify'],
  trackPending: (message: { id: string; text: string; images?: readonly ComposerImageRef[] }, placement: PendingMessage['placement']) => void,
@@ -126,7 +126,7 @@ export function createInputDelivery(
    * and a released owner returns the decision untouched. One `owner.own`
    * lifetime covers both the subscription and the whole registry (D5).
    */
-  const disposePreStep = host.onAgentPreStep?.(async (_payload, next) => {
+  const disposePreStep = ctx.onAgentPreStep?.(async (_payload, next) => {
     const decision = await next()
     if (decision.kind === 'reject') return decision
     if (!owner.current()) return decision
@@ -157,8 +157,8 @@ export function createInputDelivery(
     agentId: state().agentId,
     generation: state().agentBindingGeneration,
     cwd: state().cwd,
-    fs: mentionFs(host) ?? fallbackFs?.(),
-    attachments: local ?? mentionAttachments(host),
+    fs: mentionFs(ctx) ?? fallbackFs?.(),
+    attachments: local ?? mentionAttachments(ctx),
     ...(local === undefined ? {} : { localImages: local }),
     stagedImages: composer.snapshot(),
     selection: selection(),
@@ -342,7 +342,7 @@ export function createInputDelivery(
     // A follower can wait behind an older slow decision while /new replaces
     // the session. Do not even expose that stale text to plugins.
     if (dropIfStale()) return
-    const decision = await withDecisionPending('tui/input', host.dispatchDecision('tui/input', {
+    const decision = await withDecisionPending('tui/input', ctx.dispatchDecision('tui/input', {
       text,
       delivery: placement === 'steer' ? 'steer' : 'followup',
       sessionId: origin.agentId,
@@ -388,7 +388,7 @@ export function createInputDelivery(
     inputChain = inputChain.then(() => runUserTextDecision(text, placement, capturedImages, origin, attach)).catch((error: unknown) => {
       // The chain must survive a failed decision: log, then continue with
       // the next queued submission.
-      host.logger.warn('dsh-tui: tui/input dispatch failed: %o', error)
+      ctx.logger.warn('dsh-tui: tui/input dispatch failed: %o', error)
     }).finally(() => {
       settled += 1
       inFlight.shift()

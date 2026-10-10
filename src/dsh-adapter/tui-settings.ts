@@ -6,6 +6,7 @@
  */
 import type Schema from '@deepseek-ai/schemastery'
 import { logForDebugging } from '../utils/debug.js'
+import { isRecord } from '../utils/jsonl.js'
 import { profilePatchPath, readProfileTuiSettings, readTuiSettings, TUI_SETTINGS_FILE, writeTuiSettings, type TuiSettingsDocument } from '../tuiSettingsFile.js'
 
 type PathOp =
@@ -39,9 +40,6 @@ export interface DelegateSettings {
 class SettingsConflictError extends Error {
   readonly code = 'SETTINGS_CONFLICT'
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
 
 /** Apply one path op to a detached sparse layer; empty parents are pruned. */
 function applySettingsOp(layer: Readonly<Record<string, unknown>>, op: PathOp): Record<string, unknown> {

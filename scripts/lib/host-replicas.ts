@@ -9,12 +9,6 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { HostReplica } from '../../src/dsh-adapter/host-contract.js'
 
-export interface ReplicaFingerprint {
-  readonly file: string
-  readonly sha256: string
-  readonly lines: number
-}
-
 /** Index just past the token that closes the one opening at `open` (`(`, `{`). */
 function matchClose(text: string, open: number): number {
   const pairs: Record<string, string> = { '(': ')', '{': '}', '[': ']' }
@@ -88,8 +82,8 @@ export function cutSymbol(text: string, symbol: string, kind: HostReplica['kind'
   return text.slice(match.index, matchClose(text, body))
 }
 
-/** Fingerprint `replica` inside the package installed at `packageDir`. */
-export function fingerprintReplica(packageDir: string, replica: HostReplica): ReplicaFingerprint {
+/** The sha256 of `replica` inside the package installed at `packageDir`. */
+export function fingerprintReplica(packageDir: string, replica: HostReplica): string {
   const libDir = join(packageDir, 'lib')
   const hits: { file: string; source: string }[] = []
   for (const file of readdirSync(libDir).filter(name => name.endsWith('.js')).sort()) {
@@ -101,8 +95,5 @@ export function fingerprintReplica(packageDir: string, replica: HostReplica): Re
   const distinct = [...new Set(hits.map(hit => hit.source))]
   if (distinct.length === 0) throw new Error(`${replica.package}: no top-level ${replica.kind} ${replica.symbol} in lib/*.js`)
   if (distinct.length > 1) throw new Error(`${replica.package}: ${distinct.length} different ${replica.symbol} bodies (${hits.map(hit => hit.file).join(', ')})`)
-  const source = distinct[0]!
-  // The bundle's chunk name carries a content hash: record its stable prefix.
-  const file = `lib/${hits[0]!.file.replace(/-[\w-]{8}\.js$/u, '-*.js')}`
-  return { file, sha256: createHash('sha256').update(source).digest('hex'), lines: source.split('\n').length }
+  return createHash('sha256').update(distinct[0]!).digest('hex')
 }

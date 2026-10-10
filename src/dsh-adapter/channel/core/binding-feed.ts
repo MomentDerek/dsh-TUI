@@ -270,7 +270,7 @@ export function createSessionBinder(deps: {
   return { bind }
 }
 
-export function createBindingFeed(host: { readonly logger: ChannelHostLogger }, deps: {
+export function createBindingFeed(ctx: { readonly logger: ChannelHostLogger }, deps: {
   owner: ChannelOwner
   binding: ChannelBinding
   state: ChannelState
@@ -301,7 +301,7 @@ export function createBindingFeed(host: { readonly logger: ChannelHostLogger }, 
     inputConvergence,
     retireAttachment: deps.retireAttachment,
     ...(deps.onReset === undefined ? {} : { onReset: deps.onReset }),
-    warn: message => host.logger.warn(message),
+    warn: message => ctx.logger.warn(message),
   })
 
   /** Forget every per-session projection ledger: the projector's and the

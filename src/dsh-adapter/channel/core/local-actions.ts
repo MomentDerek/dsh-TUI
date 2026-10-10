@@ -37,7 +37,7 @@ export function setActivityFrames(
   return true
 }
 
-export function createCoreLocalActions(services: ServiceLookup, deps: {
+export function createCoreLocalActions(ctx: ServiceLookup, deps: {
   owner: Pick<ChannelOwner, 'current'>
   binding: Pick<ChannelBinding, 'capture' | 'isCurrent'>
   state: ChannelState
@@ -109,7 +109,7 @@ export function createCoreLocalActions(services: ServiceLookup, deps: {
     const target = deps.workspace.describe(cwd)
     state.rows.push({ id: rowIds.value++, kind: 'local', text: command, executionTarget: target.kind === 'local' ? target.badge : `${target.badge} · ${target.label}` })
     state.emit()
-    const executor = await deps.workspace.commandShell(cwd) ?? services.get('shell') as ForegroundShell | undefined
+    const executor = await deps.workspace.commandShell(cwd) ?? ctx.get('shell') as ForegroundShell | undefined
     if (!current()) return
     if (executor === undefined) {
       deps.unavailable('shell')

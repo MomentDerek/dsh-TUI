@@ -19,7 +19,7 @@ import { delimiter, dirname, join, resolve } from 'node:path'
 import { HOST_MODULES, HOST_PACKAGE, HOST_REPLICA_VERSION, HOST_REPLICAS, HOST_TYPE_PACKAGES } from '../src/dsh-adapter/host-contract.js'
 import { UPSTREAM_BLESSED_PACKAGES, UPSTREAM_VALIDATED_VERSION, upstreamDriftSummary } from '../src/dsh-adapter/contract.js'
 import { findHostDsh, loadHostDsh } from '../src/dsh-adapter/host-dsh.js'
-import { fingerprintReplica, type ReplicaFingerprint } from './lib/host-replicas.js'
+import { fingerprintReplica } from './lib/host-replicas.js'
 
 const repo = resolve(import.meta.dirname, '..')
 const snapshotPath = join(repo, 'host-replica.snapshot.json')
@@ -145,10 +145,11 @@ rmSync(entryHome, { recursive: true, force: true })
 // ── 5. replica fingerprints ───────────────────────────────────────────
 interface Snapshot {
   readonly hostVersion: string
-  readonly replicas: Record<string, ReplicaFingerprint & { readonly package: string; readonly symbol: string }>
+  /** sha256 per HOST_REPLICAS id. */
+  readonly replicas: Record<string, string>
 }
 const fingerprints = (resolvePackage: (name: string) => string): Snapshot['replicas'] => Object.fromEntries(HOST_REPLICAS.map(replica =>
-  [replica.id, { package: replica.package, symbol: replica.symbol, ...fingerprintReplica(resolvePackage(replica.package), replica) }]))
+  [replica.id, fingerprintReplica(resolvePackage(replica.package), replica)]))
 const onLine = loaded !== undefined && loaded.version === HOST_REPLICA_VERSION
 const installed = loaded === undefined ? undefined : (() => {
   const hostRequire = createRequire(join(loaded.packageDir, 'package.json'))
@@ -171,7 +172,7 @@ check('the snapshot is on the replica line', recorded.hostVersion === HOST_REPLI
   `snapshot ${recorded.hostVersion} vs HOST_REPLICA_VERSION ${HOST_REPLICA_VERSION}: review HOST_REPLICAS on an installed host of the line, then --snapshot`)
 check('the snapshot records exactly HOST_REPLICAS', ids(Object.keys(recorded.replicas)) === ids(HOST_REPLICAS.map(replica => replica.id)), 'run with --snapshot')
 const changed = (against: Snapshot['replicas']): string[] => HOST_REPLICAS
-  .filter(replica => against[replica.id]?.sha256 !== recorded.replicas[replica.id]?.sha256)
+  .filter(replica => against[replica.id] !== recorded.replicas[replica.id])
   .map(replica => `${replica.id}: ${replica.package} ${replica.symbol} → review ${replica.local}`)
 const hostChanged = installed === undefined ? [] : changed(installed)
 if (onLine && hostChanged.length > 0) {

@@ -653,13 +653,6 @@ function disablePanelIdInStore(id: string): void {
   applySidePanelPanels(ids.join(','))
 }
 
-/** 记下用户从启用列表删掉的**已注册** id，之后的配置应用不再并回。 */
-export function noteExplicitPanelRemovals(configured: string | undefined): void {
-  if (configured === undefined) return
-  const ids = new Set(parseSidePanelIds(configured))
-  for (const id of registeredPanelIds) if (!ids.has(id)) removedPanelIds.add(id)
-}
-
 /** 应用 `sidePanel.panels` 配置，已注册的面板 id 并回尾部（除非被显式移除）。 */
 export function applyConfiguredSidePanelPanels(configured: string | undefined): void {
   const ids = [...parseSidePanelIds(configured ?? getSidePanelPanels())]
@@ -671,11 +664,14 @@ export function applyConfiguredSidePanelPanels(configured: string | undefined): 
 }
 
 /**
- * /settings 编辑那一跳：先结算显式移除，再走并集。boot settings **不得**走这里——
+ * /settings 编辑那一跳：先记下用户删掉的已注册 id，再走并集。boot settings **不得**走这里——
  * 那时 CSV 缺席的已注册 id 只说明它注册得晚，不是用户移除。
  */
 export function applySidePanelPanelsFromSettings(configured: string | undefined): void {
-  noteExplicitPanelRemovals(configured)
+  if (configured !== undefined) {
+    const ids = new Set(parseSidePanelIds(configured))
+    for (const id of registeredPanelIds) if (!ids.has(id)) removedPanelIds.add(id)
+  }
   applyConfiguredSidePanelPanels(configured)
 }
 

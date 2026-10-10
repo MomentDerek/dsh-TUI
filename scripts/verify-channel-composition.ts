@@ -29,7 +29,7 @@ assert.match(entry, /return core\.start\(\)/u, 'the core starts the composed cha
 // The core: state construction and the feed are delegated owners.
 assert.match(core, /from '\.\.\/state\.js'/u, 'the core composes ../state.js')
 assert.match(core, /createInitialChannelView\(options/u, 'state construction is delegated')
-assert.match(core, /createBindingFeed\(channelHost, \{/u, 'the feed owns subscription routing')
+assert.match(core, /createBindingFeed\(ctx, \{/u, 'the feed owns subscription routing')
 assert.match(core, /releaseContributions\(\)[\s\S]*?owner\.dispose\(\)/u, 'explicit release revokes the channel owner')
 
 // The DSH extension composes the binding-events owner and installs its hooks.
