@@ -31,7 +31,7 @@
 import './lib/fake-home.mjs'
 process.env.FORCE_COLOR = '3'
 
-const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { createStartingSession }, { setLang, t }, { default: instances }, { settled, sleep, viewportLines }] =
+const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { createStartingSession }, { setLang, t }, { default: instances }, { settled, sleep, viewportLines }, { kernelEntriesOf }, { listBackends }] =
   await Promise.all([
     import('node:stream'),
     import('react'),
@@ -45,6 +45,8 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
     import('../src/i18n.js'),
     import('../src/ink/instances.js'),
     import('./lib/term-test.mjs'),
+    import('../src/components/kernelCatalog.js'),
+    import('../src/dsh-adapter/backend-registry.js'),
   ])
 import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
@@ -234,6 +236,9 @@ async function screenCase(surface: 'composer' | 'launchpad' | 'launchpad-failed'
       onExit: () => undefined,
       fullscreen: false,
       trajectorySeen: true,
+      // The composition root's kernel list: the notices name the kernel by its
+      // short label ("Claude"), not the backend id.
+      kernelEntries: kernelEntriesOf(listBackends()),
       ...(surface !== 'composer' ? { launchpadOnBoot: true } : {}),
     }),
     { stdout: stdout as never, stdin: stdin as never, stderr: stdout as never, exitOnCtrlC: false, patchConsole: false },
