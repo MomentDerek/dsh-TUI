@@ -109,19 +109,13 @@ export interface LiteProfileLayer {
   readonly packageName: string
 }
 
-/** Options for {@link liteProfilePlan}. */
-export interface LiteProfileOptions {
-  /** Bundles to leave out. Defaults to {@link LITE_PROFILE_EXCLUDED_BUNDLES}. */
-  readonly exclude?: readonly string[]
-}
-
 /** What a composition needs to mount a light profile. */
 export interface LiteProfilePlan<Layer extends LiteProfileLayer = LiteProfileLayer> {
   /** Bundle names actually composed, in profile order. */
   readonly bundles: readonly string[]
   /** The layers to compose, in profile order. */
   readonly layers: readonly Layer[]
-  /** The names of `exclude` that were present and therefore left out. */
+  /** The excluded bundles that were present and therefore left out. */
   readonly excluded: readonly string[]
   /** The bundles this plan leaves out (the request, present or not). */
   readonly excludedBundles: readonly string[]
@@ -143,14 +137,12 @@ export interface LiteProfilePlan<Layer extends LiteProfileLayer = LiteProfileLay
  *
  * @param profile - the profile `profile-boot` already loaded (its layers are
  *   the bundle patch layers in `dsh.profile.bundles` order).
- * @param options - `exclude` overrides the default bundle exclusion.
  * @returns the plan; `trimmed: false` when nothing was left out.
  */
 export function liteProfilePlan<Layer extends LiteProfileLayer>(
   profile: { readonly layers: readonly Layer[] },
-  options: LiteProfileOptions = {},
 ): LiteProfilePlan<Layer> {
-  const excludedBundles = options.exclude ?? LITE_PROFILE_EXCLUDED_BUNDLES
+  const excludedBundles = LITE_PROFILE_EXCLUDED_BUNDLES
   const excluded = new Set(excludedBundles)
   const layers = profile.layers.filter(layer => !excluded.has(layer.packageName))
   const dropped = profile.layers.filter(layer => excluded.has(layer.packageName))

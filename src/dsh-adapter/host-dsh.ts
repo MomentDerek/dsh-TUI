@@ -121,16 +121,6 @@ export interface HostDsh {
   readonly httpProxy: HttpProxyModule
 }
 
-/**
- * Find the installed host package from the first `dsh` on PATH.
- * @returns the package directory, or undefined when that `dsh` does not
- *   resolve into it ({@link findHostDsh} says why).
- */
-export function locateHostDsh(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
-  const found = findHostDsh(env, platform)
-  return 'packageDir' in found ? found.packageDir : undefined
-}
-
 /** Where the host came from, or why there is none (shown to the user). */
 export type HostDshLocation =
   | { readonly packageDir: string; readonly launcher: string; readonly via: 'link' | 'shim' | 'beside' | 'volta' }
@@ -355,13 +345,11 @@ export interface HostRoot {
   /**
    * Remove the fail-loud handlers (DSH kernel; a no-op otherwise). The entry
    * calls it once the TUI's process guard and crash funnel are up: from then
-   * on they are the single owner of a fatal error (./process-exit.ts, design
-   * block 2.5), and fail-loud listening first would exit before the funnel
+   * on they are the single owner of a fatal error (./process-exit.ts), and
+   * fail-loud listening first would exit before the funnel
    * restored the terminal.
    */
   readonly uninstallFailLoud: () => void
-  /** The bounded process shutdown `appExit` requests (dsh createProcessShutdown). */
-  readonly shutdown: (code: number) => Promise<void>
 }
 
 export interface PrepareHostRootOptions {
@@ -461,7 +449,6 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
   return {
     ctx,
     uninstallFailLoud: () => { uninstallFailLoud() },
-    shutdown,
     async compose(warn, stopping = () => false) {
       if (!options.dsh || profileContext === undefined) throw new Error('dsh-tui: this root was prepared without the DSH profile')
       // boot(): the warnings and errors logged while the tree starts, kept

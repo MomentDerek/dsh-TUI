@@ -1,6 +1,5 @@
 /**
- * P0-1 probe, now a regression sentinel (docs/standalone-host-design.md,
- * "Phase 1 遗留"): the exit funnel's crash tail must reach the DSH registry on
+ * Regression: the exit funnel's crash tail must reach the DSH registry on
  * a root that may not carry it — without throwing, and without losing the
  * last-run record.
  *
@@ -19,7 +18,7 @@
  * `agents` property band and the `ctx.get('agents')` service lookup). Every
  * case prints one `CASE <name>: <verdict>` line plus its decisive facts.
  *
- * Run: node --import tsx/esm scripts/probe-resume-markers-crash-exit.ts
+ * Run: node --import tsx/esm scripts/verify-resume-markers-crash-exit.ts
  */
 import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
@@ -349,5 +348,5 @@ say(`INFO  disposed root (agents had been provided): ctx.agents -> ${disposedAcc
 say('')
 console.log(lines.join('\n'))
 const info = lines.filter(line => line.startsWith('CASE') || line.startsWith('INFO'))
-console.log(`\nprobe-resume-markers-crash-exit: ${failures === 0 ? 'OK' : 'FAILED'} (${info.length} observations, ${failures} failed checks)`)
+console.log(`\nverify-resume-markers-crash-exit: ${failures === 0 ? 'OK' : 'FAILED'} (${info.length} observations, ${failures} failed checks)`)
 if (failures > 0) process.exit(1)

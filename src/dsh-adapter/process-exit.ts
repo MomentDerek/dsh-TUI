@@ -1,6 +1,6 @@
 /**
  * Process ownership in this package's own entry (docs/standalone-host-design.md
- * 5.5 and Phase 2 block 2.5): the entry process owns its signals and its exit,
+ * 5.5): the entry process owns its signals and its exit,
  * and both go through the TUI's exit funnel (./plugin.ts) whenever it is up.
  *
  * Exit status. A termination signal ends the process **by that signal**
@@ -97,11 +97,8 @@ export interface EntrySignalOptions {
   readonly where?: () => string | undefined
 }
 
-/**
- * Install the entry's signal handling (once per process). Returns the
- * uninstaller.
- */
-export function installEntrySignals(options: EntrySignalOptions): () => void {
+/** Install the entry's signal handling (once per process). */
+export function installEntrySignals(options: EntrySignalOptions): void {
   let first: TerminationSignal | undefined
   const onSignal = (signal: TerminationSignal): void => {
     if (first !== undefined) {
@@ -129,9 +126,5 @@ export function installEntrySignals(options: EntrySignalOptions): () => void {
     const listener = (): void => { onSignal(signal) }
     installed.set(signal, listener)
     process.on(signal, listener)
-  }
-  return () => {
-    for (const [name, listener] of installed) process.removeListener(name, listener)
-    installed.clear()
   }
 }

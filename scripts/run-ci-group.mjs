@@ -349,6 +349,9 @@ const GROUPS = {
     ["verify-migrate-hint-lifecycle", ['node', '--import', 'tsx/esm', 'scripts/verify-migrate-hint-lifecycle.tsx']],
 // 退出收尾运行时未命中回退：找不到 Ink runtime 时必须走完整 unmount 恢复终端。
     ["verify-shutdown-fallback", ['node', '--import', 'tsx/esm', 'scripts/verify-shutdown-fallback.tsx']],
+// 崩溃收尾的 resume marker：裸根（独立入口的非 DSH 内核、DSH 组合前）上查
+// DSH 注册表不抛错、不丢 last-run 记录与崩溃行；无宿主 dsh 时真实根用例跳过。
+    ["verify-resume-markers-crash-exit", ['node', '--import', 'tsx/esm', 'scripts/verify-resume-markers-crash-exit.ts']],
 // 独立入口的进程所有权（设计 2.5）：信号经退出漏斗、以同一信号结束；无主时
 // 先释放根；第二次信号立即结束；监督替身时不设兜底；外来监听器留不住进程；
 // 组合期间释放根先等 Loader 收尾（dsh-hmr 启动中被释放会死锁，最小根复现）。

@@ -9,13 +9,12 @@
  * profile patch's Config row as well, because only the entry can afford to
  * read it, and hands a DSH-pinned launch on to dsh.
  */
-import { join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { KERNEL_SWITCH_HANDOFF_ENV, hostEntryDshEnabled, parseBackendId, readKernelPrefs, resolveRememberedBackend, type KernelBackendId } from './kernelPrefs.js'
 import { isRegisteredBackend, parseBackendChoice } from './dsh-adapter/backend-registry.js'
 import { profilePatchPath, readProfileTuiSettings } from './tuiSettingsFile.js'
 
-export { HOST_ENTRY_DSH_ENV, HOST_ENTRY_ENV, HOST_ENTRY_PATH_ENV, hostEntryDisabled, hostEntryDshEnabled } from './kernelPrefs.js'
+export { hostEntryDshEnabled } from './kernelPrefs.js'
 
 /** The profile the launcher would have started (`dsh --profile <name>`). */
 export const HOST_PROFILE_ENV = 'DSH_TUI_PROFILE'
@@ -57,11 +56,6 @@ export function entryKernel(env: NodeJS.ProcessEnv = process.env, input: {
     envKnown: isRegisteredBackend,
     memory: isRegisteredBackend(memory) ? memory : undefined,
   })
-}
-
-/** The entry's path inside an installed package (from this module's dir). */
-export function hostEntryPath(packageRoot: string): string {
-  return join(packageRoot, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
 }
 
 /** Where the entry sends a launch (docs/standalone-host-design.md 5.8). */

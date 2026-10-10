@@ -1,6 +1,6 @@
 /**
  * v0.15 admission loader: the product-side half of the Component identity
- * path (docs/standalone-host-design.md §2.7 遗留 1).
+ * path (docs/standalone-host-design.md 5.7).
  *
  * The dsh CLI Loader owns discovery and loading — the profile's boundary
  * statement puts it outside this package ("插件的发现、安装与加载由 dsh CLI
@@ -82,8 +82,8 @@ type ActivationState = 'pending' | 'admitted' | 'skipped' | 'refused'
 
 /**
  * Watch `ctx`'s composition and admit every third-party activation that
- * carries a package-root `dsh-plugin.json`. Returns a release function; the
- * listeners and the retry timer are also bound to `ctx`'s own teardown.
+ * carries a package-root `dsh-plugin.json`. The listeners and the retry
+ * timer are bound to `ctx`'s own teardown.
  */
 export function armAdmissionLoader(
   ctx: Context,
@@ -94,13 +94,13 @@ export function armAdmissionLoader(
      *  spending the real 20 s window. */
     retryAttempts?: number
   } = {},
-): () => void {
+): void {
   const root = compositionRoot(ctx)
   const retryAttempts = options.retryAttempts ?? RETRY_ATTEMPTS
   const loader = root.get('loader' as never, false) as LoaderLike | undefined
   if (loader === undefined || typeof loader.locate !== 'function' || typeof loader.resolve !== 'function') {
     logForDebugging('dsh-tui: admission loader not armed — this composition has no cordis loader')
-    return () => undefined
+    return
   }
 
   const state = new WeakMap<object, ActivationState>()
@@ -236,7 +236,7 @@ export function armAdmissionLoader(
     }
   }
 
-  const releaseStatus = ctx.effect(() => {
+  ctx.effect(() => {
     const listener = (fiber: unknown): void => {
       if (typeof fiber !== 'object' || fiber === null) return
       const activation = fiber as FiberLike
@@ -273,15 +273,8 @@ export function armAdmissionLoader(
       }
     }
   })
-  const releaseTimer = ctx.effect(() => stopTimer)
+  ctx.effect(() => stopTimer)
   seed()
-
-  return () => {
-    stopTimer()
-    pending.clear()
-    releaseStatus()
-    releaseTimer()
-  }
 }
 
 /** The package-root `dsh-plugin.json` of the entry that owns `fiber`, if any.
