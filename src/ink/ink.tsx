@@ -2741,7 +2741,8 @@ export default class Ink {
   // commit (e.g. <AlternateScreen>'s cleanup) must not write control sequences.
   private writeRaw(data: string): void {
     if (this.isDetachedForShutdown) {
-      logMouseDebug('stdout: raw write after shutdown detach dropped', { len: data.length, head: data.slice(0, 60) });
+      // Length only: a dropped write may carry clipboard (OSC 52) content.
+      logMouseDebug('stdout: raw write after shutdown detach dropped', { len: data.length });
       return;
     }
     if (data.includes('\x1b[?1049')) {

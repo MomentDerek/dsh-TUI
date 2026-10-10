@@ -1022,14 +1022,21 @@ export function Chat({
   // The held boot screens open once the session is adopted, unless the user
   // went to another screen; a failed startup never opens them.
   const channelReady = channel.ready
+  const channelStartupFailed = channel.startupFailure !== undefined
   React.useEffect(() => {
     const held = heldBootScreensRef.current
-    if (held === undefined || channelReady === false) return
+    if (held === undefined) return
+    // A later `/new` that adopts a session must not open them over the chat.
+    if (channelStartupFailed) {
+      heldBootScreensRef.current = undefined
+      return
+    }
+    if (channelReady === false) return
     heldBootScreensRef.current = undefined
     if (settingsOpen || treeOpen) return
     if (held.onboarding) setOnboardingOpen(true)
     if (held.home) setSupervisorOpen(true)
-  }, [channelReady, settingsOpen, treeOpen])
+  }, [channelReady, channelStartupFailed, settingsOpen, treeOpen])
   /** 99h / 999 次的"求 star"开屏弹窗（`usageStats` 记账，一档只弹一次）：
    * 只在启动时判定一次——回合进行中、或已有整屏界面在开（如开机首页），
    * 这一轮不弹也**不记账**，留给下一次启动。`starPrompt` 是测试缝：传

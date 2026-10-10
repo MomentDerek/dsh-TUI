@@ -2647,6 +2647,8 @@ export function PromptInput({
         return
       }
       const line = (value + input).trim()
+      // Not ready: the line becomes the draft first, so a refused command keeps it.
+      if (channel.ready === false) setInput(line)
       if (line.startsWith('/')) {
         const matches = channel.commandCompletions(line)
         if (matches.length === 1) {
@@ -2655,9 +2657,7 @@ export function PromptInput({
         }
       }
       if (tryRunCommand(line)) return
-      // Not ready: keep the line as the draft.
       if (channel.ready === false) {
-        setInput(line)
         notifyNotReady()
         return
       }

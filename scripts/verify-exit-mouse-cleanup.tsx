@@ -209,33 +209,43 @@ const sleep = (ms: number): Promise<void> =>
 
 // ---------------------------------------------------------------------------
 // 4. A useInput that mounts after detachForShutdown must not re-enter raw
-// mode: the funnel's DBP/DFE are already written.
+// mode: the funnel's DBP/DFE are already written. The detach runs inside the
+// commit that mounts `Late` (an earlier sibling's layout effect), so Late's
+// own layout effects really run after it.
 // ---------------------------------------------------------------------------
 {
   const stdout = fakeTTY()
   const stdin = new FakeStdin()
+  let instance: Awaited<ReturnType<typeof render>> | undefined
   let mountLate: (() => void) | undefined
+  let lateMounted = false
+  const Detach = () => {
+    React.useLayoutEffect(() => { void instance?.detachForShutdown() }, [])
+    return null
+  }
   const Late = () => {
     useInput(() => undefined)
+    React.useLayoutEffect(() => { lateMounted = true }, [])
     return React.createElement(Text, null, 'late input')
   }
   const Root = () => {
     const [late, setLate] = React.useState(false)
     mountLate = () => setLate(true)
-    return React.createElement(Text, null, late ? React.createElement(Late) : 'root')
+    return late
+      ? React.createElement(React.Fragment, null, React.createElement(Detach), React.createElement(Late))
+      : React.createElement(Text, null, 'root')
   }
-  const instance = await render(React.createElement(Root), {
+  instance = await render(React.createElement(Root), {
     stdout,
     stdin: stdin as unknown as NodeJS.ReadStream,
     exitOnCtrlC: false,
     patchConsole: true,
   })
   drain(stdout)
-  instance.detachForShutdown()
-  drain(stdout)
   mountLate?.()
-  await sleep(50) // 固定窗:pacing 让迟到的提交与其 layout effect 跑完
+  await sleep(50) // 固定窗:pacing 让该提交与 detach 的延后清理跑完
   const late = drain(stdout)
+  check('late useInput mounted in the detaching commit', lateMounted)
   check('late useInput after detach writes no bracketed-paste enable', !late.includes('\x1b[?2004h'))
   check('late useInput after detach writes no focus-reporting enable', !late.includes('\x1b[?1004h'))
   check('late useInput after detach leaves stdin cooked', !stdin.isRaw)
@@ -260,7 +270,9 @@ for (const detach of [false, true]) {
   const stdout = fakeTTY()
   const stdin = new FakeStdin()
   let explode: (() => void) | undefined
+  let altRemoved = false
   const Reader = () => {
+    React.useLayoutEffect(() => () => { altRemoved = true }, [])
     const [ended, setEnded] = React.useState(false)
     explode = () => setEnded(true)
     if (ended) throw new Error('dsh-tui: Channel UI lifetime has ended')
@@ -278,6 +290,8 @@ for (const detach of [false, true]) {
   explode?.()
   await sleep(50) // 固定窗:pacing 让迟到的提交与其删除 effect 跑完
   const late = drain(stdout)
+  // With detach the alt screen goes in detach's own unmount, after the guard is set.
+  check(`alt screen removed (${detach ? 'detached' : 'control'})`, altRemoved)
   if (detach) check('late boundary swap after detach writes no EXIT_ALT_SCREEN', !late.includes(EXIT_ALT_SCREEN))
   else check('control: the same swap without detach leaves the alt screen', late.includes(EXIT_ALT_SCREEN))
   instance.unmount()
