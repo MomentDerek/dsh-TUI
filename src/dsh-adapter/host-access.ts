@@ -505,7 +505,8 @@ export function activationContext(ctx: Context): Context | undefined {
 
 /** Resolve a service's composition root once.  Service methods are invoked
  * through caller-bound Cordis proxies; keeping this root in host state avoids
- * resolving sibling services through an attacker-provided caller shadow. */
+ * resolving sibling services through an attacker-provided caller shadow.
+ * Also the first TUI row's activation signal for an armed deferred guard. */
 export function compositionRoot(ctx: Context): Context {
   const root = resolveCompositionRoot(ctx)
   noteTuiRowActivation(root)

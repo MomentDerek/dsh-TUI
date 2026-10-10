@@ -49,7 +49,7 @@ import { ensurePackagedPresets } from './packaged-presets.js'
 import { registerBundledPresets } from './bundled-presets.js'
 import { ensureLegacySessionEventTypes, snapshotLiveSessionEvents } from './compat/index.js'
 import { clearResumeTarget, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
-import { initialPromptFromCmdlineArgs } from './startup-args.js'
+import { cmdlineArgsOf, initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
@@ -100,7 +100,7 @@ import { CLEAR_ITERM2_PROGRESS, CLEAR_TAB_STATUS, supportsTabStatus, wrapForMult
 import { addProcessErrorAbsorber, fatalReasonForExit, registerProcessGuardFatalSink } from '../ink/update-overflow-guard.js'
 import { CHANNEL_UI_LIFETIME_ENDED } from '../adapter/channel/ui.js'
 import { markBoot } from '../utils/bootTrace.js'
-import type { EntrySlot, HostComposeSeam } from './entry-slot.js'
+import type { EntrySlot } from './entry-slot.js'
 import { TERMINATION_SIGNALS, dieBySignal, type ExitRequest, type ExitRequestAnswer, type ProcessExitSeam, type TerminationSignal } from './process-exit.js'
 import { StartupOpenError, type ChannelStartup } from './channel/state.js'
 
@@ -195,16 +195,12 @@ export interface RuntimeApplyOptions {
   /** The DSH profile for a host whose argv has no `--profile`: `/update` and the settings import use it. */
   readonly profile?: string
   /**
-   * In-process DSH kernel (standalone entry only): mount on a placeholder
-   * session; the profile's dsh-tui row later calls `attachDsh` on this slot.
+   * The standalone entry composes after the mount. On the DSH kernel: mount on
+   * a placeholder session; the profile's dsh-tui row later calls `attachDsh`.
    */
   readonly entrySlot?: EntrySlot
-  /** Light-profile compose seam for kernels without a `dsh-tui` row (standalone entry only, never with `entrySlot`). */
-  readonly composeSeam?: HostComposeSeam
   /** The entry's rebuilt Config lacks the patch's Config row: do not re-resolve the kernel. */
   readonly entryKernel?: KernelBackendId
-  /** Why the entry is not using the installed dsh: shown once as a warning notice. */
-  readonly hostNotice?: string
   /** Filled with this runtime's exit funnel once mounted, cleared on teardown. */
   readonly exitSeam?: ProcessExitSeam
 }
@@ -300,8 +296,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // The in-process DSH kernel's screen mounts before DSH has composed: what
   // needs DSH's services runs later, in `attachDsh`.
   const entrySlot = runtimeOptions.entrySlot
-  const dshInEntry = entrySlot !== undefined
-  const composeSeam = runtimeOptions.composeSeam
+  const dshInEntry = entrySlot?.dsh === true
 
   // Modern hosts own a declarative registry; old hosts discover directories.
   // A modern bundle failure must not silently fall back to obsolete files.
@@ -474,20 +469,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // selection. The local DeepSeek pair remains the final fallback for bare
   // embedders without that service. This lets optional provider bundles supply
   // the same default to Web and TUI without patching this front door by name.
-  const configuredDefault = (ctx.get('agentDefaultModel') as {
-    currentSelection?(): { provider?: unknown; model?: unknown }
-  } | undefined)?.currentSelection?.()
-  const harnessDefault = typeof configuredDefault?.provider === 'string'
-    && configuredDefault.provider.length > 0
-    && typeof configuredDefault.model === 'string'
-    && configuredDefault.model.length > 0
-    ? { provider: configuredDefault.provider, model: configuredDefault.model }
-    : undefined
-  const startupRoute = resolveModelRoute(configuredRoute, readModelPref(), harnessDefault)
-  // What a rejected preference falls back to: the deployment default — a
-  // complete cordis.yml route, else the harness default — never the lock the
-  // user's own pick replaced, and never a half-pinned config (issue #67).
-  const deploymentRoute = resolveModelRoute(configuredRoute, undefined, harnessDefault)
+  const { startupRoute, deploymentRoute } = startupRoutes(ctx, configuredRoute)
   // Session cwd (issue #96): explicit cordis.yml `cwd` wins; otherwise the
   // git worktree root containing the launch directory (the launch directory
   // itself outside any worktree), so `@` completion and mention expansion
@@ -573,8 +555,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // `dsh --profile tui` forwards `--resume` verbatim instead, so fall back to
   // the same app-argv snapshot as the initial prompt. Raw process.argv also
   // contains the DSH launcher's own -- and is only a legacy embedder fallback.
-  const cmdline = (ctx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
-  const cmdlineArgs = cmdline?.get?.() ?? cmdline?.args
+  const cmdlineArgs = cmdlineArgsOf(ctx)
   // The raw request, deliberately self-contained: `scripts/verify-startup-argv.mjs`
   // replays this very statement (picked out of the compiled `apply` by name) to check
   // the launcher's argv interception end to end, so it has to stay computable from
@@ -1012,7 +993,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   if (backendFallbackNotice !== undefined) notifyChannel(backendFallbackNotice, { color: 'warning' })
   // The entry could not use the installed dsh and fell back (this process,
   // or the `dsh --profile` it handed the launch to): say why, once.
-  const hostNotice = runtimeOptions.hostNotice ?? process.env[HOST_NOTICE_ENV]
+  const hostNotice = process.env[HOST_NOTICE_ENV]
   delete process.env[HOST_NOTICE_ENV]
   if (hostNotice !== undefined && hostNotice !== '') {
     notifyChannel(t('host-dsh-unavailable', { reason: hostNotice }), { color: 'warning', timeoutMs: 10000 })
@@ -2408,7 +2389,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   markBoot('render-start')
   // The entry's composition right after the mount freezes the event loop for
   // a while: it waits for the first frame to reach the terminal.
-  const awaitsFirstFrame = entrySlot !== undefined || composeSeam !== undefined
+  const awaitsFirstFrame = entrySlot !== undefined
   let frameFlushed = (): void => undefined
   const firstFrame = awaitsFirstFrame ? new Promise<void>(resolve => { frameFlushed = resolve }) : undefined
   instance = await render(tree, {
@@ -2514,15 +2495,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     bindToastSink()
     if (!exited) instance?.rerender(buildTree())
   }
-  if (composeSeam !== undefined) {
-    // The kernels without a dsh-tui row: same wait, and no row to refresh the
-    // mounted screen, so the seam does it.
-    composeSeam.firstFrameFlushed = flushFirstFrame
-    composeSeam.composeSucceeded = () => { refreshHostServices() }
-  }
+  if (entrySlot !== undefined) entrySlot.firstFrameFlushed = flushFirstFrame
+  // The kernels without a dsh-tui row: no row to refresh the mounted screen,
+  // so the slot does it.
+  if (entrySlot !== undefined && !entrySlot.dsh) entrySlot.composeSucceeded = () => { refreshHostServices() }
 
-  if (entrySlot !== undefined) {
-    entrySlot.firstFrameFlushed = flushFirstFrame
+  if (entrySlot?.dsh === true) {
     entrySlot.composeSucceeded = () => { settleComposition(true) }
     entrySlot.composeFailed = (error, logPath) => {
       settleComposition(false)
@@ -2559,27 +2537,25 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         mountDshApprovals(dshCtx)
         refreshHostServices()
         const rowRoute = { provider: rowConfig.provider, model: rowConfig.model }
-        const rowDefault = (dshCtx.get('agentDefaultModel') as {
-          currentSelection?(): { provider?: unknown; model?: unknown }
-        } | undefined)?.currentSelection?.()
-        const rowHarnessDefault = typeof rowDefault?.provider === 'string' && rowDefault.provider.length > 0
-          && typeof rowDefault.model === 'string' && rowDefault.model.length > 0
-          ? { provider: rowDefault.provider, model: rowDefault.model }
-          : undefined
-        const rowStartupRoute = resolveModelRoute(rowRoute, readModelPref(), rowHarnessDefault)
         // The same startup/deployment split the plugin's own boot makes (issue #67).
-        const rowDeploymentRoute = resolveModelRoute(rowRoute, undefined, rowHarnessDefault)
+        const { startupRoute: rowStartupRoute, deploymentRoute: rowDeploymentRoute } = startupRoutes(dshCtx, rowRoute)
+        const openOnRow = (sessionId: string | undefined, openMeta: { cwd: string }) =>
+          resolveAgent(dshCtx, sessionId, rowRoute, rowStartupRoute, rowDeploymentRoute, openMeta, rowConfig.preset)
+        /** The opened agent is this screen's from now on; returns its route. */
+        const takeOpened = async (opened: Awaited<ReturnType<typeof openOnRow>>): Promise<NonNullable<typeof rowFacts.route>> => {
+          agent = opened.agent
+          await attachWorkspaceOwnership(dshCtx, opened.agent)
+          rowFacts.route = opened.route ?? rowStartupRoute
+          return rowFacts.route
+        }
         // `/new` after a failed startup open: DSH's create path on this row.
         openDshSession = async cwd => {
-          const created = await resolveAgent(dshCtx, undefined, rowRoute, rowStartupRoute, rowDeploymentRoute, { cwd }, rowConfig.preset)
-          agent = created.agent
-          await attachWorkspaceOwnership(dshCtx, created.agent)
-          rowFacts.route = created.route ?? rowStartupRoute
+          const created = await openOnRow(undefined, { cwd })
+          await takeOpened(created)
           refreshLastRunRecord()
           return createDshSession(dshCtx, { agent: created.agent, handle: created.handle })
         }
-        const rowCmdline = (dshCtx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
-        const rowArgs = rowCmdline?.get?.() ?? rowCmdline?.args ?? process.argv.slice(2)
+        const rowArgs = cmdlineArgsOf(dshCtx) ?? process.argv.slice(2)
         // A provider-URI workspace target, resolvable now that providers exist.
         let startupMeta = meta
         if (deferredWorkspace !== undefined) {
@@ -2588,25 +2564,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           if (target === undefined) throw new Error(unsupportedWorkspaceTarget(deferredWorkspace))
           startupMeta = { cwd: target.cwd }
         }
-        const opened = await resolveAgent(
-          dshCtx,
-          rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs),
-          rowRoute,
-          rowStartupRoute,
-          rowDeploymentRoute,
-          startupMeta,
-          rowConfig.preset,
-        )
+        const opened = await openOnRow(rowConfig.sessionId ?? resumeTargetFromArgv(rowArgs), startupMeta)
         const session = createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle })
         // The composition failed while this opened: close the unadoptable session.
         if (compositionFailed) {
           await session.dispose().catch(() => undefined)
           return
         }
-        agent = opened.agent
-        await attachWorkspaceOwnership(dshCtx, opened.agent)
-        const route = opened.route ?? rowStartupRoute
-        rowFacts.route = route
+        const route = await takeOpened(opened)
         settleDshStartup?.resolve({
           session,
           history: [],
@@ -2655,6 +2620,26 @@ function unsupportedWorkspaceTarget(target: string): string {
  * a COMPLETE cordis.yml route — a provider-only pin must not half-override
  * the session's route, and the static route is only the deployment default.
  */
+/**
+ * The startup route and the deployment route a rejected preference falls back
+ * to (issue #67): the persisted `/model` pick wins whole, else a complete
+ * cordis.yml route, else Harness's agent-default-model selection — never the
+ * lock the user's own pick replaced, never a half-pinned config.
+ */
+function startupRoutes(ctx: Context, configuredRoute: { provider?: string; model?: string }): { startupRoute: ReturnType<typeof resolveModelRoute>; deploymentRoute: ReturnType<typeof resolveModelRoute> } {
+  const selected = (ctx.get('agentDefaultModel') as {
+    currentSelection?(): { provider?: unknown; model?: unknown }
+  } | undefined)?.currentSelection?.()
+  const harnessDefault = typeof selected?.provider === 'string' && selected.provider.length > 0
+    && typeof selected.model === 'string' && selected.model.length > 0
+    ? { provider: selected.provider, model: selected.model }
+    : undefined
+  return {
+    startupRoute: resolveModelRoute(configuredRoute, readModelPref(), harnessDefault),
+    deploymentRoute: resolveModelRoute(configuredRoute, undefined, harnessDefault),
+  }
+}
+
 async function resolveAgent(
   ctx: Context,
   requestedSessionId: string | undefined,

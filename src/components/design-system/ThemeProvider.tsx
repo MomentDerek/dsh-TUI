@@ -117,7 +117,6 @@ export function ThemeProvider({
   themeHost,
 }: {
   children: React.ReactNode
-  /** Explicit theme; may arrive after mount. */
   theme?: string
   /** Optional runtime theme host; absent in headless/static embeds. */
   themeHost?: TuiThemeHost
@@ -288,17 +287,6 @@ export function ThemeProvider({
       setActive(requested)
     }
   }, [active, redetectAutoBase, runtimeThemeSnapshot])
-
-  // theme prop 可能晚到：到达即生效；未注册的主题先记为请求。prop 撤走不重读 env/偏好。
-  useEffect(() => {
-    if (theme === undefined) return
-    requestedThemeRef.current = theme
-    // 显式 prop 与挂载时的锁判定同口径：品牌默认档让位。
-    brandThemeLockRef.current = true
-    if (!isThemeAvailable(theme)) return
-    setActive(theme)
-    if (theme === AUTO_THEME_NAME) redetectAutoBase()
-  }, [theme, redetectAutoBase])
 
   // ── 品牌默认档（branding.ts）───────────────────────────────────────────
   // Claude 后端（claude 品牌）时把默认主题档替换成 Claude 双主题（claude-dark

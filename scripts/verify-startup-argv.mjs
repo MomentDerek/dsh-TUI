@@ -90,14 +90,14 @@ if (probeMode) {
   provideCmdline(ctx, { args: program.args, exit: code => process.exit(code) })
   if (process.env.DSH_TUI_ARGV_SHAPE === 'args') ctx.cmdlineArgs = { args: program.args }
 
-  const { initialPromptFromCmdlineArgs } = await import('../lib/types/dsh-adapter/startup-args.js')
+  const { cmdlineArgsOf, initialPromptFromCmdlineArgs } = await import('../lib/types/dsh-adapter/startup-args.js')
   const { resumeTargetFromArgv } = await import('../lib/types/sessionHistory.js')
   const { DSH_BACKEND_ID, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget } = await import('../lib/types/kernelPrefs.js')
   const { isRegisteredBackend, parseBackendChoice } = await import('../lib/types/dsh-adapter/backend-registry.js')
   const { startup, resolution, target, submit } = JSON.parse(readFileSync(process.env.DSH_TUI_ARGV_STARTUP, 'utf8'))
   const submitted = []
   const scope = {
-    ctx, process, initialPromptFromCmdlineArgs, resumeTargetFromArgv,
+    ctx, process, cmdlineArgsOf, initialPromptFromCmdlineArgs, resumeTargetFromArgv,
     // A replacement process skips the prompt (src/update.ts restartChildEnv).
     LAUNCH_PROMPT_SENT_ENV: 'DSH_TUI_LAUNCH_PROMPT_SENT',
     KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs,
@@ -180,7 +180,7 @@ async function compiledStartup() {
   // In `apply` order: `entryKernel` (the route an entry hands in) is replayed
   // because `backendChoice` reads it first; the pinned scope leaves it unset.
   const names = [
-    'cmdline', 'cmdlineArgs', 'requestedWorkspace', 'launchSessionId', 'submitChannel', 'initialPrompt',
+    'cmdlineArgs', 'requestedWorkspace', 'launchSessionId', 'submitChannel', 'initialPrompt',
     'rawBackend', 'handoffBackendRaw', 'handoffBackend', 'rememberedBackend', 'entryKernel', 'backendChoice',
     'resumeBackendRaw', 'resumeTarget', 'effectiveSessionId', 'configuredSessionId',
   ]

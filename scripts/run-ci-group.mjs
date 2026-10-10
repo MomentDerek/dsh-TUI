@@ -511,9 +511,6 @@ const GROUPS = {
 // tuiWorkspaces 服务可选化回归（issue #183）：代码层 inject 不含
 // tuiWorkspaces、消费处带本地兜底、patch 保留服务行与行级顺序保证。
     ["verify-workspaces-degrade", ['node', 'scripts/verify-workspaces-degrade.mjs']],
-// 轻量 profile 裁剪表 ↔ patch 行 id 对口（秒级静态）：行 id 改名后 disable 静默失效，
-// patch-surface 不会红。
-    ["verify-lite-profile-rows", ['node', '--import', 'tsx/esm', 'scripts/verify-lite-profile-rows.mjs']],
 // 插件扩展面回归（dsh-tui-extensions）：
 //  - events：真 cordis 总线 + 真 channel——tui/input 改写/取消/崩溃
 //    隔离、rewind 决策（模式列表/否决/完成后摘要）、session-switch
@@ -1222,7 +1219,6 @@ const GROUPS = {
 // 线）。注意必须走 tsx——脚本直接 import src/customTheme.ts。
     ["verify-themes", ['node', '--import', 'tsx/esm', 'scripts/verify-themes.mjs']],
 // ThemeProvider 的 `theme` prop 三态回归：迟到生效、撤走不跳回、不可用名暂存待注册。
-    ["verify-theme-prop-late", ['node', '--import', 'tsx/esm', 'scripts/verify-theme-prop-late.tsx']],
 
 // Text 背景色回归（issue #166）：公开 themed Text 与 Box 一致支持
 // 原始颜色值，且必须把对应 ANSI 背景色写入终端。

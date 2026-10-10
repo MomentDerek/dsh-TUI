@@ -76,7 +76,7 @@ export interface HostReplica {
  */
 export const HOST_REPLICAS: readonly HostReplica[] = [
   { id: 'process-shutdown', package: HOST_PACKAGE, symbol: 'createProcessShutdown', kind: 'function', local: 'createProcessShutdown: the `shutdown` half only (`interrupt` is replaced by process-exit.ts, see HOST_DEVIATIONS)' },
-  { id: 'process-shutdown-timeout', package: HOST_PACKAGE, symbol: 'PROCESS_SHUTDOWN_TIMEOUT_MS', kind: 'const', local: 'PROCESS_SHUTDOWN_TIMEOUT_MS' },
+  { id: 'process-shutdown-timeout', package: HOST_PACKAGE, symbol: 'PROCESS_SHUTDOWN_TIMEOUT_MS', kind: 'const', local: 'process-exit.ts PROCESS_SHUTDOWN_TIMEOUT_MS' },
   { id: 'app-ready', package: HOST_PACKAGE, symbol: 'createAppReady', kind: 'function', local: 'createAppReady' },
   { id: 'compose-profile', package: HOST_PACKAGE, symbol: 'composeProfile', kind: 'function', local: 'prepareHostRoot steps 1–2 (no overlays, no resolvedProfile)' },
   { id: 'run-profile', package: HOST_PACKAGE, symbol: 'runProfile', kind: 'function', local: 'prepareHostRoot steps 3, 5–7 (proxy, fail-loud, profileContext, launch environment, PluginPackages, provideCmdline) and HostRoot.compose\'s appReady.commit' },
@@ -85,7 +85,7 @@ export const HOST_REPLICAS: readonly HostReplica[] = [
   { id: 'run-cli', package: HOST_PACKAGE, symbol: 'runCli', kind: 'function', local: 'prepareHostRoot\'s loadLayeredEnv call before the profile; the StartupError-only report' },
 ]
 
-/** Where the entry deliberately differs from `dsh --profile`. Documentation only; mirrored in ADAPTER.md. */
+/** Where the entry deliberately differs from `dsh --profile`. Documentation only; ADAPTER.md points here. */
 export const HOST_DEVIATIONS: readonly { readonly id: string; readonly what: string }[] = [
   { id: 'no-interrupt', what: 'runProfile\'s SIGTERM/SIGINT handlers and createProcessShutdown().interrupt are not reproduced: the entry owns SIGTERM/SIGHUP/SIGINT (process-exit.ts installEntrySignals) and ends by the signal after the TUI\'s exit funnel, where interrupt exits 0 (TERM) / 130 (INT) — the launcher reads a numeric 130 as a crash (verify-entry-process-exit)' },
   { id: 'exit-seam', what: 'ctx.appExit (provideCmdline exit) goes to the TUI\'s exit funnel through ProcessExitSeam first, and to the reproduced shutdown only when the funnel refuses (prepareHostRoot exitSeam)' },
@@ -93,7 +93,7 @@ export const HOST_DEVIATIONS: readonly { readonly id: string; readonly what: str
   { id: 'startup-report-always', what: 'bin.js saves a report for a StartupError only and lets other startup errors crash; the entry saves one for every composition failure (HostComposeError carries the path) because the screen stays up' },
   { id: 'startup-report-no-terminal', what: 'reportStartupFailure\'s terminal half is not reproduced: the screen is up, the failure row names the report' },
   { id: 'no-overlays', what: '--patch overlays, --from-default-profile and resolvedProfile are not reproduced (the launcher passes none)' },
-  { id: 'defer-root-guard', what: 'deferRootCapabilityGuard(root) (host-access.ts) keeps the TUI\'s root-capability guard off during the whole composition and releases it in compose()\'s finally; on the profile path the guard arrives mid-composition' },
+  { id: 'defer-root-guard', what: 'deferRootCapabilityGuard(root) (host-access.ts) keeps the TUI\'s root-capability guard off while the screen mounts; armRootCapabilityGuard then lets the first TUI row activation install it, as on the profile path, and the composition\'s settling installs it if no TUI row activated' },
   { id: 'report-exclude-network', what: 'host-entry.ts sets process.report.excludeNetwork = true for the process: DSH\'s flock libc probe (process.report.getReport) otherwise blocked ~10s on reverse lookups of sockets the mounted screen already opened' },
   { id: 'hijack-before-tui', what: 'the host\'s PluginPackages resolution is installed before any TUI module loads, for both kernels; runProfile installs it inside boot()\'s prepare' },
 ]

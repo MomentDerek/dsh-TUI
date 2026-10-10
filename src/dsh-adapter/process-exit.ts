@@ -23,10 +23,10 @@ export interface ProcessExitSeam {
   request?: (request: ExitRequest) => ExitRequestAnswer
 }
 
-/** dsh's PROCESS_SHUTDOWN_TIMEOUT_MS: the dispose bound. */
-const DISPOSE_BOUND_MS = 5000
+/** dsh `profile-boot` PROCESS_SHUTDOWN_TIMEOUT_MS (0.2.0-rc.2): the dispose bound. */
+export const PROCESS_SHUTDOWN_TIMEOUT_MS = 5000
 /** Last-resort bound for a funnel exit: outlasts its terminal cleanup plus the dispose bound. */
-const BACKSTOP_MS = DISPOSE_BOUND_MS + 2000
+const BACKSTOP_MS = PROCESS_SHUTDOWN_TIMEOUT_MS + 2000
 /** How long a re-raised signal may be held by foreign listeners before they go. */
 const RERAISE_GRACE_MS = 500
 
@@ -74,7 +74,7 @@ export function installEntrySignals(options: EntrySignalOptions): void {
     setTimeout(() => {
       options.log?.('signal: backstop reached, forcing the exit', { signal })
       dieBySignal(signal)
-    }, answer === 'refused' ? DISPOSE_BOUND_MS : BACKSTOP_MS)
+    }, answer === 'refused' ? PROCESS_SHUTDOWN_TIMEOUT_MS : BACKSTOP_MS)
     if (answer === 'refused') {
       void options.disposeRoot().then(() => { dieBySignal(signal) }, () => { dieBySignal(signal) })
     }

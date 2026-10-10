@@ -141,7 +141,7 @@
     "verify:herdr": "node --import tsx/esm scripts/verify-herdr-integration.ts",
     "verify:manifest-deps": "node --import tsx/esm scripts/verify-manifest-deps.ts",
     "verify:oauth": "node scripts/verify-oauth.mjs",
-    "verify:patch-surface": "node --import tsx/esm scripts/verify-patch-surface.ts",
+    "verify:patch-surface": "node --import tsx/esm scripts/verify-patch-surface.ts && node --import tsx/esm scripts/verify-lite-profile-rows.mjs",
     "verify:fixed-window": "node scripts/verify-fixed-window.mjs",
     "verify:web-coexistence": "node scripts/verify-web-coexistence.mjs",
     "verify:plugin-spec": "node --import tsx/esm scripts/verify-plugin-spec.ts",

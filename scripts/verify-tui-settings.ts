@@ -80,6 +80,10 @@ unwatch()
 await first.mutate('dsh-tui', [{ op: 'set', path: ['lang'], value: 'zh' }])
 check('an unwatched callback stays quiet', seen.length === 1)
 check('a write without a revision lands', first.get('dsh-tui') !== undefined && (first.get('dsh-tui') as { lang?: string }).lang === 'zh')
+const other = createTuiSettingsService({ ns: 'dsh-tui', file, profile: 'dsh-tui', keys })
+await other.mutate('dsh-tui', [{ op: 'set', path: ['whale'], value: true }])
+await first.mutate('dsh-tui', [{ op: 'set', path: ['statusBar', 'cost'], value: false }])
+check('a write keeps another process\'s write since boot', doc().values.whale === true && doc().values.lang === 'zh', doc().values)
 
 // ── delegate routing ──────────────────────────────────────────────────
 const delegated: string[] = []
@@ -105,5 +109,12 @@ check('no profile patch: nothing imported, the import still marked', Object.keys
 writeFileSync(fresh, '{ broken')
 const broken = createTuiSettingsService({ ns: 'dsh-tui', file: fresh, profile: 'dsh-tui', keys })
 check('a broken document reads as an empty layer', JSON.stringify(broken.get('dsh-tui')) === '{}' && readFileSync(fresh, 'utf8') === '{ broken')
+await broken.mutate('dsh-tui', [{ op: 'set', path: ['whale'], value: false }])
+const rewritten = JSON.parse(readFileSync(fresh, 'utf8')) as { values: { whale?: boolean }; imported?: unknown }
+check('a write over a broken document drops the unreadable mark', rewritten.values.whale === false && rewritten.imported === undefined, rewritten)
+const peer = createTuiSettingsService({ ns: 'dsh-tui', file: fresh, profile: 'dsh-tui', keys })
+await peer.mutate('dsh-tui', [{ op: 'set', path: ['lang'], value: 'zh' }])
+await broken.mutate('dsh-tui', [{ op: 'set', path: ['whale'], value: true }])
+check('… and later writes still re-read the file', (JSON.parse(readFileSync(fresh, 'utf8')) as { values: { lang?: string } }).values.lang === 'zh')
 
 console.log(`\nverify-tui-settings: ${passed} checks passed`)

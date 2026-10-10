@@ -138,8 +138,14 @@ export function createTuiSettingsService(input: {
       if (expectedRevision !== undefined && expectedRevision !== revision) {
         throw new SettingsConflictError(`dsh-tui: settings changed (revision ${revision}, expected ${expectedRevision})`)
       }
+      // Apply onto the file as it is now: another dsh-tui process may have
+      // written since boot (an unreadable file keeps this process's copy).
+      const latest = readTuiSettings(file)
+      if (latest !== undefined && latest.imported?.from !== 'unreadable') document = latest
       const values = ops.reduce<Record<string, unknown>>((layer, op) => applySettingsOp(layer, op), { ...document.values })
-      const next: TuiSettingsDocument = { ...document, values }
+      // The unreadable marker describes the file as read, not as rewritten.
+      const { imported, ...rest } = document
+      const next: TuiSettingsDocument = { ...rest, values, ...(imported === undefined || imported.from === 'unreadable' ? {} : { imported }) }
       writeTuiSettings(next, file)
       document = next
       revision += 1

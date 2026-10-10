@@ -2200,14 +2200,12 @@ export function restartChildEnv(
 
 /**
  * The replacement's argv after `process.execPath`, pure: the same script and
- * arguments again, except that a replacement on Claude or DSH started outside
- * the entry goes to `hostEntry` with the app arguments.
+ * arguments again, except that a replacement started outside the entry goes
+ * to `hostEntry` with the app arguments (the entry hosts every kernel).
  */
 export function restartArgv(input: {
   readonly execArgv: readonly string[]
   readonly argv: readonly string[]
-  /** The kernel the replacement boots on (switch target, else this one). */
-  readonly kernel: KernelBackendId | undefined
   /** Whether this is a kernel switch (resume flags are dropped). */
   readonly switching: boolean
   /** The replacement opens a fresh session (no session id to hand over, e.g.
@@ -2217,8 +2215,7 @@ export function restartArgv(input: {
 }): string[] {
   const strip = (args: readonly string[]): string[] => input.switching || input.fresh === true ? stripResumeArgs(args) : [...args]
   const script = input.argv[1]
-  const viaEntry = input.kernel === 'claude' || input.kernel === 'dsh'
-  if (viaEntry && input.hostEntry !== undefined && script !== input.hostEntry) {
+  if (input.hostEntry !== undefined && script !== input.hostEntry) {
     // The app arguments: everything after dsh's own `--`.
     const separator = input.argv.indexOf('--', 2)
     const appArgs = separator === -1 ? [] : input.argv.slice(separator + 1)
@@ -2234,7 +2231,6 @@ export async function restartTui(sessionId: string, options: TuiRestartOptions =
   const argv = restartArgv({
     execArgv: process.execArgv,
     argv: process.argv,
-    kernel: options.backend ?? options.kernel,
     switching: options.backend !== undefined,
     fresh: sessionId === '',
     hostEntry: hostEntry === undefined || hostEntry === '' || hostEntryDisabled() ? undefined : hostEntry,

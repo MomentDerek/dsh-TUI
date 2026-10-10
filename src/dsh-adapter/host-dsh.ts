@@ -20,12 +20,10 @@ import type * as HttpProxy from '@deepseek-ai/dsh-http-proxy'
 import type * as LaunchEnvironment from '@deepseek-ai/dsh-launch-environment'
 import { HOST_MODULES, HOST_PACKAGE } from './host-contract.js'
 import { LITE_PROFILE_EXCLUDED_BUNDLES, liteProfilePlan } from './lite-profile.js'
-import type { ProcessExitSeam } from './process-exit.js'
+import { PROCESS_SHUTDOWN_TIMEOUT_MS, type ProcessExitSeam } from './process-exit.js'
 
 /** The diagnostic prefix the host's own boot uses. */
 const BIN_NAME = 'dsh'
-/** dsh `profile-boot` PROCESS_SHUTDOWN_TIMEOUT_MS (0.2.0-rc.2). */
-const PROCESS_SHUTDOWN_TIMEOUT_MS = 5000
 /** Cordis fiber state "active" (dsh-app-boot FIBER_ACTIVE). */
 const FIBER_ACTIVE = 2
 
@@ -398,7 +396,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
       if (!plan.trimmed) {
         // Nothing to trim: composing the layers is the full composition, and
         // not fatal (the screen is mounted; failing would cost every plugin).
-        warn(`dsh-tui: light profile: ${options.profile} lists none of ${LITE_PROFILE_EXCLUDED_BUNDLES.join(', ')}; composing it whole\n`)
+        warn(`dsh-tui: light profile: ${options.profile} lists none of ${LITE_PROFILE_EXCLUDED_BUNDLES.join(', ')}; composing it whole but the dsh-tui row\n`)
       } else {
         warn(`dsh-tui: light profile: ${plan.excluded.join(', ')} left out of ${profile.layers.length} bundles; disabled ${plan.disableRows.map(row => row.id).join(', ')} (their injected services come from the excluded bundles)\n`)
       }

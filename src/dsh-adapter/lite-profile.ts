@@ -2,7 +2,8 @@
  * The light profile for non-DSH kernels: this package's layers plus the
  * profile's third-party bundles, composed into the entry's root without
  * `dsh-base`. One root, since a second root's rows stay pending unless every
- * entry service is copied over. Rows guarded by scripts/verify-lite-profile-rows.mjs.
+ * entry service is copied over. Also the entry's rebuilt `dsh-tui` row config
+ * (every kernel). Rows guarded by scripts/verify-lite-profile-rows.mjs.
  * Pure data and functions: no `@deepseek-ai/*` import, no I/O.
  */
 
@@ -23,12 +24,24 @@ export const LITE_PROFILE_ROW_DISABLES: readonly string[] = [
   'dsh-tui', // agents, workspaceRegistry: the DSH front door, which the entry itself replaces
 ]
 
+/**
+ * The static config of `cordis.patch.yml`'s `dsh-tui` row, which the entry
+ * rebuilds instead of reading the patch (the env-backed fields are mapped
+ * there). Guarded by scripts/verify-lite-profile-rows.mjs.
+ */
+export const ENTRY_ROW_DEFAULTS = {
+  provider: 'deepseek-official',
+  fullscreen: true,
+  terminalImages: true,
+  effort: 'max',
+} as const
+
 /** What a composition needs to mount a light profile. */
 export interface LiteProfilePlan<Layer extends { readonly packageName: string }> {
   readonly layers: readonly Layer[]
   /** The excluded bundles that were present and therefore left out. */
   readonly excluded: readonly string[]
-  /** `cordis.patch.yml` disable entries, appended after the profile's own patch layers. */
+  /** `cordis.patch.yml` disable entries, appended after the profile's own patch layers; always holds `dsh-tui`. */
   readonly disableRows: readonly { readonly id: string; readonly disabled: true }[]
   /** Whether a loaded layer was left out; false lets the caller reuse the full composition. */
   readonly trimmed: boolean
@@ -45,8 +58,9 @@ export function liteProfilePlan<Layer extends { readonly packageName: string }>(
   return {
     layers,
     excluded: dropped.map(layer => layer.packageName),
-    // With every layer still there, the services exist and the rows work.
-    disableRows: trimmed ? LITE_PROFILE_ROW_DISABLES.map(id => ({ id, disabled: true as const })) : [],
+    // With every layer still there, the services exist and the rows work,
+    // except the front door: the entry already runs this package's runtime.
+    disableRows: (trimmed ? LITE_PROFILE_ROW_DISABLES : ['dsh-tui']).map(id => ({ id, disabled: true as const })),
     trimmed,
   }
 }

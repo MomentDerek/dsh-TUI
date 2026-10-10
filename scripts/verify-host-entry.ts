@@ -60,27 +60,25 @@ check('a row naming an uninstalled backend is no pin', configuredBackend('x', pa
 // ── restartArgv ───────────────────────────────────────────────────────
 const entry = '/pkg/lib/types/dsh-adapter/host-entry.js'
 const dshArgv = ['/node', '/dsh/lib/bin.js', '--profile', 'dsh-tui', '--', '--resume', 'abc', 'foo']
-check('a switch to Claude from dsh relaunches the entry with the app args, resume dropped',
-  JSON.stringify(restartArgv({ execArgv: ['--x'], argv: dshArgv, kernel: 'claude', switching: true, hostEntry: entry })) === JSON.stringify(['--x', entry, 'foo']),
-  restartArgv({ execArgv: ['--x'], argv: dshArgv, kernel: 'claude', switching: true, hostEntry: entry }))
-check('a /restart on Claude under dsh moves to the entry, resume kept',
-  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'claude', switching: false, hostEntry: entry })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
+check('a kernel switch from dsh relaunches the entry with the app args, resume dropped',
+  JSON.stringify(restartArgv({ execArgv: ['--x'], argv: dshArgv, switching: true, hostEntry: entry })) === JSON.stringify(['--x', entry, 'foo']),
+  restartArgv({ execArgv: ['--x'], argv: dshArgv, switching: true, hostEntry: entry }))
+check('a /restart under dsh moves to the entry, resume kept',
+  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, switching: false, hostEntry: entry })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
 check('without the entry path the dsh argv is replayed as before',
-  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'claude', switching: true, hostEntry: undefined })) === JSON.stringify(stripResumeArgs(dshArgv.slice(1))))
-check('a DSH relaunch under dsh moves to the entry',
-  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, hostEntry: entry })) === JSON.stringify([entry, '--resume', 'abc', 'foo']))
+  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, switching: true, hostEntry: undefined })) === JSON.stringify(stripResumeArgs(dshArgv.slice(1))))
 const entryArgv = ['/node', entry, '--resume', 'abc', 'foo']
-check('the entry relaunches itself on DSH',
-  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'dsh', switching: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
-check('the entry on Claude is not re-targeted',
-  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, hostEntry: entry })) === JSON.stringify(entryArgv.slice(1)))
+check('the entry relaunches itself on a switch',
+  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, switching: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
+check('the entry is not re-targeted',
+  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, switching: false, hostEntry: entry })) === JSON.stringify(entryArgv.slice(1)))
 check('a fresh /restart (after /new) on the entry drops the inherited resume flags',
-  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, kernel: 'claude', switching: false, fresh: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
+  JSON.stringify(restartArgv({ execArgv: [], argv: entryArgv, switching: false, fresh: true, hostEntry: entry })) === JSON.stringify([entry, 'foo']))
 check('a fresh /restart under dsh drops them too',
-  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, kernel: 'dsh', switching: false, fresh: true, hostEntry: undefined })) === JSON.stringify(stripResumeArgs(dshArgv.slice(1))))
+  JSON.stringify(restartArgv({ execArgv: [], argv: dshArgv, switching: false, fresh: true, hostEntry: undefined })) === JSON.stringify(stripResumeArgs(dshArgv.slice(1))))
 const noSeparator = ['/node', '/dsh/lib/bin.js', '--profile', 'dsh-tui']
 check('a dsh argv without app args gives the entry none',
-  JSON.stringify(restartArgv({ execArgv: [], argv: noSeparator, kernel: 'claude', switching: true, hostEntry: entry })) === JSON.stringify([entry]))
+  JSON.stringify(restartArgv({ execArgv: [], argv: noSeparator, switching: true, hostEntry: entry })) === JSON.stringify([entry]))
 
 // ── findHostDsh: the first dsh on PATH, followed through launchers ───
 // A fake installed host: <prefix>/lib/node_modules/@deepseek-ai/dsh.
