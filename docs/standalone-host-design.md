@@ -65,7 +65,9 @@ bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析）
 
 内核判定沿用 `resolveRememberedBackend`（handoff → 配置行 → `DSH_TUI_BACKEND` → `kernel.json`）；
 配置行的 `backend` 由入口直接解析 profile 补丁里 `dsh-tui` 行读取
-（`hostEntryRoute.configuredBackend`），不经 app-boot。
+（`hostEntryRoute.configuredBackend`），不经 app-boot。写成 `!!js` 的 `backend` 只有 profile 的
+Loader 能求值：没有 handoff 时入口把这次启动交给 `dsh --profile`（`delegatesToProfile`），
+不自行求值，也不在 DSH 接管后再切内核（那会先开一个废 DSH 会话再重启）。
 
 依赖方向：界面 → ports；channel 核心 → agent + ports + **`ChannelHost` 接口**；Cordis 只出现在
 `src/dsh-adapter/`（DSH 后端与宿主复刻）。仅 DSH 会话用的服务（`agents`、`llm`、`approval` 等）
@@ -137,7 +139,8 @@ TUI 本就和 DSH 跑在同一进程里，SIGINT/SIGTERM 处理、`installFailLo
 ### 4.5 设置存储
 
 `~/.dsh-tui/settings.json`（`src/tuiSettingsFile.ts`）+ 设置服务 `src/dsh-adapter/tui-settings.ts`，
-两个内核共用；从 profile 补丁的一次性导入与残留字段的行为见 [配置参考](configuration.md#tui-配置)。
+所有内核共用；从 profile 补丁与旧版 `~/.dsh/settings.yaml` 的一次性导入、残留字段的行为见
+[配置参考](configuration.md#tui-配置)。写入在 `withFileLock` 下重读、合并、替换，多个实例改不同键互不覆盖。
 DSH 的 Web 设置页改的是 Config，不再影响 TUI。`src/settings/definitions.ts` 与 `tuiSettingsSchema`
 继续是唯一定义来源。
 
@@ -208,7 +211,7 @@ Claude 内核不组合 dsh-base 时**写**没有去处。被否的「继续住 C
 | 1 | 定位 | 「拥有入口的终端应用」；DSH 仍是首要适配目标与首方后端（`native.dsh` 与 specialist 能力的首方特权不变），只因其启动成本以独立后端形态存在 |
 | 2 | `dsh --profile dsh-tui` 直启 | 继续支持；没有专项实现与验收，现有覆盖仅启动器的 `DSH_TUI_HOST_ENTRY=0` 回退（`verify-launcher.mjs`） |
 | 3 | `@deepseek-ai/dsh` | 不是依赖：入口按宿主 realpath 加载已装的 `dsh`，只为类型声明 `HOST_TYPE_PACKAGES`（4.3） |
-| 4 | 设置存储 | 独立的 `~/.dsh-tui/settings.json`，两个内核共用（4.5） |
+| 4 | 设置存储 | 独立的 `~/.dsh-tui/settings.json`，所有内核共用（4.5） |
 
 ## 8. 未完成项
 

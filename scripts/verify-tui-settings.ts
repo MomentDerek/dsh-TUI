@@ -1,14 +1,15 @@
 /**
  * The TUI's own settings document (`~/.dsh-tui/settings.json`) and its settings
  * service (src/dsh-adapter/tui-settings.ts): one-time import from the profile
- * patch's `dsh-tui` row, scope resolution, `mutate`, delegation of other
+ * patch's `dsh-tui` row and an older host's `settings.yaml`, scope
+ * resolution, `mutate` (under the cross-process lock), delegation of other
  * namespaces, and a broken document.
  *
  * Run: node --import tsx/esm scripts/verify-tui-settings.ts
  */
 import './lib/fake-home.mjs'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -116,5 +117,42 @@ const peer = createTuiSettingsService({ ns: 'dsh-tui', file: fresh, profile: 'ds
 await peer.mutate('dsh-tui', [{ op: 'set', path: ['lang'], value: 'zh' }])
 await broken.mutate('dsh-tui', [{ op: 'set', path: ['whale'], value: true }])
 check('… and later writes still re-read the file', (JSON.parse(readFileSync(fresh, 'utf8')) as { values: { lang?: string } }).values.lang === 'zh')
+
+// ── the lock spans re-read and replace ────────────────────────────────
+// Another process holds the writer lock and commits a different key while
+// this write waits: the write must land on that commit, not on its own copy.
+const locked = join(root, 'locked', 'settings.json')
+const holder = createTuiSettingsService({ ns: 'dsh-tui', file: locked, profile: 'no-such-profile', keys })
+writeFileSync(`${locked}.lock`, `${process.pid}\n`)
+const waiting = holder.mutate('dsh-tui', [{ op: 'set', path: ['whale'], value: false }])
+await new Promise(resolve => setTimeout(resolve, 150))
+const lockedDoc = (): { values: Record<string, unknown> } => JSON.parse(readFileSync(locked, 'utf8'))
+check('a write waits for the writer lock', !('whale' in lockedDoc().values), lockedDoc())
+writeFileSync(locked, JSON.stringify({ version: 1, values: { statusBar: { cost: false } } }))
+rmSync(`${locked}.lock`)
+await waiting
+check('concurrent writes of different keys both land', lockedDoc().values.whale === false && (lockedDoc().values.statusBar as { cost?: boolean }).cost === false, lockedDoc())
+
+// ── an older host's settings.yaml ─────────────────────────────────────
+// The patch's dsh-tui row now says `lang: zh`, `statusBar.tps: false`.
+const legacyYaml = join(root, 'dsh', 'settings.yaml')
+writeFileSync(legacyYaml, 'dsh-tui:\n  lang: en\n  whale: false\n  provider: legacy\n  statusBar:\n    cost: false\nother:\n  lang: zh\n')
+const legacyFile = join(root, 'legacy', 'settings.json')
+createTuiSettingsService({ ns: 'dsh-tui', file: legacyFile, profile: 'dsh-tui', keys })
+const legacyDoc = (path = legacyFile): { values: Record<string, unknown>; imported?: { from: string } } => JSON.parse(readFileSync(path, 'utf8'))
+check('a pending settings.yaml overrides the row, nested sections merged',
+  legacyDoc().values.lang === 'en' && legacyDoc().values.whale === false
+  && JSON.stringify(legacyDoc().values.statusBar) === JSON.stringify({ tps: false, cost: false }), legacyDoc().values)
+check('only its editable keys are taken', !('provider' in legacyDoc().values), legacyDoc().values)
+check('the import names both sources', legacyDoc().imported?.from === `${patchFile}, ${legacyYaml}`, legacyDoc().imported)
+writeFileSync(legacyYaml, 'dsh-tui:\n  lang: zh\n')
+createTuiSettingsService({ ns: 'dsh-tui', file: legacyFile, profile: 'dsh-tui', keys })
+check('the legacy import runs once and never overwrites the document', legacyDoc().values.lang === 'en' && legacyDoc().values.whale === false, legacyDoc().values)
+writeFileSync(legacyYaml, 'dsh-tui:\n  lang: en\n  whale: false\n')
+renameSync(legacyYaml, `${legacyYaml}.imported`)
+const movedFile = join(root, 'moved', 'settings.json')
+createTuiSettingsService({ ns: 'dsh-tui', file: movedFile, profile: 'dsh-tui', keys })
+check('a settings.yaml DSH already moved into the patch sits beneath the row',
+  legacyDoc(movedFile).values.lang === 'zh' && legacyDoc(movedFile).values.whale === false, legacyDoc(movedFile).values)
 
 console.log(`\nverify-tui-settings: ${passed} checks passed`)

@@ -1,7 +1,8 @@
 /**
  * The TUI's own settings document, `~/.dsh-tui/settings.json`: the
  * `/settings` user layer of the `dsh-tui` namespace for every kernel. A boot
- * that finds no document imports the DSH profile patch's `dsh-tui` row once;
+ * that finds no document imports the DSH profile patch's `dsh-tui` row (and an
+ * older host's `settings.yaml` section) once;
  * the patch is never written.
  * Unlike the other ~/.dsh-tui preferences a failed write throws: the settings
  * screen reports it.
@@ -68,9 +69,10 @@ export function profilePatchPath(profile: string): string {
  * The `dsh-tui` row's `config` in a DSH profile patch, restricted to `keys`
  * (the editable fields; deployment fields such as the provider route stay in
  * the profile). Undefined when the file or the row is missing or unreadable.
- * `!!js` expressions are not evaluated: such a field is skipped.
+ * `!!js` expressions are not evaluated: such a field is skipped (a top-level
+ * one is named in `expressions`, when given).
  */
-export function readProfileTuiSettings(path: string, keys: readonly string[]): Record<string, unknown> | undefined {
+export function readProfileTuiSettings(path: string, keys: readonly string[], expressions?: string[]): Record<string, unknown> | undefined {
   let rows: unknown
   try {
     rows = parse(readFileSync(path, 'utf8'), {
@@ -85,7 +87,45 @@ export function readProfileTuiSettings(path: string, keys: readonly string[]): R
   if (!Array.isArray(rows)) return undefined
   const row: unknown = rows.find(entry => isRecord(entry) && entry.id === 'dsh-tui')
   if (!isRecord(row) || !isRecord(row.config)) return undefined
-  const config = row.config
+  if (expressions !== undefined) expressions.push(...keys.filter(key => (row.config as Record<string, unknown>)[key] === SKIPPED))
+  return pickKeys(row.config, keys)
+}
+
+/**
+ * The `ns` section of the `/settings` user layer older DSH hosts kept in
+ * `<DSH home>/settings.yaml` (dsh-settings-file), restricted to `keys`. A DSH
+ * that has since moved the document into the profile patch leaves it as
+ * `settings.yaml.imported`; `pending` tells the two apart (a pending document
+ * still overrides the patch, an imported one is already beneath it).
+ */
+export function readLegacyTuiSettings(ns: string, keys: readonly string[]): { readonly from: string; readonly pending: boolean; readonly values: Record<string, unknown> } | undefined {
+  const document = join(dshHomeDir(), 'settings.yaml')
+  for (const [from, pending] of [[document, true], [`${document}.imported`, false]] as const) {
+    let root: unknown
+    try {
+      root = parse(readFileSync(from, 'utf8'), { logLevel: 'silent' })
+    } catch {
+      continue
+    }
+    if (!isRecord(root)) continue
+    const section = root[ns]
+    return { from, pending, values: isRecord(section) ? pickKeys(section, keys) : {} }
+  }
+  return undefined
+}
+
+/** `over` laid on `under`: nested records merge, anything else replaces. */
+export function mergeSettingsLayers(under: Readonly<Record<string, unknown>>, over: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...under }
+  for (const [key, value] of Object.entries(over)) {
+    const below = merged[key]
+    merged[key] = isRecord(below) && isRecord(value) ? mergeSettingsLayers(below, value) : value
+  }
+  return merged
+}
+
+/** `keys` of `config`, with `!!js` expressions (SKIPPED) dropped at any depth. */
+function pickKeys(config: Readonly<Record<string, unknown>>, keys: readonly string[]): Record<string, unknown> {
   const strip = (value: unknown): unknown => {
     if (value === SKIPPED) return undefined
     if (!isRecord(value)) return value

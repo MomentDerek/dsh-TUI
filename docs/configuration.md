@@ -27,10 +27,12 @@ Profile 启动按顺序叠加：
 
 ## TUI 配置
 
-`/settings` 的 `dsh-tui` 分区存放在 TUI 自己的 `~/.dsh-tui/settings.json`，DSH 与
-Claude 两个内核共用这一份。第一次启动时，若该文件不存在，会从当前 profile 的
+`/settings` 的 `dsh-tui` 分区存放在 TUI 自己的 `~/.dsh-tui/settings.json`，所有内核
+（DSH、Claude、Codex）共用这一份。第一次启动时，若该文件不存在，会从当前 profile 的
 `cordis.patch.yml` 里 `dsh-tui` 行的 `config` 一次性导入可编辑字段（只读，不改 profile；
-`!!js` 表达式不导入），之后不再重复导入。导入后 profile 补丁里残留的这些字段只在 DSH
+`!!js` 表达式不导入），之后不再重复导入。旧版 host 存在 `~/.dsh/settings.yaml` 里的
+`dsh-tui` 分区同时导入：尚未被 DSH 迁走的文件优先于补丁行；DSH 已迁入补丁、改名为
+`settings.yaml.imported` 的，补丁行优先。导入后 profile 补丁里残留的这些字段只在 DSH
 内核下作为静态部署层生效（用户层未设置时兜底），建议从补丁里删掉，避免两个内核看到
 不同的默认值。其他插件的分区仍由 DSH 的设置服务读写（写入当前 profile 的
 `cordis.patch.yml`；旧版是 `~/.dsh/settings.yaml`）。
@@ -87,7 +89,7 @@ Claude 两个内核共用这一份。第一次启动时，若该文件不存在�
 | `terminalImages` | `true` | 允许在支持的终端预览图片；`false` 保留文字信息，跳过图片探测与预览解码。修改后重启生效 |
 | `preset` | 名册默认 `standard` | 新会话 Agent preset；优先级：`DSH_TUI_PRESET`（本次运行）> `/preset` 持久化选择 > 本字段（部署默认值）> 名册默认 |
 | `sessionId` | 未设置 | 要恢复的会话 ID，通常由 Windows `--resume` 启动器注入 |
-| `backend` | 未设置（`/kernel` 记住的选择，否则 `dsh`） | 会话后端：内置 `dsh`，或已装的后端（实验性的 `claude` / `codex`，以及插件后端；不区分大小写）。**未安装或未知的取值一律按 `dsh` 启动并告警**，不会崩。profile 行读取 `DSH_TUI_BACKEND`，`dsh-tui --backend <id>` 会设置它。见 [Claude 后端](claude-backend.md) |
+| `backend` | 未设置（`/kernel` 记住的选择，否则 `dsh`） | 会话后端：内置 `dsh`，或已装的后端（实验性的 `claude` / `codex`，以及插件后端；不区分大小写）。**未安装或未知的取值一律按 `dsh` 启动并告警**，不会崩。profile 行读取 `DSH_TUI_BACKEND`，`dsh-tui --backend <id>` 会设置它。profile 自己的补丁里若把它写成 `!!js` 表达式，本次启动改走 `dsh --profile`（只有 profile 的 Loader 能求值），`/kernel` 切换除外。见 [Claude 后端](claude-backend.md) |
 
 ### 优先级与强制关闭
 

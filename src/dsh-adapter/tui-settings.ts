@@ -7,7 +7,10 @@
 import type Schema from '@deepseek-ai/schemastery'
 import { logForDebugging } from '../utils/debug.js'
 import { isRecord } from '../utils/jsonl.js'
-import { profilePatchPath, readProfileTuiSettings, readTuiSettings, TUI_SETTINGS_FILE, writeTuiSettings, type TuiSettingsDocument } from '../tuiSettingsFile.js'
+import { mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
+import { mergeSettingsLayers, profilePatchPath, readLegacyTuiSettings, readProfileTuiSettings, readTuiSettings, TUI_SETTINGS_FILE, writeTuiSettings, type TuiSettingsDocument } from '../tuiSettingsFile.js'
 
 type PathOp =
   | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
@@ -62,19 +65,28 @@ function applySettingsOp(layer: Readonly<Record<string, unknown>>, op: PathOp): 
 
 /**
  * The first boot without a document imports the profile patch's `dsh-tui`
- * row (once; a document with any `imported` mark is never re-imported).
+ * row and an older host's `settings.yaml` section (once; a document with any
+ * `imported` mark is never re-imported). A pending `settings.yaml` is the
+ * user layer above the row, as on those hosts; one DSH already moved into the
+ * patch (`.imported`) sits beneath it, since the patch may be newer.
  */
 function loadTuiSettings(input: {
   readonly file?: string
+  readonly ns: string
   readonly profile: string
   readonly keys: readonly string[]
 }): TuiSettingsDocument {
   const file = input.file ?? TUI_SETTINGS_FILE
   const existing = readTuiSettings(file)
   if (existing !== undefined) return existing
-  const from = profilePatchPath(input.profile)
-  const values = readProfileTuiSettings(from, input.keys)
-  const document: TuiSettingsDocument = { version: 1, values: values ?? {}, imported: { from: values === undefined ? 'none' : from, at: Date.now() } }
+  const patch = profilePatchPath(input.profile)
+  const row = readProfileTuiSettings(patch, input.keys)
+  const legacy = readLegacyTuiSettings(input.ns, input.keys)
+  const values = legacy === undefined
+    ? row ?? {}
+    : legacy.pending ? mergeSettingsLayers(row ?? {}, legacy.values) : mergeSettingsLayers(legacy.values, row ?? {})
+  const sources = [...(row === undefined ? [] : [patch]), ...(legacy === undefined ? [] : [legacy.from])]
+  const document: TuiSettingsDocument = { version: 1, values, imported: { from: sources.length === 0 ? 'none' : sources.join(', '), at: Date.now() } }
   try {
     writeTuiSettings(document, file)
   } catch (error) {
@@ -95,7 +107,7 @@ export function createTuiSettingsService(input: {
   readonly delegate?: () => DelegateSettings | undefined
 }): TuiSettingsService {
   const file = input.file ?? TUI_SETTINGS_FILE
-  let document = loadTuiSettings({ file, profile: input.profile, keys: input.keys })
+  let document = loadTuiSettings({ file, ns: input.ns, profile: input.profile, keys: input.keys })
   let revision = 0
   let schema: Schema<unknown> | undefined
   const watchers = new Set<(next: unknown) => void>()
@@ -140,14 +152,19 @@ export function createTuiSettingsService(input: {
       }
       // Apply onto the file as it is now: another dsh-tui process may have
       // written since boot (an unreadable file keeps this process's copy).
-      const latest = readTuiSettings(file)
-      if (latest !== undefined && latest.imported?.from !== 'unreadable') document = latest
-      const values = ops.reduce<Record<string, unknown>>((layer, op) => applySettingsOp(layer, op), { ...document.values })
-      // The unreadable marker describes the file as read, not as rewritten.
-      const { imported, ...rest } = document
-      const next: TuiSettingsDocument = { ...rest, values, ...(imported === undefined || imported.from === 'unreadable' ? {} : { imported }) }
-      writeTuiSettings(next, file)
-      document = next
+      // The lock spans the re-read and the replace, so concurrent writers of
+      // different keys both land (its `<file>.lock` sibling needs the directory).
+      mkdirSync(dirname(file), { recursive: true })
+      await withFileLock(file, async () => {
+        const latest = readTuiSettings(file)
+        if (latest !== undefined && latest.imported?.from !== 'unreadable') document = latest
+        const values = ops.reduce<Record<string, unknown>>((layer, op) => applySettingsOp(layer, op), { ...document.values })
+        // The unreadable marker describes the file as read, not as rewritten.
+        const { imported, ...rest } = document
+        const next: TuiSettingsDocument = { ...rest, values, ...(imported === undefined || imported.from === 'unreadable' ? {} : { imported }) }
+        writeTuiSettings(next, file)
+        document = next
+      })
       revision += 1
       const value = resolved()
       for (const watcher of [...watchers]) {

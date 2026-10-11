@@ -1,5 +1,5 @@
 /**
- * The host entry's pure routing parts: `entryKernel`, `configuredBackend`,
+ * The host entry's pure routing parts: `entryKernel`, `configuredBackend`, `delegatesToProfile`,
  * `restartArgv`, `findHostDsh`
  * across npm/pnpm/volta/wrapper shims, and launcher-path expansion under
  * `path.win32` rules (no Windows needed). The launcher half (bin/dsh-tui.js)
@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, win32 } from 'node:path'
-import { configuredBackend, entryKernel } from '../src/hostEntryRoute.js'
+import { configuredBackend, delegatesToProfile, entryKernel } from '../src/hostEntryRoute.js'
 import { findHostDsh, launcherScriptPaths, resolveLauncherPath } from '../src/dsh-adapter/host-dsh.js'
 import { stripResumeArgs } from '../src/sessionHistory.js'
 import { restartArgv } from '../src/update.js'
@@ -51,7 +51,12 @@ check('no patch file: no pin', configuredBackend('x', patch) === undefined)
 writeFileSync(patch, '- id: other\n  config: { backend: claude }\n- id: dsh-tui\n  config:\n    preset: !!js process.env.DSH_TUI_PRESET\n    backend: Claude\n')
 check('the dsh-tui row\'s backend, normalized', configuredBackend('x', patch) === 'claude')
 writeFileSync(patch, '- id: dsh-tui\n  config:\n    backend: !!js process.env.DSH_TUI_BACKEND\n')
-check('a !!js backend is no pin', configuredBackend('x', patch) === undefined)
+check('a !!js backend is dynamic', configuredBackend('x', patch) === 'dynamic')
+check('a dynamic row hands the launch to the profile', delegatesToProfile('dynamic', {}))
+check('a handoff outranks a dynamic row', !delegatesToProfile('dynamic', { DSH_TUI_BACKEND_HANDOFF: 'claude' }))
+check('DSH_TUI_BACKEND does not (the row outranks it)', delegatesToProfile('dynamic', { DSH_TUI_BACKEND: 'claude' }))
+check('a static row stays in the entry', !delegatesToProfile('claude', {}) && !delegatesToProfile(undefined, {}))
+check('the entry treats a dynamic row as no pin', entryKernel({ DSH_TUI_BACKEND: 'claude' }, { configured: 'dynamic', memoryFile: noMemory }) === 'claude')
 writeFileSync(patch, '- id: dsh-tui\n  config:\n    lang: en\n')
 check('a row without backend is no pin', configuredBackend('x', patch) === undefined)
 writeFileSync(patch, '- id: dsh-tui\n  config:\n    backend: ghost-backend\n')

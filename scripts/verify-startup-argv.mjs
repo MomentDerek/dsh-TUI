@@ -108,8 +108,9 @@ if (probeMode) {
   const submitted = []
   const scope = {
     ctx, process, cmdlineArgsOf, initialPromptFromCmdlineArgs, resumeTargetFromArgv, stripResumeArgs,
-    // A replacement process skips the prompt (src/update.ts restartChildEnv).
-    LAUNCH_PROMPT_SENT_ENV: 'DSH_TUI_LAUNCH_PROMPT_SENT',
+    // A replacement process skips the prompt (src/update.ts restartChildEnv);
+    // plugin.ts reads the variable once at module load.
+    launchPromptSent: process.env.DSH_TUI_LAUNCH_PROMPT_SENT === '1',
     KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs,
     resolveRememberedBackend, resolveResumeTarget, backendLabel, isBackendIdSyntax,
     isRegisteredBackend, listBackends, parseBackendChoice, t,

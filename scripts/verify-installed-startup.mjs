@@ -3,7 +3,8 @@
  * Run: node scripts/verify-installed-startup.mjs
  * Requires installed dsh/dsh-tui launchers and the host's node-pty dependency.
  * Copies profile composition into an isolated HOME, reuses installed packages,
- * waits for the post-render injection endpoint, then sends only /quit. A
+ * waits for the injection endpoint (bound to the adopted session, never the
+ * placeholder), then sends only /quit. A
  * second launch overrides the dsh-tui row in the profile's own patch layer and
  * starts from another directory: the session must open in the row's `cwd`.
  * Does not copy the credential store or submit a model request. Failed probes keep a
@@ -150,18 +151,36 @@ async function launch(name, { row, cwd = process.cwd(), env: extraEnv = {}, unse
     return Array.from({ length: 32 }, (_, index) => buffer.getLine(buffer.baseY + index)?.translateToString(true) ?? '').join('\n')
   }
   const discovery = join(root, '.dsh-tui', 'inject', 'servers.json')
-  const ready = () => {
-    try { return JSON.parse(readFileSync(discovery, 'utf8')).length > 0 }
-    catch { return false }
+  const servers = () => {
+    try { return JSON.parse(readFileSync(discovery, 'utf8')) }
+    catch { return [] }
   }
+  const ready = () => servers().length > 0
   let passed = false
   try {
     assert.ok(await settled(() => exit !== undefined || ready(), { timeoutMs: 30000 }), `${name}: timed out before UI mount`)
     assert.equal(exit, undefined, `${name}: profile exited before UI mount (code ${exit?.exitCode})`)
     assert.ok(ready(), `${name}: post-render injection endpoint is missing`)
-    assert.ok(await settled(() => screen().includes('\u276f') && screen().includes('dsh-TUI'), { timeoutMs: 5000 }), `${name}: prompt has not painted`)
+    // The endpoint binds the adopted session, never the placeholder's empty id
+    // (two launches would otherwise share `inject/.sock` and one record).
+    assert.ok(servers().every(record => record.sessionId !== ''), `${name}: an injection record has no session id: ${JSON.stringify(servers())}`)
+    assert.ok(!existsSync(join(root, '.dsh-tui', 'inject', '.sock')), `${name}: the placeholder bound an injection socket`)
+    // The endpoint appears with the adoption, which is also when an isolated
+    // HOME's first-launch wizard opens over the prompt: skip it.
+    // An Esc that lands before the wizard binds its keys is dropped: repeat.
+    const onboarding = () => screen().includes('Esc 跳过引导')
+    if (await settled(onboarding, { timeoutMs: 3000 })) {
+      for (let attempt = 0; attempt < 10 && onboarding(); attempt += 1) {
+        child.write('\x1b')
+        await settled(() => !onboarding(), { timeoutMs: 500 })
+      }
+      assert.ok(!onboarding(), `${name}: the first-launch wizard did not close`)
+    }
+    // The chat screen's status row, or the landing page a launch without a
+    // workspace target opens on (its banner is art; its footer names the package).
+    assert.ok(await settled(() => screen().includes('\u276f') && /dsh-TUI|dsh-tui v/u.test(screen()), { timeoutMs: 5000 }), `${name}: prompt has not painted`)
     const bootMs = Date.now() - startedAt
-    const detail = check === undefined ? '' : await check({ root, screen, write: data => child.write(data) })
+    const detail = check === undefined ? '' : await check({ root, screen, servers })
     child.write('/quit')
     assert.ok(await settled(() => screen().includes('/quit'), { timeoutMs: 5000 }), `${name}: prompt did not accept /quit`)
     child.write('\r')
@@ -206,14 +225,11 @@ passed = await launch('row cwd from another launch directory', {
     mkdirSync(join(root, ROW_CWD))
     config.cwd = join(root, ROW_CWD)
   },
-  check: async ({ screen, write }) => {
-    // A first launch holds the onboarding wizard until the adoption, then
-    // opens it over the status row: close it before reading the directory.
-    const onboarding = () => screen().includes('Esc 跳过引导')
-    assert.ok(await settled(() => onboarding() || screen().includes(ROW_CWD), { timeoutMs: 20000 }), `the session was not adopted:\n${screen()}`)
-    if (onboarding()) write('\x1b')
+  check: async ({ root, screen, servers }) => {
+    // The injection endpoint (what launch() waits for) binds at the adoption.
     assert.ok(await settled(() => screen().includes(ROW_CWD), { timeoutMs: 10000 }), `the session did not open in the row's cwd:\n${screen()}`)
     assert.ok(!screen().includes(LAUNCH_DIR), `the launch directory is still shown:\n${screen()}`)
+    assert.ok(servers().some(record => record.cwd === join(root, ROW_CWD)), `the injection record keeps the launch cwd: ${JSON.stringify(servers())}`)
     return `session cwd ${ROW_CWD}`
   },
 }).catch(error => { console.error(error); return false }) && passed

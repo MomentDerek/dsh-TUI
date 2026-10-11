@@ -107,7 +107,7 @@ IDs. It requires matching profile dependencies with `@deepseek-ai/schemastery`
 instead of showing an uneditable settings page. Older hosts keep their legacy settings scope.
 
 The `dsh-tui` section of `/settings` is saved in `~/.dsh-tui/settings.json`, shared by
-both kernels; the first launch imports it once from the profile's `cordis.patch.yml`
+every kernel; the first launch imports it once from the profile's `cordis.patch.yml` (and an older host's `~/.dsh/settings.yaml`)
 (see [configuration](docs/configuration.en.md#tui-configuration)).
 
 ```sh

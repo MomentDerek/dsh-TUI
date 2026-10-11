@@ -70,7 +70,7 @@ import {
 import { attachHerdrIntegration } from '../herdr.js'
 import { logMouseDebug } from '../utils/debug.js'
 import { Chat } from '../screens/Chat.js'
-import { openInjectChannel, type InjectController } from './inject-channel.js'
+import { openInjectChannel, type InjectChannel, type InjectController } from './inject-channel.js'
 import { startSessionMountHeartbeat } from './session-mount-heartbeat.js'
 import { reserveMount, reserveNewSession } from '../sessionMounts.js'
 import { getHostDialogStore, type TuiDialogRuntime } from './dialogs.js'
@@ -128,6 +128,11 @@ import { StartupOpenError, type ChannelStartup } from './channel/state.js'
 let lastBootedFullscreen: boolean | undefined
 // Image preferences also stay fixed across host recomposes until /restart.
 let lastBootedTerminalImages: boolean | undefined
+// A replacement's first process already sent the launch prompt. Read once per
+// process (a recompose must not resend it) and dropped from the environment,
+// so a `dsh-tui "prompt"` run from inside the session keeps its own prompt.
+const launchPromptSent = process.env[LAUNCH_PROMPT_SENT_ENV] === '1'
+delete process.env[LAUNCH_PROMPT_SENT_ENV]
 
 // Kept importable from here: the startup parser moved to its own dependency-free
 // module so argv probes can load it without the whole plugin graph.
@@ -1903,7 +1908,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // from literal prompt text.
   // The standalone entry has no `ctx.cmdlineArgs` (its argv is the app's); a
   // replacement keeps the arguments but the first process sent their prompt.
-  const initialPrompt = process.env[LAUNCH_PROMPT_SENT_ENV] === '1' ? '' : initialPromptFromCmdlineArgs(cmdlineArgs ?? process.argv.slice(2))
+  const initialPrompt = launchPromptSent ? '' : initialPromptFromCmdlineArgs(cmdlineArgs ?? process.argv.slice(2))
   if (initialPrompt) {
     // A placeholder session refuses sends and nothing replays them after
     // adoption: hold the prompt until the channel is ready.
@@ -2453,19 +2458,35 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // External injection channel (dsh.nvim etc.): expose a per-session local
   // socket that appends text into the prompt input and submits it. Optional
   // integration — a bind failure degrades to "no channel" and never fails the
-  // session. Closed on teardown so the socket and discovery record do not leak.
-  const injectChannel = openInjectChannel(
-    agent?.session.id ?? channel.agentId,
-    channel.cwd,
-    {
-      append: (text) => injectControllerRef.current?.append(text),
-      submit: () => injectControllerRef.current?.submit(),
-    },
-    (message) => ctx.logger.warn(`dsh-tui: ${message}`),
-  )
-  if (injectChannel) {
-    ctx.effect(() => () => injectChannel.close())
+  // session. It follows the bound session: a placeholder still opening (empty
+  // id) binds nothing, and adoption or a session switch rebinds under the new
+  // id and cwd, closing the previous socket and discovery record (a connected
+  // client reconnects through servers.json). Closed on teardown so neither leaks.
+  let injectChannel: InjectChannel | null = null
+  let injectSessionId = ''
+  const bindInjectChannel = (): void => {
+    if (channel.agentId === injectSessionId) return
+    injectChannel?.close()
+    injectChannel = null
+    injectSessionId = channel.agentId
+    if (injectSessionId === '') return
+    injectChannel = openInjectChannel(
+      injectSessionId,
+      channel.cwd,
+      {
+        append: (text) => injectControllerRef.current?.append(text),
+        submit: () => injectControllerRef.current?.submit(),
+      },
+      (message) => ctx.logger.warn(`dsh-tui: ${message}`),
+    )
   }
+  bindInjectChannel()
+  const unsubscribeInject = channel.subscribe(bindInjectChannel)
+  ctx.effect(() => () => {
+    unsubscribeInject()
+    injectChannel?.close()
+    injectChannel = null
+  }, 'dsh-tui inject channel')
 
   // Cross-process session mounting: publish the sessions this process has
   // mounted so another TUI (a different terminal process on the same machine)

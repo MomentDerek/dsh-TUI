@@ -8,7 +8,7 @@
 import '../force-production-react.js'
 import { spawn } from 'node:child_process'
 import { markBoot } from '../utils/bootTrace.js'
-import { configuredBackend, entryKernel, hostProfile } from '../hostEntryRoute.js'
+import { configuredBackend, delegatesToProfile, entryKernel, hostProfile } from '../hostEntryRoute.js'
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
 import { HOST_NOTICE_ENV, type KernelBackendId } from '../kernelPrefs.js'
 import { logForDebugging } from '../utils/debug.js'
@@ -24,7 +24,11 @@ markBoot('entry-start')
 // already open, the network section's reverse lookups block the event loop.
 if (process.report !== undefined) (process.report as { excludeNetwork?: boolean }).excludeNetwork = true
 const profile = hostProfile()
-await runInEntry(entryKernel(process.env, { configured: configuredBackend(profile) }))
+const configured = configuredBackend(profile)
+// A `!!js` backend is evaluated only by the profile's Loader: that launch
+// keeps the full `dsh --profile` path, which honours the evaluated row.
+if (delegatesToProfile(configured)) delegateToDsh()
+else await runInEntry(entryKernel(process.env, { configured }))
 
 /** bin/dsh-tui.js `MSG.noDsh`, newline-terminated. */
 function noDshGuidance(): string {
