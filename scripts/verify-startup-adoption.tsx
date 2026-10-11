@@ -288,6 +288,8 @@ async function screenCase(surface: 'composer' | 'launchpad' | 'launchpad-failed'
     await typeLine('hello ready')
     stdin.write('\r')
     check(label('after the adoption Enter sends to the real session'), await settled(() => real.submits.some(item => item.input.text === 'hello ready')), JSON.stringify(real.submits.map(item => item.input.text)))
+    // A refused line must not be queued and forwarded once the session opens.
+    check(label('the refused early line never reaches the session'), !real.submits.some(item => item.input.text === 'hello early'), JSON.stringify(real.submits.map(item => item.input.text)))
   } finally {
     instance.unmount()
     channel.releaseContributions()

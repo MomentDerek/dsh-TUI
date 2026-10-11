@@ -1659,14 +1659,13 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // `dsh --profile`；dsh 自己的 hostArgs（--version、--dump-config* 等）始终交给 dsh。
   const hostEntry = join(ownDir, 'lib', 'types', 'dsh-adapter', 'host-entry.js')
   const hostEntryEnabled = process.env.DSH_TUI_HOST_ENTRY !== '0' && existsSync(hostEntry)
-  if (hostEntryEnabled) {
-    // 替身进程经它重起（src/update.ts restartArgv）。
-    process.env.DSH_TUI_HOST_ENTRY_PATH = hostEntry
-    process.env.DSH_TUI_PROFILE ??= PROFILE
-  }
   // 必须在首次 spawn 之前：本次启动的 TUI 写的记录都晚于这个时刻。
   noteLaunchChain()
   if (hostEntryEnabled && hostArgs.length === 0) {
+    // 替身进程经它重起（src/update.ts restartArgv）。只在入口路线设置：带 hostArgs
+    // （如 --patch）的 `dsh --profile` 启动重起时须原样重放整条 dsh argv。
+    process.env.DSH_TUI_HOST_ENTRY_PATH = hostEntry
+    process.env.DSH_TUI_PROFILE ??= PROFILE
     // The in-process DSH kernel reads the bundled guide skills like `dsh` does.
     const result = await startEntrySession(hostEntry, args, withGuideSkillDir(process.env))
     // 没有 dsh CLI：安全模式与排查提示都指向不存在的 `dsh --profile`（DSH 内核下
