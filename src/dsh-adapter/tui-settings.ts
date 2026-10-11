@@ -10,7 +10,7 @@ import { isRecord } from '../utils/jsonl.js'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
-import { mergeSettingsLayers, profilePatchPath, readLegacyTuiSettings, readProfileTuiSettings, readTuiSettings, TUI_SETTINGS_FILE, writeTuiSettings, type TuiSettingsDocument } from '../tuiSettingsFile.js'
+import { createTuiSettings, mergeSettingsLayers, profilePatchPath, readLegacyTuiSettings, readProfileTuiSettings, readTuiSettings, TUI_SETTINGS_FILE, writeTuiSettings, type TuiSettingsDocument } from '../tuiSettingsFile.js'
 
 type PathOp =
   | { readonly op: 'set'; readonly path: readonly string[]; readonly value: unknown }
@@ -66,7 +66,8 @@ function applySettingsOp(layer: Readonly<Record<string, unknown>>, op: PathOp): 
 /**
  * The first boot without a document imports the profile patch's `dsh-tui`
  * row and an older host's `settings.yaml` section (once; a document with any
- * `imported` mark is never re-imported). A pending `settings.yaml` is the
+ * `imported` mark is never re-imported, and only the first of concurrent
+ * imports is written). A pending `settings.yaml` is the
  * user layer above the row, as on those hosts; one DSH already moved into the
  * patch (`.imported`) sits beneath it, since the patch may be newer.
  */
@@ -88,7 +89,9 @@ function loadTuiSettings(input: {
   const sources = [...(row === undefined ? [] : [patch]), ...(legacy === undefined ? [] : [legacy.from])]
   const document: TuiSettingsDocument = { version: 1, values, imported: { from: sources.length === 0 ? 'none' : sources.join(', '), at: Date.now() } }
   try {
-    writeTuiSettings(document, file)
+    // Two first launches race here: the later one adopts the document the
+    // earlier one created rather than replacing it.
+    if (!createTuiSettings(document, file)) return readTuiSettings(file) ?? document
   } catch (error) {
     // Still usable for this boot; the next one retries the import.
     logForDebugging(`dsh-tui: settings import could not be saved (${error instanceof Error ? error.message : String(error)})`)

@@ -50,6 +50,8 @@ const patch = join(root, 'cordis.patch.yml')
 check('no patch file: no pin', configuredBackend('x', patch) === undefined)
 writeFileSync(patch, '- id: other\n  config: { backend: claude }\n- id: dsh-tui\n  config:\n    preset: !!js process.env.DSH_TUI_PRESET\n    backend: Claude\n')
 check('the dsh-tui row\'s backend, normalized', configuredBackend('x', patch) === 'claude')
+writeFileSync(patch, '- id: dsh-tui\n  config: { backend: claude }\n- id: dsh-tui\n  config: { backend: codex }\n')
+check('a later dsh-tui row overrides the earlier backend', configuredBackend('x', patch) === 'codex')
 for (const form of ['process.env.DSH_TUI_BACKEND', 'process.env.DSH_TUI_BACKEND || undefined', 'process.env.DSH_TUI_BACKEND ?? undefined']) {
   writeFileSync(patch, `- id: dsh-tui\n  config:\n    backend: !!js ${form}\n`)
   check(`the bundle row's env-forwarding form is no pin (${form})`, configuredBackend('x', patch) === undefined)

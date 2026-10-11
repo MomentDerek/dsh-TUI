@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 import { createTuiSettingsService, type DelegateSettings } from '../src/dsh-adapter/tui-settings.js'
+import { createTuiSettings } from '../src/tuiSettingsFile.js'
 import { EDITABLE_CONFIG_KEYS } from '../src/settings/definitions.js'
 
 let passed = 0
@@ -154,5 +155,32 @@ const movedFile = join(root, 'moved', 'settings.json')
 createTuiSettingsService({ ns: 'dsh-tui', file: movedFile, profile: 'dsh-tui', keys })
 check('a settings.yaml DSH already moved into the patch sits beneath the row',
   legacyDoc(movedFile).values.lang === 'zh' && legacyDoc(movedFile).values.whale === false, legacyDoc(movedFile).values)
+rmSync(`${legacyYaml}.imported`)
+
+// ── a settings.yaml without the dsh-tui section defers to the imported one ──
+writeFileSync(legacyYaml, 'other:\n  lang: zh\n')
+writeFileSync(`${legacyYaml}.imported`, 'dsh-tui:\n  whale: false\n')
+const deferredFile = join(root, 'deferred', 'settings.json')
+createTuiSettingsService({ ns: 'dsh-tui', file: deferredFile, profile: 'dsh-tui', keys })
+check('a pending document without the section falls through to the imported one',
+  legacyDoc(deferredFile).values.whale === false && legacyDoc(deferredFile).imported?.from === `${patchFile}, ${legacyYaml}.imported`, legacyDoc(deferredFile))
+rmSync(legacyYaml)
+rmSync(`${legacyYaml}.imported`)
+
+// ── the last dsh-tui row of the patch is the effective one ────────────
+const twoRowsDir = join(root, 'dsh', 'profiles', 'two-rows')
+mkdirSync(twoRowsDir, { recursive: true })
+writeFileSync(join(twoRowsDir, 'cordis.patch.yml'), '- id: dsh-tui\n  config: { lang: zh, whale: false }\n- id: dsh-tui\n  config: { lang: en }\n')
+const twoRowsFile = join(root, 'two-rows', 'settings.json')
+createTuiSettingsService({ ns: 'dsh-tui', file: twoRowsFile, profile: 'two-rows', keys })
+check('a later dsh-tui row overrides the earlier one', JSON.stringify(legacyDoc(twoRowsFile).values) === JSON.stringify({ lang: 'en' }), legacyDoc(twoRowsFile).values)
+
+// ── concurrent first imports: the first document stays ────────────────
+const raced = join(root, 'raced', 'settings.json')
+check('the first import creates the document', createTuiSettings({ version: 1, values: { lang: 'en' } }, raced))
+check('a concurrent import does not replace it', !createTuiSettings({ version: 1, values: { lang: 'zh' } }, raced)
+  && (JSON.parse(readFileSync(raced, 'utf8')) as { values: { lang?: string } }).values.lang === 'en')
+const racedService = createTuiSettingsService({ ns: 'dsh-tui', file: raced, profile: 'two-rows', keys })
+check('… and the later launch adopts the existing document', (racedService.get('dsh-tui') as { lang?: string }).lang === 'en')
 
 console.log(`\nverify-tui-settings: ${passed} checks passed`)

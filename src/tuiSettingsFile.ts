@@ -7,7 +7,7 @@
  * Unlike the other ~/.dsh-tui preferences a failed write throws: the settings
  * screen reports it.
  */
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { DATA_DIR } from './utils/paths.js'
@@ -60,6 +60,29 @@ export function writeTuiSettings(document: TuiSettingsDocument, file: string = T
   }
 }
 
+/**
+ * Write the document only when there is none yet; false when another process
+ * created it first. The complete file appears at once (a hard link of the
+ * temporary, which fails on an existing name); a filesystem without hard links
+ * falls back to the plain replace. Throws when it cannot be written.
+ */
+export function createTuiSettings(document: TuiSettingsDocument, file: string = TUI_SETTINGS_FILE): boolean {
+  const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.${Date.now()}.${temporarySequence++}.tmp`)
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    try {
+      linkSync(temporary, file)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
+      renameSync(temporary, file)
+    }
+    return true
+  } finally {
+    try { rmSync(temporary, { force: true }) } catch { /* a leftover temporary is harmless */ }
+  }
+}
+
 /** The DSH profile's own patch layer, where DSH persisted the `/settings` layer. */
 export function profilePatchPath(profile: string): string {
   return join(dshHomeDir(), 'profiles', profile, 'cordis.patch.yml')
@@ -85,7 +108,8 @@ export function readProfileTuiSettings(path: string, keys: readonly string[], ex
     return undefined
   }
   if (!Array.isArray(rows)) return undefined
-  const row: unknown = rows.find(entry => isRecord(entry) && entry.id === 'dsh-tui')
+  // A later entry with the same id overrides an earlier one: take the last.
+  const row: unknown = rows.findLast(entry => isRecord(entry) && entry.id === 'dsh-tui')
   if (!isRecord(row) || !isRecord(row.config)) return undefined
   for (const key of keys) {
     const value = (row.config as Record<string, unknown>)[key]
@@ -110,9 +134,10 @@ export function readLegacyTuiSettings(ns: string, keys: readonly string[]): { re
     } catch {
       continue
     }
-    if (!isRecord(root)) continue
-    const section = root[ns]
-    return { from, pending, values: isRecord(section) ? pickKeys(section, keys) : {} }
+    // A document without this section (other namespaces only) defers to the next.
+    const section = isRecord(root) ? root[ns] : undefined
+    if (!isRecord(section)) continue
+    return { from, pending, values: pickKeys(section, keys) }
   }
   return undefined
 }

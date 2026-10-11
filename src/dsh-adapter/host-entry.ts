@@ -12,6 +12,7 @@ import { configuredBackend, delegatesToProfile, entryKernel, hostProfile } from 
 import { HANDOFF_ACK_FD_ENV } from '../handoffAck.js'
 import { HOST_NOTICE_ENV, type KernelBackendId } from '../kernelPrefs.js'
 import { logForDebugging } from '../utils/debug.js'
+import { cmdEscapeArgument } from '../utils/shellQuote.js'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Config as TuiConfig } from './index.js'
 import { ENTRY_ROW_DEFAULTS } from './lite-profile.js'
@@ -43,7 +44,10 @@ function delegateToDsh(): void {
   // A kernel-switch replacement's ACK pipe (fd 3) goes to dsh, which adopts the screen.
   const ack = process.env[HANDOFF_ACK_FD_ENV] === '3'
   const windows = process.platform === 'win32'
-  const child = spawn('dsh', windows ? args.map(quoteForCmd) : args, {
+  // cmd.exe joins the arguments unescaped, and `dsh` is an npm `.cmd` shim that
+  // parses the line again: quote, then caret-escape metacharacters twice, so a
+  // prompt with `&`, `|`, `<` or `>` stays one argument.
+  const child = spawn('dsh', windows ? args.map(arg => cmdEscapeArgument(arg, true)) : args, {
     stdio: ack ? ['inherit', 'inherit', 'inherit', 3] : 'inherit',
     env: process.env,
     ...(windows ? { shell: true } : {}),
@@ -86,13 +90,6 @@ function noteHostUnavailable(kernel: KernelBackendId, error: unknown): void {
   logForDebugging(line)
   if (process.env[HANDOFF_ACK_FD_ENV] === undefined && process.env.DSH_TUI_RESTART_CHILD !== '1') process.stderr.write(`${line}\n`)
   process.env[HOST_NOTICE_ENV] = reason
-}
-
-/** cmd.exe joins arguments with spaces and does not escape (bin/dsh-tui.js shellQuote). */
-function quoteForCmd(arg: string): string {
-  if (arg === '') return '""'
-  if (!/[\s"^]/u.test(arg)) return arg
-  return `"${arg.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, '$1$1')}"`
 }
 
 /**
