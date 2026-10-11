@@ -105,6 +105,10 @@ bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析）
 - **可延后字段**：`backendLabel`、`messaging`、`subagentControl.history`、`defaultOpeners`、
   `snapshotOf` 的 `dsh` 标记、`attachSessionWorkingActivity` 在 `adoptStartup` 时更新。
 - **DSH 扩展晚挂**：启动接管时挂一次扩展，扩展对 `binding.agent` 的读取延后到挂载时。
+- **行配置**：入口按 `ENTRY_ROW_DEFAULTS` 加环境字段挂载（首帧前算不出合并、求值后的行 config）。
+  DSH 内核的 `dsh-tui` 行接入后，会话按该行的 `workspace` / `cwd` 打开（优先级同 `apply`），
+  `effort` / `modes` / `upstreamRetry` 由扩展在接管时从该行读取；首帧即呈现的显示项（`activity`、
+  `activityFrames`、`contextBar`、`lang`）保持入口值。
 - **启动失败**：界面落一条提示行（原因 + `/new` 重试 · `/kernel` 切换 · `/quit` 退出），占位会话
   保持绑定、`ready` 为 false。Claude 的 `open` 没有中止入口，进程在打开返回前退出时 CLI 子进程靠
   stdin 关闭自行退出。后端模块本身加载失败（包损坏）时入口报错
@@ -181,6 +185,9 @@ Claude 内核不组合 dsh-base 时**写**没有去处。被否的「继续住 C
 - **DSH 加载的同步阻塞**：DSH 的模块加载与组合在进程内有约 1 秒的同步段，期间界面不刷新，只能
   「先画后冻」；不走进程隔离（第 1 节）。首帧侧的缓解（启动器注入 `NODE_COMPILE_CACHE`、首帧模块
   图瘦身）只作用于本包入口路径。
+- **Claude / Codex 内核不读 `dsh-tui` 行**：轻量 profile 禁用该行，会话在组合前就开始打开，所以行上
+  的部署字段（`cwd`、`workspace`、`modes`、`upstreamRetry` 等）不生效；DSH 内核下首帧显示项同样
+  取入口值（4.2）。
 - 内核在一次进程里只接管一次；运行中切换内核仍要重启（`/kernel`）。
 - `dsh --profile dsh-tui` 直接启动保留（第 7 节第 2 条）：没有入口时 `dsh-tui` 行按既有路径自己渲染。
 

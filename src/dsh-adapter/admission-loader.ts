@@ -6,7 +6,7 @@
  * capability. Listeners and the retry timer ride the caller's `ctx.effect`.
  */
 
-import { createRequire } from 'node:module'
+import { findPackageJSON } from 'node:module'
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -243,15 +243,9 @@ function resolveEntryFile(name: string, baseUrl: string | undefined): string | u
     if (name.startsWith('.')) {
       return baseUrl === undefined || baseUrl === '' ? undefined : fileURLToPath(new URL(name, baseUrl))
     }
-    const require = createRequire(requireBase(baseUrl))
-    try {
-      return require.resolve(`${name}/package.json`)
-    } catch {
-      // A subpath specifier (`pkg/sub`): fall back to the package root.
-      const trimmed = name.replace(/\/[^/]+$/u, '')
-      if (trimmed === name || trimmed === '') return undefined
-      return require.resolve(`${trimmed}/package.json`)
-    }
+    // Through the package's own resolution: `exports` need not list
+    // `./package.json`, and a subpath (`pkg/sub`) lands on the same root.
+    return findPackageJSON(name, requireBase(baseUrl))
   } catch {
     return undefined
   }

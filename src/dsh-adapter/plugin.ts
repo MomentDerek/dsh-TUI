@@ -543,10 +543,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const initialWorkspace = requestedWorkspace === undefined
     ? undefined
     : await workspaceService.resolve(requestedWorkspace)
-  const deferredWorkspace = dshInEntry && requestedWorkspace !== undefined && initialWorkspace === undefined
-    ? requestedWorkspace
-    : undefined
-  if (requestedWorkspace !== undefined && initialWorkspace === undefined && deferredWorkspace === undefined) {
+  if (requestedWorkspace !== undefined && initialWorkspace === undefined && !dshInEntry) {
     throw new Error(unsupportedWorkspaceTarget(requestedWorkspace))
   }
   const sessionCwd = initialWorkspace?.cwd ?? resolveSessionCwd(config.cwd)
@@ -869,7 +866,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // set in `attachDsh` before adoption; the getters below serve them.
   const rowFacts: {
     route?: { readonly provider: string; readonly model: string }
-    config?: Pick<Config, 'provider' | 'model' | 'preset'>
+    config?: Pick<Config, 'provider' | 'model' | 'preset' | 'effort' | 'modes' | 'upstreamRetry'>
   } = {}
   /**
    * The in-process DSH kernel's `/new` while no DSH session was adopted (its
@@ -940,7 +937,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // static deployment choice with the persisted preference.
     configuredLang: config.lang,
     configuredActivityFrames: config.activityFrames,
-    effort: config.effort,
+    // Read when the DSH extensions attach (the adoption), after the row's
+    // facts are in; the display fields below are fixed at the first frame.
+    get effort() { return rowFacts.config === undefined ? config.effort : rowFacts.config.effort },
     activity: config.activity,
     // Explicit cordis.yml value (static deployment choice) wins over the
     // runtime `/activity` preference, which wins over the default.
@@ -953,13 +952,13 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     agentPreset,
     // Shift+Tab session-mode cycle (undefined → the built-in default/
     // plan/full cycle in sessionModes.ts).
-    modes: config.modes,
+    get modes() { return rowFacts.config === undefined ? config.modes : rowFacts.config.modes },
     // Edit/Write diff presentation (schema default 'auto'); the /settings
     // screen edits this key live through the dsh-tui namespace.
     diffLayout: config.diffLayout,
     // Upstream auto-retry seeding (cordis.yml upstreamRetry, default on):
     // only an explicit opt-out disables it.
-    upstreamRetry: config.upstreamRetry,
+    get upstreamRetry() { return rowFacts.config === undefined ? config.upstreamRetry : rowFacts.config.upstreamRetry },
     thinkingFold: config.thinkingFold,
     jobGroupFold: config.jobGroupFold,
     toolBackground: config.toolBackground,
@@ -2597,13 +2596,20 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           refreshLastRunRecord()
           return createDshSession(dshCtx, { agent: created.agent, handle: created.handle })
         }
-        // A provider-URI workspace target, resolvable now that providers exist.
-        let startupMeta = meta
-        if (deferredWorkspace !== undefined) {
-          const workspaces = getHostWorkspaceRuntime(dshCtx.get('tuiWorkspaces'))
-          const target = workspaces === undefined ? undefined : await workspaces.resolve(deferredWorkspace)
-          if (target === undefined) throw new Error(unsupportedWorkspaceTarget(deferredWorkspace))
-          startupMeta = { cwd: target.cwd }
+        // The entry mounted on rebuilt defaults: the row's own `workspace` /
+        // `cwd` decide the session directory, with `apply`'s precedence. A
+        // provider-URI target resolves now that the providers exist.
+        const rowWorkspace = rowConfig.workspace ?? requestedWorkspace
+        let startupMeta = { cwd: resolveSessionCwd(rowConfig.cwd) }
+        if (rowWorkspace !== undefined) {
+          if (initialWorkspace !== undefined && rowWorkspace === requestedWorkspace) {
+            startupMeta = meta
+          } else {
+            const workspaces = getHostWorkspaceRuntime(dshCtx.get('tuiWorkspaces'))
+            const target = workspaces === undefined ? undefined : await workspaces.resolve(rowWorkspace)
+            if (target === undefined) throw new Error(unsupportedWorkspaceTarget(rowWorkspace))
+            startupMeta = { cwd: target.cwd }
+          }
         }
         // A revoked target (the safe-mode retry's warning path) cold-starts here too.
         const rowSessionId = resumeTarget.kind === 'revoked'

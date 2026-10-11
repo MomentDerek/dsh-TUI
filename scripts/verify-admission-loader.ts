@@ -7,7 +7,7 @@
  *
  * Run: node --import tsx/esm scripts/verify-admission-loader.ts
  */
-import { createRequire } from 'node:module'
+import { findPackageJSON } from 'node:module'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -191,31 +191,45 @@ check('armed: a fresh activation is admitted again (identity is per-activation)'
   readFileSync(armed.report, 'utf8').includes('verify-admitted-2:demo') || again.includes('verify-admitted-2:demo'))
 
 // ── armed + BARE specifier: the profile's real third-party row name ───────
-// The cases above use absolute paths; a profile row names a package, which takes
-// the `require.resolve('<pkg>/package.json')` branch. Resolve it alone, then via the Loader.
-writeFileSync(join(barePackageDir, 'dsh-plugin.json'), manifestOf('verify-bare'))
-writeFileSync(join(barePackageDir, 'main.js'), ENTRY_SOURCE)
-const requireFromLoadRoot = createRequire(LOAD_BASE_URL)
-let bareResolved = ''
-try {
-  bareResolved = requireFromLoadRoot.resolve(BARE_PACKAGE + '/package.json')
-} catch (error) {
-  bareResolved = 'FAIL:' + (error instanceof Error ? error.message : String(error))
+// The cases above use absolute paths; a profile row names a package, so the
+// package root comes from the package's own resolution. Two shapes: `main`
+// only, and the plugin template's `exports: { ".": … }` that does not export
+// `./package.json` (a `require.resolve('<pkg>/package.json')` throws there).
+const EXPORTS_PACKAGE = '@dsh-tui-verify/exports-only'
+const exportsPackageDir = join(loadRoot, 'node_modules', '@dsh-tui-verify', 'exports-only')
+mkdirSync(exportsPackageDir, { recursive: true })
+writeFileSync(join(exportsPackageDir, 'package.json'), JSON.stringify({
+  name: EXPORTS_PACKAGE,
+  version: '0.1.0',
+  type: 'module',
+  exports: { '.': './main.js' },
+}, null, 2))
+for (const [pkgDir, id] of [[barePackageDir, 'verify-bare'], [exportsPackageDir, 'verify-exports']] as const) {
+  writeFileSync(join(pkgDir, 'dsh-plugin.json'), manifestOf(id))
+  writeFileSync(join(pkgDir, 'main.js'), ENTRY_SOURCE)
 }
-check('bare specifier: require.resolve(<pkg>/package.json) resolves under the load root',
-  bareResolved === join(barePackageDir, 'package.json'), bareResolved)
-check('bare specifier: the manifest sits at the resolved package root',
-  bareResolved.startsWith(dir) && bareResolved === join(barePackageDir, 'package.json'))
+for (const [name, pkgDir] of [[BARE_PACKAGE, barePackageDir], [EXPORTS_PACKAGE, exportsPackageDir]] as const) {
+  let resolved = ''
+  try {
+    resolved = findPackageJSON(name, LOAD_BASE_URL) ?? ''
+  } catch (error) {
+    resolved = 'FAIL:' + (error instanceof Error ? error.message : String(error))
+  }
+  check(`bare specifier ${name}: the package root resolves under the load root`,
+    resolved === join(pkgDir, 'package.json'), resolved)
+}
 
-const bare = await mount(true, undefined, true, LOAD_BASE_URL)
-await bare.root.loader.create({ id: BARE_PACKAGE, name: BARE_PACKAGE, config: { report: bare.report } })
-await bare.root.loader.await()
-// 固定窗:pacing 裸包名 entry 的 import+apply 落盘，无可轮询完成条件
-await sleep(600)
-const bareIds = reportedIds(bare.report)
-check('bare specifier: the row applied and registered its panel', bareIds.length === 1, JSON.stringify(bareIds))
-check('bare specifier: the manifest id is found through the package-root walk',
-  bareIds.length === 1 && bareIds[0] === 'verify-bare:demo')
+for (const [name, manifestId] of [[BARE_PACKAGE, 'verify-bare'], [EXPORTS_PACKAGE, 'verify-exports']] as const) {
+  const bare = await mount(true, undefined, true, LOAD_BASE_URL)
+  await bare.root.loader.create({ id: name, name, config: { report: bare.report } })
+  await bare.root.loader.await()
+  // 固定窗:pacing 裸包名 entry 的 import+apply 落盘，无可轮询完成条件
+  await sleep(600)
+  const bareIds = reportedIds(bare.report)
+  check(`bare specifier ${name}: the row applied and registered its panel`, bareIds.length === 1, JSON.stringify(bareIds))
+  check(`bare specifier ${name}: the manifest id is found through the package-root walk`,
+    bareIds.length === 1 && bareIds[0] === `${manifestId}:demo`, JSON.stringify(bareIds))
+}
 
 // ── host-missing: bounded retry, then settle + loud diagnostic ────────────
 // issue #183: `tuiPluginHost` never mounts; unbounded, the flush timer would re-arm for ever.
