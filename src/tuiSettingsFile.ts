@@ -70,15 +70,15 @@ export function profilePatchPath(profile: string): string {
  * (the editable fields; deployment fields such as the provider route stay in
  * the profile). Undefined when the file or the row is missing or unreadable.
  * `!!js` expressions are not evaluated: such a field is skipped (a top-level
- * one is named in `expressions`, when given).
+ * one's source is recorded in `expressions`, when given).
  */
-export function readProfileTuiSettings(path: string, keys: readonly string[], expressions?: string[]): Record<string, unknown> | undefined {
+export function readProfileTuiSettings(path: string, keys: readonly string[], expressions?: Map<string, string>): Record<string, unknown> | undefined {
   let rows: unknown
   try {
     rows = parse(readFileSync(path, 'utf8'), {
       // `!!js` is the YAML core-schema prefix form of this tag. Never warn:
       // the TUI may be painting the terminal.
-      customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: () => SKIPPED }],
+      customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: (source: string) => new Skipped(source) }],
       logLevel: 'silent',
     })
   } catch {
@@ -87,7 +87,10 @@ export function readProfileTuiSettings(path: string, keys: readonly string[], ex
   if (!Array.isArray(rows)) return undefined
   const row: unknown = rows.find(entry => isRecord(entry) && entry.id === 'dsh-tui')
   if (!isRecord(row) || !isRecord(row.config)) return undefined
-  if (expressions !== undefined) expressions.push(...keys.filter(key => (row.config as Record<string, unknown>)[key] === SKIPPED))
+  for (const key of keys) {
+    const value = (row.config as Record<string, unknown>)[key]
+    if (value instanceof Skipped) expressions?.set(key, value.source)
+  }
   return pickKeys(row.config, keys)
 }
 
@@ -124,10 +127,10 @@ export function mergeSettingsLayers(under: Readonly<Record<string, unknown>>, ov
   return merged
 }
 
-/** `keys` of `config`, with `!!js` expressions (SKIPPED) dropped at any depth. */
+/** `keys` of `config`, with `!!js` expressions dropped at any depth. */
 function pickKeys(config: Readonly<Record<string, unknown>>, keys: readonly string[]): Record<string, unknown> {
   const strip = (value: unknown): unknown => {
-    if (value === SKIPPED) return undefined
+    if (value instanceof Skipped) return undefined
     if (!isRecord(value)) return value
     const out: Record<string, unknown> = {}
     for (const [key, entry] of Object.entries(value)) {
@@ -144,4 +147,7 @@ function pickKeys(config: Readonly<Record<string, unknown>>, keys: readonly stri
   return values
 }
 
-const SKIPPED = Symbol('skipped !!js expression')
+/** A `!!js` expression left unevaluated. */
+class Skipped {
+  constructor(readonly source: string) {}
+}

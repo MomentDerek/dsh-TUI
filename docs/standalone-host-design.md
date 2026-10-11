@@ -66,7 +66,7 @@ bin/dsh-tui.js（启动器：对齐、安全模式、Windows 解析）
 内核判定沿用 `resolveRememberedBackend`（handoff → 配置行 → `DSH_TUI_BACKEND` → `kernel.json`）；
 配置行的 `backend` 由入口直接解析 profile 补丁里 `dsh-tui` 行读取
 （`hostEntryRoute.configuredBackend`），不经 app-boot。写成 `!!js` 的 `backend` 只有 profile 的
-Loader 能求值：没有 handoff 时入口把这次启动交给 `dsh --profile`（`delegatesToProfile`），
+Loader 能求值（只转发 `DSH_TUI_BACKEND` 的写法与入口已排的环境变量分支等价，不算）：没有 handoff 时入口把这次启动交给 `dsh --profile`（`delegatesToProfile`），
 不自行求值，也不在 DSH 接管后再切内核（那会先开一个废 DSH 会话再重启）。
 
 依赖方向：界面 → ports；channel 核心 → agent + ports + **`ChannelHost` 接口**；Cordis 只出现在

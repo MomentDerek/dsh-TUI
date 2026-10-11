@@ -16,9 +16,14 @@ export function hostProfile(env: NodeJS.ProcessEnv = process.env): string {
   return name === undefined || name === '' ? 'dsh-tui' : name
 }
 
+/** An expression that only forwards DSH_TUI_BACKEND (the bundle row's own
+ *  form): the entry already ranks that variable, right below the row. */
+const ENV_BACKEND_EXPRESSION = /^\s*process\.env\.DSH_TUI_BACKEND\s*(?:(?:\|\||\?\?)\s*undefined\s*)?$/u
+
 /** The `backend` the profile patch's dsh-tui row pins, if any (the Config
  *  row a DSH composition would read). `'dynamic'`: a `!!js` expression only
- *  the profile's own Loader can evaluate. */
+ *  the profile's own Loader can evaluate; one that only forwards
+ *  DSH_TUI_BACKEND is no pin. */
 export function configuredBackend(profile: string, patchFile: string = profilePatchPath(profile)): KernelBackendId | 'dynamic' | undefined {
   // Most patches never mention it: skip the YAML parse then.
   try {
@@ -26,9 +31,11 @@ export function configuredBackend(profile: string, patchFile: string = profilePa
   } catch {
     return undefined
   }
-  const expressions: string[] = []
+  const expressions = new Map<string, string>()
   const backend = readProfileTuiSettings(patchFile, ['backend'], expressions)?.backend
-  return expressions.length > 0 ? 'dynamic' : parseBackendChoice(backend)
+  const expression = expressions.get('backend')
+  if (expression !== undefined) return ENV_BACKEND_EXPRESSION.test(expression) ? undefined : 'dynamic'
+  return parseBackendChoice(backend)
 }
 
 /** Whether the entry hands this launch to `dsh --profile`: a dynamic Config

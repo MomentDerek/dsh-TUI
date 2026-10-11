@@ -165,6 +165,11 @@ async function launch(name, { row, cwd = process.cwd(), env: extraEnv = {}, unse
     // (two launches would otherwise share `inject/.sock` and one record).
     assert.ok(servers().every(record => record.sessionId !== ''), `${name}: an injection record has no session id: ${JSON.stringify(servers())}`)
     assert.ok(!existsSync(join(root, '.dsh-tui', 'inject', '.sock')), `${name}: the placeholder bound an injection socket`)
+    // The launch stayed in the package's entry (not handed to `dsh --profile`).
+    if (process.platform === 'linux') {
+      const cmdline = readFileSync(`/proc/${servers()[0].pid}/cmdline`, 'utf8')
+      assert.ok(cmdline.includes('host-entry.js'), `${name}: the TUI does not run in the package entry: ${cmdline.replaceAll('\0', ' ')}`)
+    }
     // The endpoint appears with the adoption, which is also when an isolated
     // HOME's first-launch wizard opens over the prompt: skip it.
     // An Esc that lands before the wizard binds its keys is dropped: repeat.
@@ -188,7 +193,7 @@ async function launch(name, { row, cwd = process.cwd(), env: extraEnv = {}, unse
     assert.equal(exit.exitCode, 0, `${name}: /quit must exit successfully`)
     assert.doesNotMatch(output, /plugin tree failed to load|session\.events is not iterable|UnhandledPromiseRejection/)
     assert.ok(output.includes('\u001b[?25h'), `${name}: exit must restore the cursor`)
-    console.log(`PASS ${name}: UI mounted in ${bootMs}ms, /quit exited 0, cursor restored${detail === '' ? '' : `; ${detail}`}`)
+    console.log(`PASS ${name}: session adopted (injection endpoint up) in ${bootMs}ms, /quit exited 0, cursor restored${detail === '' ? '' : `; ${detail}`}`)
     passed = true
   } finally {
     const finalScreen = screen()

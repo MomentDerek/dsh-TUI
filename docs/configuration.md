@@ -89,7 +89,7 @@ Profile 启动按顺序叠加：
 | `terminalImages` | `true` | 允许在支持的终端预览图片；`false` 保留文字信息，跳过图片探测与预览解码。修改后重启生效 |
 | `preset` | 名册默认 `standard` | 新会话 Agent preset；优先级：`DSH_TUI_PRESET`（本次运行）> `/preset` 持久化选择 > 本字段（部署默认值）> 名册默认 |
 | `sessionId` | 未设置 | 要恢复的会话 ID，通常由 Windows `--resume` 启动器注入 |
-| `backend` | 未设置（`/kernel` 记住的选择，否则 `dsh`） | 会话后端：内置 `dsh`，或已装的后端（实验性的 `claude` / `codex`，以及插件后端；不区分大小写）。**未安装或未知的取值一律按 `dsh` 启动并告警**，不会崩。profile 行读取 `DSH_TUI_BACKEND`，`dsh-tui --backend <id>` 会设置它。profile 自己的补丁里若把它写成 `!!js` 表达式，本次启动改走 `dsh --profile`（只有 profile 的 Loader 能求值），`/kernel` 切换除外。见 [Claude 后端](claude-backend.md) |
+| `backend` | 未设置（`/kernel` 记住的选择，否则 `dsh`） | 会话后端：内置 `dsh`，或已装的后端（实验性的 `claude` / `codex`，以及插件后端；不区分大小写）。**未安装或未知的取值一律按 `dsh` 启动并告警**，不会崩。profile 行读取 `DSH_TUI_BACKEND`，`dsh-tui --backend <id>` 会设置它。profile 自己的补丁里若把它写成 `!!js` 表达式（只转发 `DSH_TUI_BACKEND` 的写法除外，例如随包行的 `process.env.DSH_TUI_BACKEND \|\| undefined`），本次启动改走 `dsh --profile`（只有 profile 的 Loader 能求值），`/kernel` 切换除外。见 [Claude 后端](claude-backend.md) |
 
 ### 优先级与强制关闭
 
