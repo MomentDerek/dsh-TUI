@@ -29,10 +29,13 @@ only for a genuinely new service.
 ## TUI configuration
 
 The `dsh-tui` section of `/settings` lives in the TUI's own
-`~/.dsh-tui/settings.json`, shared by the DSH and Claude kernels. When that file
+`~/.dsh-tui/settings.json`, shared by every kernel (DSH, Claude, Codex). When that file
 does not exist yet, the first launch imports the editable fields of the `dsh-tui`
 row's `config` from the active profile's `cordis.patch.yml` once (read only; the
 profile is not changed and `!!js` expressions are not imported), and never again.
+The `dsh-tui` section an older host kept in `~/.dsh/settings.yaml` is imported too:
+a file DSH has not moved yet wins over the patch row; one DSH already moved into the
+patch (renamed `settings.yaml.imported`) sits beneath it.
 After the import, those fields left in the profile patch only act as a static
 deployment layer under the DSH kernel (a fallback while the user layer is unset);
 remove them from the patch so both kernels see the same defaults. Other plugins'
@@ -93,7 +96,7 @@ A complete common override looks like this:
 | `terminalImages` | `true` | Allow previews in supported terminals; `false` keeps text metadata and skips image probing and preview decoding. Restart to apply changes |
 | `preset` | roster default `standard` | Agent preset for new sessions; precedence: `DSH_TUI_PRESET` (this run) > the persisted `/preset` choice > this field (deployment default) > the roster default |
 | `sessionId` | unset | Session to resume, normally injected by the Windows `--resume` launcher |
-| `backend` | unset (the backend `/kernel` remembers, else `dsh`) | Session backend: the built-in `dsh`, or an installed backend (the experimental `claude` / `codex`, plus plugin backends; case-insensitive). **An unknown or uninstalled value starts on `dsh` with a warning**, never a crash. The profile row reads `DSH_TUI_BACKEND`, which `dsh-tui --backend <id>` sets. See [Claude backend](claude-backend.en.md) |
+| `backend` | unset (the backend `/kernel` remembers, else `dsh`) | Session backend: the built-in `dsh`, or an installed backend (the experimental `claude` / `codex`, plus plugin backends; case-insensitive). **An unknown or uninstalled value starts on `dsh` with a warning**, never a crash. The profile row reads `DSH_TUI_BACKEND`, which `dsh-tui --backend <id>` sets. When the profile's own patch writes it as a `!!js` expression (other than one that only forwards `DSH_TUI_BACKEND`, such as the bundled row's `process.env.DSH_TUI_BACKEND \|\| undefined`), the launch goes through `dsh --profile` (only the profile's Loader evaluates it), except for a `/kernel` switch. See [Claude backend](claude-backend.en.md) |
 
 ### Precedence and force-off
 
