@@ -9,7 +9,8 @@
  */
 import './lib/fake-home.mjs'
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import fs, { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
@@ -182,5 +183,19 @@ check('a concurrent import does not replace it', !createTuiSettings({ version: 1
   && (JSON.parse(readFileSync(raced, 'utf8')) as { values: { lang?: string } }).values.lang === 'en')
 const racedService = createTuiSettingsService({ ns: 'dsh-tui', file: raced, profile: 'two-rows', keys })
 check('… and the later launch adopts the existing document', (racedService.get('dsh-tui') as { lang?: string }).lang === 'en')
+// A filesystem without hard links: the fallback must not replace either.
+const realLink = fs.linkSync
+fs.linkSync = () => { throw Object.assign(new Error('EPERM: operation not permitted, link'), { code: 'EPERM' }) }
+syncBuiltinESMExports()
+try {
+  const noLinks = join(root, 'no-links', 'settings.json')
+  check('without hard links the first import still creates the document', createTuiSettings({ version: 1, values: { lang: 'en' } }, noLinks)
+    && (JSON.parse(readFileSync(noLinks, 'utf8')) as { values: { lang?: string } }).values.lang === 'en')
+  check('… and a concurrent import still does not replace it', !createTuiSettings({ version: 1, values: { lang: 'zh' } }, noLinks)
+    && (JSON.parse(readFileSync(noLinks, 'utf8')) as { values: { lang?: string } }).values.lang === 'en')
+} finally {
+  fs.linkSync = realLink
+  syncBuiltinESMExports()
+}
 
 console.log(`\nverify-tui-settings: ${passed} checks passed`)

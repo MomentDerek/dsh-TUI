@@ -64,18 +64,26 @@ export function writeTuiSettings(document: TuiSettingsDocument, file: string = T
  * Write the document only when there is none yet; false when another process
  * created it first. The complete file appears at once (a hard link of the
  * temporary, which fails on an existing name); a filesystem without hard links
- * falls back to the plain replace. Throws when it cannot be written.
+ * falls back to an exclusive create, which never replaces a document either.
+ * Throws when it cannot be written.
  */
 export function createTuiSettings(document: TuiSettingsDocument, file: string = TUI_SETTINGS_FILE): boolean {
   const temporary = join(dirname(file), `.${basename(file)}.${process.pid}.${Date.now()}.${temporarySequence++}.tmp`)
+  const text = `${JSON.stringify(document, null, 2)}\n`
+  const exists = (error: unknown): boolean => (error as NodeJS.ErrnoException).code === 'EEXIST'
   try {
     mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+    writeFileSync(temporary, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
     try {
       linkSync(temporary, file)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-      renameSync(temporary, file)
+      if (exists(error)) return false
+      try {
+        writeFileSync(file, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      } catch (fallbackError) {
+        if (exists(fallbackError)) return false
+        throw fallbackError
+      }
     }
     return true
   } finally {
