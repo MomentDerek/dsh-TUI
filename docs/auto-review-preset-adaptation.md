@@ -189,7 +189,7 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
 5. **picker 二阶段确认 + EXP**
    - `PermissionsPicker` 的 option 行对 `auto` 追加 `EXP` 上标（`Select` 的 `label` 是 `ReactNode`，用 dim/`warning` 色 `Text` 拼接即可，宽度走现有组件）。
    - Chat 的 `overlay.kind === 'permission'` 加状态 `confirm?: boolean`：Enter 选中 `auto`（且当前不是 `auto`）时进入确认态而非直接 `runPermissionCommand`；确认态渲染风险说明 + 「确认 / 取消」，Enter 确认后才 `runPermissionCommand(' auto')`，Esc 回到列表、不改权限。复用 `migrate-confirm` / `kind: 'confirm'` 的既有按键与 `Pane` 样式，不另造对话框组件。
-   - 风险文案（i18n，zh/en 各一）要点：仅当前会话、不会成为新会话默认；无文件沙箱；每次工具调用额外一次模型请求；medium 风险需你确认、high 风险永远拒绝；审查失败即不执行。
+   - 风险文案（i18n，zh/en 各一）要点：仅当前会话、不会成为新会话默认；无文件沙箱；每次工具调用额外一次模型请求；审查放行（low，或已明确授权的 medium）直接执行；被拒调用（含 high）在主会话转为审批由用户决定、在子代理中终局拒绝；审查失败即不执行。
    - 手打 `/permission auto`：走 `mounted` 分支直达上游 handler，与 Web 一致不拦截，文档写明。
    - 补全：`/permission` 补全对 `auto` 的 description 加 `EXP` 前缀即可，不做确认。
 

@@ -716,7 +716,7 @@ const dict = {
   'permission-auto-confirm-session': { zh: '仅对当前会话生效，不会成为新会话的默认', en: 'Applies to this session only; never becomes the default for new sessions' },
   'permission-auto-confirm-sandbox': { zh: '无文件沙箱：放行的调用拥有完全访问权限', en: 'No file sandbox: allowed calls run with full access' },
   'permission-auto-confirm-cost': { zh: '每次工具调用都会额外发起一次模型审查请求', en: 'Every tool call costs one extra model review request' },
-  'permission-auto-confirm-risk': { zh: '中风险调用需你确认，高风险调用一律拒绝，审查失败即不执行', en: 'Medium-risk calls need your confirmation, high-risk calls are always denied, and a failed review never runs' },
+  'permission-auto-confirm-risk': { zh: '审查放行的调用（含你已明确授权的中风险操作）直接执行；被拒的调用（含高风险）转为审批由你决定，子代理中直接拒绝；审查失败即不执行', en: 'Calls the review allows (including medium-risk ones you explicitly authorized) run without asking; denied calls, high-risk included, come to you as an approval, or are denied outright in subagents; a failed review never runs' },
   'permission-auto-confirm-actions': { zh: '**Enter** 启用 · Esc 返回', en: '**Enter** to enable · Esc to go back' },
   'permission-auto-unavailable': { zh: '自动授权审查已不可用', en: 'Auto review is no longer available' },
   'tool-error-auto-review-denied': { zh: '自动授权审查拒绝，未执行', en: 'Auto review denied; not executed' },
