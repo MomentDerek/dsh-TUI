@@ -283,7 +283,9 @@ export function createPermissionModeActions(
       const events = snapshotLiveSessionEvents(capture.agent.session)
       const index = derivePermissionModeIndex(sessionModes, events)
       const autoConfirmed = autoPresetConfirmed(events)
-      for (let step = 1; step < sessionModes.length; step++) {
+      // One full revolution, ending on the starting entry: a single-mode
+      // cycle re-applies it (the session's atoms may have drifted from it).
+      for (let step = 1; step <= sessionModes.length; step++) {
         const next = sessionModes[(index + step) % sessionModes.length]!
         if (next.permission === PERMISSION_PRESET_AUTO && !autoConfirmed) continue
         await applyMode(next, capture)

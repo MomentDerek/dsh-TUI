@@ -544,6 +544,33 @@ const presetEvents = (events, from = 0) => events.slice(from)
 }
 
 {
+  // A single configured mode with no runtime extras: Shift+Tab still
+  // re-applies it when the session's atoms drifted (the skip loop must cover
+  // the starting entry).
+  clearPref()
+  const env = makeEnv({
+    history: [
+      { type: 'sandbox/mode', data: { mode: 'danger-full-access' } },
+      { type: 'approval/policy', data: { policy: 'never' } },
+    ],
+  })
+  env.registry.names = ['read-only', 'workspace-write']
+  const channel = createChannel(env.ctx, env.agent, {
+    ...baseOptions,
+    modes: [{ id: 'ro', sandbox: 'read-only', approval: 'ask' }],
+  })
+  await settle()
+  const before = env.events.length
+  await channel.cycleMode()
+  await settle()
+  const after = env.events.slice(before)
+  check('cycle: a single-mode cycle re-applies its atoms',
+    after.some(event => event.type === 'sandbox/mode' && event.data?.mode === 'read-only')
+      && after.some(event => event.type === 'approval/policy' && event.data?.policy === 'ask'),
+    JSON.stringify(after.map(event => [event.type, event.data])))
+}
+
+{
   clearPref()
   const env = makeEnv({ history: AUTO_SEED })
   const channel = createChannel(env.ctx, env.agent, baseOptions)
