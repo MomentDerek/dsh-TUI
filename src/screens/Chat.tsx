@@ -127,6 +127,7 @@ import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
 import type { KernelBackendId } from '../kernelPrefs.js'
 import { modeDisplayName } from '../sessionModes.js'
+import { PERMISSION_PRESET_AUTO } from '../permissionPresetLabels.js'
 import { PlanPicker } from '../components/PlanPicker.js'
 import { LangPicker } from '../components/LangPicker.js'
 import { ThemePicker, getThemeOptions } from '../components/ThemePicker.js'
@@ -255,6 +256,13 @@ function cleanCommandError(error: unknown): string {
   } catch {
     return ''
   }
+}
+
+/** Picking the experimental `auto` preset from the picker asks first, unless
+ *  the session already sits on it. A typed `/permission auto` does not. */
+function needsAutoConfirm(snapshot: PermissionPresetSnapshot, value: string | undefined): boolean {
+  return value === PERMISSION_PRESET_AUTO
+    && !(snapshot.current?.kind === 'preset' && snapshot.current.value === PERMISSION_PRESET_AUTO)
 }
 
 function clonePermissionPresetSnapshot(snapshot: PermissionPresetSnapshot): PermissionPresetSnapshot {
@@ -676,6 +684,40 @@ export function Chat({
       permissionOverlayFocusRef.current = null
     }
   }, [overlay])
+  // The preset registry can change while the picker is open (the
+  // experimental `auto` preset registers or leaves live). Reopen on the live
+  // roster, keeping the focused preset; a confirmation whose preset left
+  // drops back to the list.
+  React.useEffect(() => {
+    if (overlay.kind !== 'permission') return
+    let live: PermissionPresetSnapshot
+    try {
+      live = channel.permissionPresets()
+    } catch {
+      return
+    }
+    const values = (snapshot: PermissionPresetSnapshot) => snapshot.options.map(option => option.value).join('\n')
+    if (values(live) === values(overlay.snapshot)) return
+    if (live.availability === 'unavailable' || live.options.length === 0) {
+      dispatchOverlay({ type: 'close-if', kind: 'permission' })
+      return
+    }
+    const focusIndex = permissionOverlayFocusRef.current?.overlay === overlay
+      ? permissionOverlayFocusRef.current.index
+      : overlay.index
+    const focused = overlay.confirm === true ? PERMISSION_PRESET_AUTO : overlay.snapshot.options[focusIndex]?.value
+    const liveCurrent = live.current?.kind === 'preset' ? live.current.value : undefined
+    const index = [focused, liveCurrent]
+      .map(value => live.options.findIndex(option => option.value === value))
+      .find(found => found >= 0) ?? Math.min(1, live.options.length - 1)
+    const confirm = overlay.confirm === true && live.options.some(option => option.value === PERMISSION_PRESET_AUTO)
+    if (overlay.confirm === true && !confirm) channel.notify(t('permission-auto-unavailable'), { color: 'warning' })
+    dispatchOverlay({
+      type: 'open-if',
+      overlay: { kind: 'permission', index, snapshot: clonePermissionPresetSnapshot(live), ...(confirm ? { confirm } : {}) },
+      when: ['permission'],
+    })
+  })
   const [models, setModels] = React.useState<readonly LlmModelInfo[]>([])
   const [modelsLoading, setModelsLoading] = React.useState(false)
   const modelCatalogGeneration = React.useRef(0)
@@ -4896,6 +4938,16 @@ export function Chat({
       }
       return
     }
+    if (overlay.kind === 'permission' && overlay.confirm === true) {
+      if (plainReturn) {
+        permissionOverlayFocusRef.current = null
+        dispatchOverlay({ type: 'close' })
+        void runPermissionCommand(` ${PERMISSION_PRESET_AUTO}`)
+      } else if (key.escape) {
+        dispatchOverlay({ type: 'open', overlay: { ...overlay, confirm: false } })
+      }
+      return
+    }
     if (overlay.kind === 'permission') {
       if (key.upArrow || key.downArrow) {
         const currentIndex = permissionOverlayFocusRef.current?.overlay === overlay
@@ -4910,6 +4962,10 @@ export function Chat({
           : overlay.index
         const option = overlay.snapshot.options[currentIndex]
         permissionOverlayFocusRef.current = null
+        if (needsAutoConfirm(overlay.snapshot, option?.value)) {
+          dispatchOverlay({ type: 'open', overlay: { ...overlay, index: currentIndex, confirm: true } })
+          return
+        }
         dispatchOverlay({ type: 'close' })
         if (option !== undefined) void runPermissionCommand(` ${option.value}`)
       } else if (key.escape) {
@@ -5692,9 +5748,14 @@ export function Chat({
                 focusIndex={overlay.index}
                 currentValue={overlay.snapshot.current?.value}
                 cwd={channel.cwd}
+                confirming={overlay.confirm === true}
                 onPick={(index) => {
                   if (approvalSnapshot !== null || questionSnapshot !== null || dialogSnapshot !== null) return
                   const option = overlay.snapshot.options[index]
+                  if (needsAutoConfirm(overlay.snapshot, option?.value)) {
+                    dispatchOverlay({ type: 'open', overlay: { ...overlay, index, confirm: true } })
+                    return
+                  }
                   dispatchOverlay({ type: 'close' })
                   if (option !== undefined) void runPermissionCommand(` ${option.value}`)
                 }}

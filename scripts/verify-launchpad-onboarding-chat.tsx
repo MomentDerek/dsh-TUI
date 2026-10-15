@@ -606,6 +606,47 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
       && chat.screen().includes('说点什么')), JSON.stringify(chat.calls))
   await chat.unmount()
 }
+{
+  // 实验性 auto 预设：列表带 EXP；选中先出风险确认，Esc 回列表不切换，
+  // 确认后才走 /permission auto。
+  const chat = await mountChat({ launchpadOnBoot: true }, {
+    permissionPresets(this: { permissionCurrent: string }) {
+      return {
+        availability: 'runtime',
+        options: [
+          { value: 'default', name: 'default' },
+          { value: 'strict', name: 'strict' },
+          { value: 'auto', name: 'auto' },
+        ],
+        current: { value: this.permissionCurrent, name: this.permissionCurrent, kind: 'preset' },
+      }
+    },
+  })
+  await settled(() => chat.screen().includes('说点什么'))
+  for (let index = 0; index < 4; index += 1) await chat.send('\u001b[B') // 第四段 = 权限
+  await chat.send('\r')
+  check('J4 auto 在 /permission 选择器里显示本地化名与 EXP',
+    await settled(() => chat.screen().includes('自动授权审查') && chat.screen().includes('EXP')), chat.screen())
+  await chat.send('\u001b[B')
+  await chat.send('\u001b[B') // ↓↓ 到 auto
+  await chat.send('\r')
+  check('J4 选中 auto 先出风险确认、不切换',
+    await settled(() => chat.screen().includes('启用自动授权审查（实验性）？'))
+      && !chat.calls.includes('permission:auto'), JSON.stringify(chat.calls))
+  await chat.send('\u001b')
+  check('J4 确认态 Esc 回到列表、不切换',
+    await settled(() => chat.screen().includes('EXP') && !chat.screen().includes('启用自动授权审查（实验性）？'))
+      && !chat.calls.includes('permission:auto'), JSON.stringify(chat.calls))
+  await chat.send('\r')
+  check('J4 再次选中 auto 重新确认',
+    await settled(() => chat.screen().includes('启用自动授权审查（实验性）？')), chat.screen())
+  // Chat 对相邻 80ms 内的模态 Enter 去抖（一次按键不连穿两层），确认前等过窗口。
+  await new Promise(resolve => setTimeout(resolve, 120))
+  await chat.send('\r')
+  check('J4 确认后才切到 auto',
+    await settled(() => chat.calls.includes('permission:auto')), JSON.stringify(chat.calls))
+  await chat.unmount()
+}
 
 // ── E. 记账：skipped 不写、done 才写 ──────────────────────────────────────
 {

@@ -29,6 +29,7 @@ import {
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { snapshotLiveSessionEvents } from './compat/liveSession.js'
+import { getLang } from '../i18n.js'
 import {
   DEFAULT_PERMISSION_OPTIONS,
   type PermissionPanelDecision,
@@ -125,6 +126,26 @@ const COMMAND_CLIP = 500
  * @returns The `command` argument when present, else the raw arguments
  *   string (clipped), else undefined when the call cannot be found.
  */
+/**
+ * The ask's reason in the UI language. Requests may carry a localized
+ * `displayReason: { en, zh }` next to the English audit `reason` (DSH's
+ * auto-review asks do); older request types lack the field, so it is read
+ * structurally.
+ * @param req - The pending approval request.
+ * @returns The localized reason, else `req.reason`.
+ */
+function reasonOf(req: ApprovalRequest): string | undefined {
+  const display = (req as { displayReason?: unknown }).displayReason
+  if (display !== null && typeof display === 'object') {
+    const byLang = display as Record<string, unknown>
+    for (const lang of [getLang(), 'en']) {
+      const text = byLang[lang]
+      if (typeof text === 'string' && text.trim() !== '') return text
+    }
+  }
+  return req.reason
+}
+
 function commandOf(req: ApprovalRequest): string | undefined {
   if (req.callId === undefined) return undefined
   const events = snapshotLiveSessionEvents(req.agent.session)
@@ -402,6 +423,7 @@ export class ApprovalStore implements PermissionPanelSource {
     assertCapabilityShadowPolicy('host.presentation.approve', this.runtime.mode, this.runtime.slices)
     return new Promise<ApprovalOutcome>(resolve => {
       const command = commandOf(req)
+      const reason = reasonOf(req)
       // Source badge: park() is reached through the approval/request
       // waterfall, which any in-process plugin can dispatch — the agent-id
       // gate in plugin.ts says whose SESSION it names, not that a live tool
@@ -421,7 +443,7 @@ export class ApprovalStore implements PermissionPanelSource {
         snapshot: {
           agentId: String(req.agent.id),
           toolName: req.toolName,
-          ...(req.reason !== undefined ? { reason: req.reason } : {}),
+          ...(reason !== undefined ? { reason } : {}),
           ...(command !== undefined ? { command } : {}),
           ...(external ? { external: true } : {}),
         },

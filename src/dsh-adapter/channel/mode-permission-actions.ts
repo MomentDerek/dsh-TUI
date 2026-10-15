@@ -4,6 +4,7 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { assertShadowPolicy } from '../../adapter/kernel/runtime.js'
 import { t } from '../../i18n.js'
 import { readPermissionPref, writePermissionPref } from '../../permissionPrefs.js'
+import { PERMISSION_PRESET_AUTO } from '../../permissionPresetLabels.js'
 import { modeDisplayName, type SessionModeSpec } from '../../sessionModes.js'
 import { snapshotLiveSessionEvents } from '../compat/liveSession.js'
 import type { DshChannelBinding } from './binding.js'
@@ -85,6 +86,28 @@ function derivePermissionModeIndex(
   return index >= 0 ? index : 0
 }
 
+/** The durable identity held before the latest `permission/preset` event. */
+function previousPermissionPreset(events: readonly SessionEvent[]): string | undefined {
+  let previous: string | undefined
+  let latest: string | undefined
+  for (const event of events) {
+    if ((event as { type: string }).type !== 'permission/preset') continue
+    previous = latest
+    const preset = (event.data as unknown as { preset?: unknown }).preset
+    latest = typeof preset === 'string' ? preset : undefined
+  }
+  return previous
+}
+
+/** Whether this session's log ever selected the experimental `auto` preset
+ *  (picker confirmation, typed command, or a resumed Auto session). Only then
+ *  may Shift+Tab land on it: a key press cannot await the risk confirmation. */
+function autoPresetConfirmed(events: readonly SessionEvent[]): boolean {
+  return events.some(event =>
+    (event as { type: string }).type === 'permission/preset'
+    && (event.data as unknown as { preset?: unknown }).preset === PERMISSION_PRESET_AUTO)
+}
+
 /**
  * Permission-aware session-mode actions: main's mode transition (plan
  * exclusivity, atom application, plan-exit restore) composed with the durable
@@ -115,6 +138,7 @@ export function createPermissionModeActions(
   onSessionEvent(session: unknown, event: unknown): void
   applyRememberedPermission(): Promise<void>
   runPermissionPreset(name: string): Promise<boolean>
+  trackUserPermissionSwitch<T>(run: () => Promise<T>): Promise<T>
   permission: PermissionIdentity
 } {
   const { owner, binding, sessionModes, roster, commandService, executeRegistryCommand, notify } = deps
@@ -144,12 +168,27 @@ export function createPermissionModeActions(
   /** Sessions the remembered permission was already seeded into (or decided
    *  against): one attempt per session object, rebinds stay quiet. */
   const permissionPrefSeeded = new WeakSet<object>()
+  /** Permission switches this TUI is driving right now (the `/permission`
+   *  command or the service write path). A switch AWAY from `auto` is learned
+   *  only inside one: the auto-review plugin migrates every Auto session to
+   *  danger-full-access when it unloads, and that migration must not become
+   *  the next session's default. */
+  let userPermissionSwitches = 0
+  const trackUserPermissionSwitch = async <T>(run: () => Promise<T>): Promise<T> => {
+    userPermissionSwitches += 1
+    try {
+      return await run()
+    } finally {
+      userPermissionSwitches -= 1
+    }
+  }
 
   /** Remember one durable permission identity for the next session (see
    *  permissionPrefs.ts). Undefined and custom identities carry no preset
-   *  to remember; a failed write is a debug line, never user-facing. */
+   *  to remember, and `auto` is session-only by contract; a failed write is a
+   *  debug line, never user-facing. */
   const persistPermissionPref = (value: string | undefined): void => {
-    if (value === undefined || value === PERMISSION_PRESET_CUSTOM) return
+    if (value === undefined || value === PERMISSION_PRESET_CUSTOM || value === PERMISSION_PRESET_AUTO) return
     if (!writePermissionPref(value)) {
       ctx.logger.debug(`dsh-tui: permission preference write failed for "${value}"`)
     }
@@ -234,14 +273,22 @@ export function createPermissionModeActions(
   }
 
   /** Shift+Tab: advance from the mode DERIVED from the session log (never a
-   *  stored index), so manual `/plan` use can never desync the cycle. Never
-   *  rejects — same fail-soft contract as {@link applyMode}. */
+   *  stored index), so manual `/plan` use can never desync the cycle; `auto`
+   *  is skipped unless {@link autoPresetConfirmed}. Never rejects — same
+   *  fail-soft contract as {@link applyMode}. */
   const cycleMode = async (): Promise<void> => {
     try {
       const capture = binding.capture()
       if (!owner.current() || !binding.isCurrent(capture)) return
-      const index = derivePermissionModeIndex(sessionModes, snapshotLiveSessionEvents(capture.agent.session))
-      await applyMode(sessionModes[(index + 1) % sessionModes.length]!, capture)
+      const events = snapshotLiveSessionEvents(capture.agent.session)
+      const index = derivePermissionModeIndex(sessionModes, events)
+      const autoConfirmed = autoPresetConfirmed(events)
+      for (let step = 1; step < sessionModes.length; step++) {
+        const next = sessionModes[(index + step) % sessionModes.length]!
+        if (next.permission === PERMISSION_PRESET_AUTO && !autoConfirmed) continue
+        await applyMode(next, capture)
+        return
+      }
     } catch (error) {
       reportModeSwitchFailure(ctx, notify, refreshMode, error)
     }
@@ -260,9 +307,16 @@ export function createPermissionModeActions(
       // registry) — except the two plan-transition shapes: the canonical
       // preset a plan entry reseats to (in flight below) and any identity
       // switched to while plan is active (the exit restore re-seats the
-      // pre-plan one, and that restore event lands here again).
-      if (!planEntryInFlight && !foldPlanActive(snapshotLiveSessionEvents(subject))) {
-        persistPermissionPref(foldPermissionPreset(snapshotLiveSessionEvents(subject)))
+      // pre-plan one, and that restore event lands here again). Leaving
+      // `auto` is learned only when this TUI drove the switch (see
+      // trackUserPermissionSwitch); explicit mode switches persist on their own.
+      const events = snapshotLiveSessionEvents(subject)
+      if (
+        !planEntryInFlight
+        && !foldPlanActive(events)
+        && (userPermissionSwitches > 0 || previousPermissionPreset(events) !== PERMISSION_PRESET_AUTO)
+      ) {
+        persistPermissionPref(foldPermissionPreset(events))
       }
     }
     if (type !== 'plan/mode' || (sessionEvent.data as unknown as { active?: boolean }).active !== false) return
@@ -324,7 +378,9 @@ export function createPermissionModeActions(
       const pinned = process.env.DSH_PERMISSION_MODE
       if (pinned !== undefined && pinned !== '') return
       const pref = readPermissionPref()
-      if (pref === undefined) return
+      // `auto` is session-only; a preference written before that rule never
+      // seeds a fresh session into it.
+      if (pref === undefined || pref === PERMISSION_PRESET_AUTO) return
       const agent = binding.agent
       const session = agent.session
       if (permissionPrefSeeded.has(session)) return
@@ -368,7 +424,8 @@ export function createPermissionModeActions(
     applyMode,
     onSessionEvent,
     applyRememberedPermission,
-    runPermissionPreset: name => permission.runPermissionPreset(name),
+    runPermissionPreset: name => trackUserPermissionSwitch(() => permission.runPermissionPreset(name)),
+    trackUserPermissionSwitch,
     permission,
   }
 }

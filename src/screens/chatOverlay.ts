@@ -66,7 +66,8 @@ export type ChatOverlay =
   | { kind: 'effort'; index: number }
   | { kind: 'preset'; index: number }
   | { kind: 'theme'; index: number }
-  | { kind: 'permission'; index: number; snapshot: PermissionPresetSnapshot }
+  /** `confirm`: the `auto` risk confirmation replaces the list. */
+  | { kind: 'permission'; index: number; snapshot: PermissionPresetSnapshot; confirm?: boolean }
   /** /permission over a backend's native permission modes (the typed
    * modes capability; a DSH session answers none and keeps the preset
    * variant above). The frozen mode list and the live current id ride the

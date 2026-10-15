@@ -1,7 +1,7 @@
 # dsh-TUI 适配 DSH Auto review 权限预设：评估与 issue 正文
 
 - 日期：2026-10-13
-- 状态：设计稿 + issue 正文（#1544，2026-10-15 修订）+ 实施方案（§5），未实现
+- 状态：设计稿 + issue 正文（#1544，2026-10-15 修订）+ 实施方案（§5）；已在 `feat/auto-review-preset-adaptation` 实现（§5 已按实现更新）
 - 关联：`ccch1mneyyy/dsh-TUI` #1544（已开）
 - 上游（核对版本线，非引入版本）：`@deepseek-ai/dsh-experimental-auto-review@0.2.0-rc.2`、`@deepseek-ai/dsh-permission-presets@0.2.0-rc.2`
 - 范围：`src/dsh-adapter/channel/`（`mode-roster.ts`、`permissions.ts`、`mode-permission-actions.ts`、`command-completions.ts`、`extensions.ts`、`transcript.ts`）、`src/dsh-adapter/approvals.ts`、`src/dsh-adapter/subagents.ts`、`src/components/PermissionsPicker.tsx`、`src/screens/Chat.tsx`、`src/sessionModes.ts`、`src/i18n.ts`
@@ -163,9 +163,8 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
 **PR 1：数据面（A + B + D + F）**
 
 1. **共享常量与标签辅助（B）**
-   - `src/dsh-adapter/channel/permissions.ts`：加 `PERMISSION_PRESET_AUTO = 'auto'`，与 `PERMISSION_PRESET_CUSTOM` 同式。
-   - 新增后端中立的 `permissionPresetLabel(option)` / `permissionPresetDescription(option)`（放 `src/sessionModes.ts` 旁或新文件 `src/permissionPresetLabels.ts`，只 import `i18n`，不碰 `dsh-adapter/`，过 `verify:boundary`）：三个内置名 + `auto` 映射到 i18n key，其余回落 `option.name` / `option.description ?? option.name`。`auto` 只在 `option.name === 'auto'`（registry 未给标签）时本地化。
-   - 三处收敛到该辅助：`PermissionsPicker.tsx` 的三元链、`command-completions.ts` 的 `descriptionKey` 三元链、`permissionModeSpec` 的 `label`（否则 Shift+Tab 指示器/状态栏显示裸 `auto`）。注意 `permissionModeSpec` 在构造时取标签，切语言后需随 `refreshMode` 重建——roster 每次 rebuild 都重新调用它，满足。
+   - 新文件 `src/permissionPresetLabels.ts`（后端中立，只 import `i18n`，UI 可直接 import，过 `verify:boundary`）：`PERMISSION_PRESET_AUTO = 'auto'` 与 `permissionPresetLabel(option)` / `permissionPresetDescription(option)`，三个内置名 + `auto` 映射到 i18n key，其余回落 `option.name` / `option.description ?? option.name`。`auto` 只在 `option.name === 'auto'`（registry 未给标签）时本地化。
+   - 收敛到该辅助：`PermissionsPicker.tsx` 的三元链、`command-completions.ts` 的 `descriptionKey` 三元链；Shift+Tab 指示器在 `modeDisplayName` 渲染时取本地化名（`/lang` 即时生效），`permissionModeSpec` 的 `label` 仍是 registry 原名。
    - `src/i18n.ts` 新增：`permission-preset-auto`（zh「自动授权审查」/ en「Auto review」）、`permission-preset-auto-desc`（zh「模型在每次工具调用前审查授权；无文件沙箱，仅当前会话」/ en 对应）、`permission-preset-exp-tag`（`EXP`）。
 2. **catalog-changed 订阅（A）**
    - `src/dsh-adapter/channel/extensions.ts:767`，与 `commands/change` 同一 `owner.own(ctx.on(...))` 漏斗：
@@ -175,7 +174,8 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
    - 打开中的 `/permission` overlay 持有 `clonePermissionPresetSnapshot` 副本：Chat 侧在 channel 的 emit 后若 overlay 为 `permission` 且 live 名册的 value 集合变化，就用新快照重开（保持焦点 value，找不到回落 current）。确认阶段（见 PR 2）中 `auto` 消失则直接关闭确认并提示。
 3. **不记忆 Auto（D + F）**，全部收在 `mode-permission-actions.ts`：
    - `persistPermissionPref`：`value === PERMISSION_PRESET_AUTO` 时跳过（唯一写入点，三处调用都经它）。
-   - F：`onSessionEvent` 的观察者路径在「上一个已知身份是 `auto`」时不学新身份。实现为每会话记录上次 fold 到的身份（`WeakMap<session, string | undefined>`），在 `permission/preset` 事件里比对。TUI 自己发起的切换（`applyMode` 带 `spec.permission` 或静态 mode、`runPermissionPreset`）在调用点显式 `persistPermissionPref(target)`，因此不受此屏蔽影响——需要给 `runPermissionPreset` 包一层在成功后持久化（现在它依赖观察者路径）。
+   - F：`onSessionEvent` 的观察者路径在「上一个身份是 `auto`」时只学 TUI 发起的切换。picker 与手打 `/permission` 走 external 命令而非 `modeActions`，因此 `extensions.ts` 把 `runExternalCommand(Outcome)('permission', …)` 与 `runPermissionPreset` 包进 `trackUserPermissionSwitch`（计数器），计数器非零时才学习「离开 auto」；静态模式切换仍在 `applyMode` 内显式持久化。上游卸载迁移发生在 `auto` 仍注册时，不能靠 names 判断。
+   - `permissionBundlesFromService` 跳过 `auto`：否则配置了 `danger-full-access + ask` 静态模式时，Shift+Tab 会把它 canonicalize 成 `auto`，绕过确认。
    - `applyRememberedPermission`：`pref === PERMISSION_PRESET_AUTO` 时视同不可用（旧版本已写进偏好文件的 `auto` 不得把新会话悄悄 seed 成 Auto；Auto live 时 roster 校验会放行它，所以必须显式拦）。
 
 **PR 2：交互面（C）**
@@ -188,7 +188,7 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
    - 理由：`cycleMode` 是不能 await 的键盘入口，不适合插确认框；首次启用必须走 picker（或手打命令），之后可以像其它模式一样快速切换。
 5. **picker 二阶段确认 + EXP**
    - `PermissionsPicker` 的 option 行对 `auto` 追加 `EXP` 上标（`Select` 的 `label` 是 `ReactNode`，用 dim/`warning` 色 `Text` 拼接即可，宽度走现有组件）。
-   - Chat 的 `overlay.kind === 'permission'` 加状态 `confirm?: string`：Enter 选中 `auto`（且当前不是 `auto`）时进入确认态而非直接 `runPermissionCommand`；确认态渲染风险说明 + 「确认 / 取消」，Enter 确认后才 `runPermissionCommand(' auto')`，Esc 回到列表、不改权限。复用 `migrate-confirm` / `kind: 'confirm'` 的既有按键与 `Pane` 样式，不另造对话框组件。
+   - Chat 的 `overlay.kind === 'permission'` 加状态 `confirm?: boolean`：Enter 选中 `auto`（且当前不是 `auto`）时进入确认态而非直接 `runPermissionCommand`；确认态渲染风险说明 + 「确认 / 取消」，Enter 确认后才 `runPermissionCommand(' auto')`，Esc 回到列表、不改权限。复用 `migrate-confirm` / `kind: 'confirm'` 的既有按键与 `Pane` 样式，不另造对话框组件。
    - 风险文案（i18n，zh/en 各一）要点：仅当前会话、不会成为新会话默认；无文件沙箱；每次工具调用额外一次模型请求；medium 风险需你确认、high 风险永远拒绝；审查失败即不执行。
    - 手打 `/permission auto`：走 `mounted` 分支直达上游 handler，与 Web 一致不拦截，文档写明。
    - 补全：`/permission` 补全对 `auto` 的 description 加 `EXP` 前缀即可，不做确认。

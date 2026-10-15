@@ -17,6 +17,11 @@
  *      still seeds, a session that ran a turn or switched to another
  *      identity does not, and the DSH_PERMISSION_MODE launch pin outranks
  *      the file.
+ *   E. DSH's experimental `auto` preset — never remembered, never seeded
+ *      from an old file, its unload migration to danger-full-access is not
+ *      learned while a TUI-driven switch away from it is, Shift+Tab skips
+ *      it until the session selected it once, the roster follows
+ *      `permission-presets/catalog-changed`, and its label is localized.
  *
  * Runs against the compiled channel (imports ../lib/types/…). Run after
  * pnpm build: node scripts/verify-permission-prefs.mjs
@@ -40,6 +45,7 @@ const {
   UPSTREAM_RETRYABLE_CODES,
 } = await import('../lib/types/dsh-adapter/channel/upstream-retry.js')
 const { createChannel } = await import('../lib/types/dsh-adapter/channel.js')
+const { modeDisplayName } = await import('../lib/types/sessionModes.js')
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -184,7 +190,7 @@ const clearPref = () => { try { unlinkSync(prefFile()) } catch { /* absent */ } 
 }
 
 // ---- C. channel-level persistence, seeding, and the deployment pin --------
-const makeEnv = ({ history = [], withCommand = false, settings, options, defaultPreset = 'workspace-write' } = {}) => {
+const makeEnv = ({ history = [], withCommand = false, settings, options, defaultPreset = 'workspace-write', withAuto = false } = {}) => {
   const commands = []
   const warnings = []
   const handlers = new Map()
@@ -194,12 +200,14 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
     // session (mirrors the service's `defaultPreset` getter); undefined models
     // a service that does not answer it at all (null = omit the getter).
     ...(defaultPreset === null ? {} : { defaultPreset }),
-    names: ['read-only', 'workspace-write', 'auto', 'safe'],
+    names: ['read-only', 'workspace-write', 'balanced', 'safe', ...(withAuto ? ['auto'] : [])],
     entries: new Map([
       ['read-only', { value: 'read-only', name: 'Read only' }],
       ['workspace-write', { value: 'workspace-write', name: 'Workspace write' }],
-      ['auto', { value: 'auto', name: 'Auto' }],
+      ['balanced', { value: 'balanced', name: 'Balanced' }],
       ['safe', { value: 'safe', name: 'Safe' }],
+      // The real registry hands `auto` out bare: no label, no description.
+      ...(withAuto ? [['auto', { value: 'auto', name: 'auto' }]] : []),
     ]),
     // Mirrors the real service derive(): folded knob state over the
     // composition defaults, so a fresh session reads its effective preset
@@ -208,8 +216,9 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
       const bundles = {
         'read-only': ['read-only', 'ask'],
         'workspace-write': ['workspace-write', 'ask'],
-        auto: ['workspace-write', 'ask'],
+        balanced: ['workspace-write', 'ask'],
         safe: ['workspace-write', 'ask'],
+        ...(this.names.includes('auto') ? { auto: ['danger-full-access', 'ask'] } : {}),
       }
       let sandbox
       let approval
@@ -232,8 +241,9 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
       const bundles = {
         'read-only': { sandbox: 'read-only', approval: 'ask' },
         'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
-        auto: { sandbox: 'workspace-write', approval: 'ask' },
+        balanced: { sandbox: 'workspace-write', approval: 'ask' },
         safe: { sandbox: 'workspace-write', approval: 'ask' },
+        auto: { sandbox: 'danger-full-access', approval: 'ask' },
       }
       return { ...bundles[name] }
     },
@@ -275,14 +285,14 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
     },
     ctx: { on: () => () => {} },
   }
-  return { ctx, agent, registry, commands, warnings, events }
+  return { ctx, agent, registry, commands, warnings, events, handlers }
 }
 
 const baseOptions = { model: 'deepseek-chat', cwd: '/tmp', provider: 'deepseek', activity: false }
 const AUTO_SEED = [
   { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
   { type: 'approval/policy', data: { policy: 'ask' } },
-  { type: 'permission/preset', data: { preset: 'auto' } },
+  { type: 'permission/preset', data: { preset: 'balanced' } },
 ]
 
 {
@@ -310,13 +320,13 @@ const AUTO_SEED = [
 
 {
   clearPref()
-  writePermissionPref('auto')
+  writePermissionPref('balanced')
   const env = makeEnv()
   const channel = createChannel(env.ctx, env.agent, baseOptions)
   await settle()
-  const taught = env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'auto')
+  const taught = env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'balanced')
   check('seed: a fresh session adopts the remembered preset', taught, JSON.stringify(env.events.map(event => event.type)))
-  check('seed: the derived mode follows the identity', channel.mode.id === 'permission:auto', channel.mode.id)
+  check('seed: the derived mode follows the identity', channel.mode.id === 'permission:balanced', channel.mode.id)
 }
 
 {
@@ -373,7 +383,7 @@ const AUTO_SEED = [
 
 {
   clearPref()
-  writePermissionPref('auto')
+  writePermissionPref('balanced')
   const env = makeEnv({
     history: [
       { type: 'permission/preset', data: { preset: 'safe' } },
@@ -385,7 +395,7 @@ const AUTO_SEED = [
   await settle()
   check(
     'seed: an identity the composition did not pin is a user choice',
-    !env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'auto'),
+    !env.events.some(event => event.type === 'permission/preset' && event.data?.preset === 'balanced'),
   )
 }
 
@@ -413,7 +423,7 @@ const AUTO_SEED = [
 
 {
   clearPref()
-  writePermissionPref('auto')
+  writePermissionPref('balanced')
   process.env.DSH_PERMISSION_MODE = 'workspace-write'
   const env = makeEnv()
   createChannel(env.ctx, env.agent, baseOptions)
@@ -430,6 +440,124 @@ const AUTO_SEED = [
   await settle()
   check('seed: an identity off the mounted roster is skipped', !env.events.some(event => event.type === 'permission/preset'))
   clearPref()
+}
+
+// ---- E. DSH's experimental `auto` preset -----------------------------------
+const presetEvents = (events, from = 0) => events.slice(from)
+  .filter(event => event.type === 'permission/preset')
+  .map(event => event.data?.preset)
+
+{
+  clearPref()
+  writePermissionPref('balanced')
+  const env = makeEnv({ withAuto: true, history: AUTO_SEED })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  env.agent.session.append('permission/preset', { preset: 'auto' })
+  await settle()
+  check('auto: selecting it does not teach the preference', readPermissionPref() === 'balanced', readPermissionPref())
+  check('auto: the indicator shows the localized label', ['Auto review', '自动授权审查'].includes(modeDisplayName(channel.mode)), modeDisplayName(channel.mode))
+  // dsh-experimental-auto-review moves every Auto session to
+  // danger-full-access when it unloads; that is not the user's choice.
+  env.agent.session.append('permission/preset', { preset: 'danger-full-access' })
+  await settle()
+  check('auto: the unload migration is not learned', readPermissionPref() === 'balanced', readPermissionPref())
+  env.agent.session.append('permission/preset', { preset: 'auto' })
+  await settle()
+  await channel.runPermissionPreset('safe')
+  await settle()
+  check('auto: a TUI-driven switch away from it is learned', readPermissionPref() === 'safe', readPermissionPref())
+}
+
+{
+  clearPref()
+  writePermissionPref('auto')
+  const env = makeEnv({ withAuto: true })
+  createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  check('auto: an old remembered auto never seeds a fresh session', !presetEvents(env.events).includes('auto'), JSON.stringify(presetEvents(env.events)))
+  clearPref()
+}
+
+{
+  clearPref()
+  const env = makeEnv({
+    withAuto: true,
+    history: [
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+      { type: 'permission/preset', data: { preset: 'safe' } },
+    ],
+  })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  check('auto: the roster carries it', channel.permissionPresets().options.some(option => option.value === 'auto'))
+  const before = env.events.length
+  await channel.cycleMode()
+  await settle()
+  check('auto: Shift+Tab skips it before the session selected it', !presetEvents(env.events, before).includes('auto'), JSON.stringify(presetEvents(env.events, before)))
+}
+
+{
+  clearPref()
+  const env = makeEnv({
+    withAuto: true,
+    history: [
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+      { type: 'permission/preset', data: { preset: 'auto' } },
+      { type: 'permission/preset', data: { preset: 'safe' } },
+    ],
+  })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  const before = env.events.length
+  await channel.cycleMode()
+  await settle()
+  check('auto: Shift+Tab reaches it once the session selected it', presetEvents(env.events, before)[0] === 'auto', JSON.stringify(presetEvents(env.events, before)))
+}
+
+{
+  // A configured static mode on Auto's atoms (danger-full-access + ask) must
+  // never canonicalize into the session-only preset.
+  clearPref()
+  const env = makeEnv({
+    withAuto: true,
+    history: [
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+      { type: 'permission/preset', data: { preset: 'workspace-write' } },
+    ],
+  })
+  const channel = createChannel(env.ctx, env.agent, {
+    ...baseOptions,
+    modes: [
+      { id: 'default', sandbox: 'workspace-write', approval: 'ask' },
+      { id: 'yolo-ask', sandbox: 'danger-full-access', approval: 'ask' },
+    ],
+  })
+  await settle()
+  const before = env.events.length
+  await channel.cycleMode()
+  await settle()
+  check('auto: a static mode on its atoms never canonicalizes into it', !presetEvents(env.events, before).includes('auto'), JSON.stringify(presetEvents(env.events, before)))
+}
+
+{
+  clearPref()
+  const env = makeEnv({ history: AUTO_SEED })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  let renders = 0
+  channel.subscribe(() => { renders += 1 })
+  env.registry.names.push('auto')
+  env.registry.entries.set('auto', { value: 'auto', name: 'auto' })
+  const changed = env.handlers.get('permission-presets/catalog-changed')
+  check('catalog: the channel listens for catalog changes', typeof changed === 'function')
+  changed?.()
+  await settle()
+  check('catalog: a change re-renders', renders > 0, String(renders))
+  check('catalog: the roster gains auto', channel.permissionPresets().options.some(option => option.value === 'auto'))
 }
 
 // ---- D. upstream retry follows the route the session actually uses --------

@@ -1,7 +1,8 @@
 import { completeCommands, isCommandCompletionToken, type CommandCompletionNode } from '../../commands.js'
 import { getSidePanelPanels, parseSidePanelIds } from '../../tuiDisplayPrefs.js'
 import { SESSION_COLOR_NAMES } from '../../terminal-utils/sessionColors.js'
-import { getLang, LANGS } from '../../i18n.js'
+import { getLang, LANGS, t } from '../../i18n.js'
+import { PERMISSION_PRESET_AUTO, permissionPresetKeys } from '../../permissionPresetLabels.js'
 import { AUTO_THEME_NAME } from '../../theme.js'
 import { listThemeCatalog } from '../../themeCatalog.js'
 import { PRESET_NAMES } from '../../components/activityFrames.js'
@@ -86,11 +87,16 @@ export function createCommandCompletions(deps: {
       if (path.length === 1 && path[0] === 'permission') {
         const snapshot = state.permissionPresets()
         if (snapshot.options.length > 0) {
-          return snapshot.options.filter(option => isCommandCompletionToken(option.value)).map(option => ({
-            name: option.value, description: option.description ?? option.name,
-            ...(option.value === 'read-only' ? { descriptionKey: 'permission-preset-readonly-desc' } : option.value === 'workspace-write' ? { descriptionKey: 'permission-preset-workspace-write-desc' } : option.value === 'danger-full-access' ? { descriptionKey: 'permission-preset-full-access-desc' } : {}),
-            ...(snapshot.current?.kind === 'preset' && snapshot.current.value === option.value ? { tag: 'current' } : {}),
-          }))
+          return snapshot.options.filter(option => isCommandCompletionToken(option.value)).map((option) => {
+            const keys = permissionPresetKeys(option)
+            return {
+              name: option.value, description: option.description ?? option.name,
+              ...(keys === undefined ? {} : { descriptionKey: keys.description }),
+              ...(snapshot.current?.kind === 'preset' && snapshot.current.value === option.value
+                ? { tag: 'current' }
+                : option.value === PERMISSION_PRESET_AUTO ? { tag: t('permission-preset-exp-tag') } : {}),
+            }
+          })
         }
         // No preset roster (a non-DSH backend): the typed `modes` capability
         // is the roster. DSH sessions declare no such capability, so this

@@ -739,8 +739,14 @@ export function attachDshExtensions(
     renameSessionTo: sessionMetadataActions.renameSessionTo,
     compact: manualCompaction.compact,
     cancelCompact: manualCompaction.cancel,
-    runExternalCommand: externalCommands.invokeText,
-    runExternalCommandOutcome: externalCommands.invoke,
+    // A `/permission` the user ran is a TUI-driven switch: the preference may
+    // learn it even when it leaves `auto` (see trackUserPermissionSwitch).
+    runExternalCommand: (name, rawInput, images) => name === 'permission'
+      ? modeActions.trackUserPermissionSwitch(() => externalCommands.invokeText(name, rawInput, images))
+      : externalCommands.invokeText(name, rawInput, images),
+    runExternalCommandOutcome: (name, rawInput, images) => name === 'permission'
+      ? modeActions.trackUserPermissionSwitch(() => externalCommands.invoke(name, rawInput, images))
+      : externalCommands.invoke(name, rawInput, images),
     mcpStatus: reportActions.mcpStatus,
     exportSession: reportActions.exportSession,
     initWorkspace: reportActions.initWorkspace,
@@ -765,6 +771,15 @@ export function attachDshExtensions(
       before() {
         agentView.start()
         owner.own(ctx.on('commands/change', () => { if (owner.current()) modeActions.refreshMode() }))
+        // Payload-free registry invalidation (e.g. the experimental `auto`
+        // preset registering or leaving). Not in this package's declared
+        // event map, hence the casts. The roster may change membership
+        // without moving the mode index, so always re-render.
+        owner.own(ctx.on('permission-presets/catalog-changed' as never, (() => {
+          if (!owner.current()) return
+          modeActions.refreshMode()
+          state.emit()
+        }) as never))
       },
       after() {
         startJobs()
