@@ -128,7 +128,6 @@ export async function registerBundledPresets(ctx: Context): Promise<boolean> {
         name: '@deepseek-ai/cordis-plugin-include',
         config: {
           path: pathToFileURL(join(root, 'agent.cordis.yml')).href,
-          // The include applies id patches inside groups with the same replace semantics.
           patches: [...patches.get('liangshen') ?? []].map(([id, config]) => ({ id, config })),
         },
       }],

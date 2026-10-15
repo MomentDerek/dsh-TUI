@@ -631,8 +631,7 @@ realm 里，按 id 的 patch 够不到。dsh-TUI 注册的 preset（`standard` /
 
 - `config.config` 把 preset 里的行 id 映射到替换后的 `config`，语义同上面的覆盖行
   （**整块替换**）；嵌套在 group 里的行也能命中，找不到的 id 会告警。
-- 宿主在注册 preset 之前从已组合的 loader 树读这些行，与插件加载顺序无关；行本身
-  激活时什么都不做。同一 preset 的多行合并，同一行 id 后者覆盖前者。
+- 与插件加载顺序无关；同一 preset 的多行合并，同一行 id 后者覆盖前者。
 - profile 自己声明的 preset 归 profile 所有，不受影响。
 
 ## 接缝八：插件全屏场景（tuiScenes）

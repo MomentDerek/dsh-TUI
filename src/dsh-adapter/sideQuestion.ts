@@ -172,7 +172,6 @@ export interface InitiatorScope {
  * consumers then see a branch of the conversation rather than an agentless
  * call: a compressing proxy (billion-context) adopts the parent's state for
  * the branch instead of sending the raw replay, which overflows long sessions.
- * Questions asked while the parent surface is unchanged share one branch id.
  * Without the service, or once its scope is closing, the call runs as before.
  */
 export function runAsSideBranch<T>(agents: Partial<InitiatorScope> | undefined, agent: Agent, operation: () => Promise<T>): Promise<T> {
