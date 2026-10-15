@@ -1,22 +1,25 @@
-# dsh-TUI 适配 DSH Auto review 权限预设：评估与 issue 草案
+# dsh-TUI 适配 DSH Auto review 权限预设：评估与 issue 正文
 
 - 日期：2026-10-13
-- 状态：设计稿 + issue 正文草案，未实现
-- 关联：`ccch1mneyyy/dsh-TUI`（issue 待开）
-- 上游：`@deepseek-ai/dsh-experimental-auto-review@0.2.0-rc.2`、`@deepseek-ai/dsh-permission-presets@0.2.0-rc.2`
-- 范围：`src/dsh-adapter/channel/`（`mode-roster.ts`、`permissions.ts`、`mode-permission-actions.ts`、`command-completions.ts`）、`src/components/PermissionsPicker.tsx`、`src/dsh-adapter/approvals.ts`
+- 状态：设计稿 + issue 正文（#1544，2026-10-15 修订）+ 实施方案（§5），未实现
+- 关联：`ccch1mneyyy/dsh-TUI` #1544（已开）
+- 上游（核对版本线，非引入版本）：`@deepseek-ai/dsh-experimental-auto-review@0.2.0-rc.2`、`@deepseek-ai/dsh-permission-presets@0.2.0-rc.2`
+- 范围：`src/dsh-adapter/channel/`（`mode-roster.ts`、`permissions.ts`、`mode-permission-actions.ts`、`command-completions.ts`、`extensions.ts`、`transcript.ts`）、`src/dsh-adapter/approvals.ts`、`src/dsh-adapter/subagents.ts`、`src/components/PermissionsPicker.tsx`、`src/screens/Chat.tsx`、`src/sessionModes.ts`、`src/i18n.ts`
 
 ---
 
 ## 0. 背景
 
-DSH 随 0.2.0-rc.2 发布实验性插件 `@deepseek-ai/dsh-experimental-auto-review`
-（插件列表标题「自动授权审查」）。它不是一个独立的审批策略，而是把
+实验性插件 `@deepseek-ai/dsh-experimental-auto-review` 于 0.1.6-alpha.1
+（2026-09-15）首发，此时需显式安装；自 0.1.7-rc.2（2026-09-24）起随 dsh 安装
+分发但默认关闭。本文按 0.2.0-rc.2 版本线核对（插件列表标题「自动授权审查」）。
+它不是一个独立的审批策略，而是把
 `sandbox=danger-full-access` + `approval=ask` 捆成一个**当前会话专属**的命名权限
 预设 `auto`，由当前模型在每次工具调用前做一次授权审查。
 
-上游 606 条 issue（截至核实日）中没有任何一条跟踪「Auto review 权限预设」的 TUI
-适配，本文即为此缺口撰写的评估与 issue 草案。
+上游 issue 列表中没有一条跟踪「Auto review 权限预设」的 TUI 适配（按「授权审查 /
+自动审查 / auto-review / experimental-auto」检索零命中同主题条目），本文即为此
+缺口撰写的评估，正文已提交为 #1544。
 
 ## 1. 上游行为（已逐条核实）
 
@@ -53,95 +56,86 @@ DSH 随 0.2.0-rc.2 发布实验性插件 `@deepseek-ai/dsh-experimental-auto-rev
 `readRuntimePermissionSnapshot`（`src/dsh-adapter/channel/mode-roster.ts`）→
 `permissionPresetSnapshotFromService`（`src/dsh-adapter/channel/permissions.ts`），
 后者用 registry `names` + `optionOf` + `current` 组 roster，只把 `custom` 判为
-不可用，因此 `auto` 会自然出现在列表里。真正的缺口：
+不可用，因此 `auto` 会自然出现在列表里。真正的缺口（2026-10-15 按 0.2.0-rc.2 源码复核，
+B/E 已修正、F 为新增，详见 §5.0）：
 
 | # | 缺口 | 定位 |
 | --- | --- | --- |
-| A | 未订阅 `permission-presets/catalog-changed`，Auto 的 live 注册/移除不会即时刷新 | 全仓 `src/` 无该串 |
-| B | 非内置条目没有本地化，回退到 `option.name`/裸 key，zh 下显示不出「自动授权审查」 | `src/components/PermissionsPicker.tsx`、`src/dsh-adapter/channel/command-completions.ts`（只映射三个内置值） |
-| C | 选择 Auto 前无风险提示、无 `EXP` 标记 | `src/components/PermissionsPicker.tsx` |
-| D | `persistPermissionPref` 只跳过 `undefined`/`custom`，会把 `auto` 记成下一会话偏好 | `src/dsh-adapter/channel/mode-permission-actions.ts:151-154` |
-| E | Auto 的工具卡最终拒绝（`body 未执行` + reason）是否在当前工具卡渲染路径呈现，待核对 | `src/channel/projection.ts`、`src/dsh-adapter/approvals.ts:47` |
+| A | 未订阅 `permission-presets/catalog-changed`；roster 只在 `commands/change`、绑定与 `permission/preset` 事件时重建，Auto 的 live 注册/移除不会即时刷新 | `src/dsh-adapter/channel/extensions.ts`（全仓 `src/` 无该串） |
+| B | `optionOf('auto')` 只返回裸 `auto`、无描述（「自动授权审查」是插件 `meta.title`，不是 preset 元数据）；TUI 只本地化三个内置值，Picker、补全与 Shift+Tab 指示器都显示裸 `auto` | `src/components/PermissionsPicker.tsx`、`src/dsh-adapter/channel/command-completions.ts`、`src/sessionModes.ts`（`permissionModeSpec`） |
+| C | 选择 Auto 前无风险提示、无 `EXP` 标记；Shift+Tab 可无确认循环进 Auto | `src/components/PermissionsPicker.tsx`、`src/screens/Chat.tsx`、`mode-permission-actions.ts`（`cycleMode`） |
+| D | `persistPermissionPref` 只跳过 `undefined`/`custom`，会把 `auto` 记成下一会话偏好；`applyRememberedPermission` 在 Auto live 时放行旧偏好里的 `auto` | `src/dsh-adapter/channel/mode-permission-actions.ts` |
+| E | 拒绝呈现大部分已通，只缺：审批面板丢弃 `displayReason`；`toolErrorText` 不显示 `error.reason`；子代理卡 `String(data.error)` 显示 `[object Object]` | `src/dsh-adapter/approvals.ts`（`park()`）、`src/dsh-adapter/channel/transcript.ts`、`src/dsh-adapter/subagents.ts:384` |
+| F | 插件卸载时上游把 Auto 会话迁到 `danger-full-access`，迁移事件经 `onSessionEvent` 被学成偏好，下一新会话以无审批 Full access 启动 | `src/dsh-adapter/channel/mode-permission-actions.ts`（`onSessionEvent`） |
 
-## 3. Issue 正文草案
+## 3. Issue 正文（#1544，2026-10-15 按 §5.0 修订）
+
+正文按段落整行书写、不做硬折行：GitHub 把段内换行渲染成空格，硬折行会在中文
+折行处留下多余空格。以下代码块与 #1544 线上正文逐字一致。
 
 ```markdown
-[功能] 适配 DSH Auto review 权限预设（@deepseek-ai/dsh-experimental-auto-review）
-
 ## 背景
 
-DSH 随 0.2.0-rc.2 发布实验性插件 `@deepseek-ai/dsh-experimental-auto-review`
-（locale 标题「自动授权审查」）。它由 `dsh-permission-presets` 承载，把
-`sandbox=danger-full-access` + `approval=ask`（`AUTO_PRESET_SPEC`）捆成一个
-**当前会话专属**的命名权限预设 `auto`：每个 native 调用和每个已启动的 PTC
-`tools.*` inner call 在执行 body 前由当前模型审一次（外层 `run_code` 传输刻意
-排除）。风险分级 low→允许 / medium→需当前人类或直接父级明确授权 / high→永远
-拒绝，模糊或效果冲突→拒绝。选 Auto 会把 approval policy 设为 `ask`，被拒调用
-问用户；in-process 子代理钉 `never`（拒绝终局）。插件随 dsh 安装但默认关闭，
-需从 Web Plugins 页开启或显式 `dsh plugin --profile web add`。
+实验性插件 `@deepseek-ai/dsh-experimental-auto-review` 于 0.1.6-alpha.1（2026-09-15）首发，自 0.1.7-rc.2（2026-09-24）起随 dsh 安装分发但默认关闭（插件列表标题「自动授权审查」）。它由 `dsh-permission-presets` 承载，把 `sandbox=danger-full-access` + `approval=ask`（`AUTO_PRESET_SPEC`）捆成一个 **当前会话专属**的命名权限预设 `auto`：每个 native 调用和每个已启动的 PTC `tools.*` inner call 在执行 body 前由当前模型审一次（外层 `run_code` 传输刻意排除）。风险分级 low→允许 / medium→需当前人类或直接父级明确授权 / high→永远拒绝，模糊或效果冲突→拒绝。选 Auto 会把 approval policy 设为 `ask`，被拒调用转为审批请求问用户（附本地化 `displayReason`）；in-process 子代理钉 `never`，拒绝终局，落成带 `AUTO_REVIEW_DENIED` 结构化详情的工具错误。插件随 dsh 安装但默认关闭，需从 Web Plugins 页开启或显式 `dsh plugin --profile web add`。
 
-TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permission`），
-但对 Auto 的实时变更、本地化、风险确认与拒绝呈现均未适配。
+TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permission`），但对 Auto 的实时变更、本地化、风险确认、偏好记忆与拒绝呈现均未适配。
 
-## 现状（代码定位）
+## 现状（代码定位，按 0.2.0-rc.2 源码核对）
 
-- roster 读取：`src/dsh-adapter/channel/mode-roster.ts` 的
-  `readRuntimePermissionSnapshot`（仅 `availability==='runtime'` 返回）→
-  `src/dsh-adapter/channel/permissions.ts` 的
-  `permissionPresetSnapshotFromService`（用 registry `names` + `optionOf` +
-  `current`，仅把 `custom` 判为不可用，`auto` 会通过）。
-- 切换/记忆：`src/dsh-adapter/channel/mode-permission-actions.ts`
-  （`runPermissionPreset`、`persistPermissionPref`、`compositionDefaultPreset`）。
-- 呈现：`src/components/PermissionsPicker.tsx`、
-  `src/dsh-adapter/channel/command-completions.ts`。
-- 审批面板：`src/dsh-adapter/approvals.ts`（`ApprovalSnapshot.reason`）。
-- 全仓无 `permission-presets/catalog-changed` 订阅。
+- roster 读取：`src/dsh-adapter/channel/mode-roster.ts` 的 `readRuntimePermissionSnapshot`（仅 `availability==='runtime'` 返回）→ `src/dsh-adapter/channel/permissions.ts` 的 `permissionPresetSnapshotFromService`（用 registry `names` + `optionOf` + `current`，仅把 `custom` 判为不可用，`auto` 会通过）。
+- 刷新：roster 只在 `commands/change`、绑定与 `permission/preset` 事件时重建；全仓无 `permission-presets/catalog-changed` 订阅，Auto 注册/移除不触发 Shift+Tab 重建。
+- 显示名：`optionOf('auto')` 返回 `{ value: 'auto', name: 'auto' }`，无 description（`AUTO_PRESET_SPEC` 不带标签；「自动授权审查」是插件 locale 的 `meta.title`，不是 preset 元数据）。`src/components/PermissionsPicker.tsx` 与 `src/dsh-adapter/channel/command-completions.ts` 只本地化三个内置值，`permissionModeSpec` 直接用 `option.name` 作 Shift+Tab 标签，故 Auto 处处显示裸 `auto`。
+- 切换/记忆：`src/dsh-adapter/channel/mode-permission-actions.ts` 的 `persistPermissionPref` 只跳过 `undefined`/`custom`，会把 `auto` 记成下一会话偏好；`applyRememberedPermission` 在 Auto live 时会放行旧偏好里的 `auto`。插件卸载时上游把 Auto 会话迁到 `danger-full-access`，这条迁移事件经 `onSessionEvent` 被学成偏好，下一新会话以无审批的 Full access 启动。
+- 审批面板：`src/dsh-adapter/approvals.ts` 的 `park()` 只取 `req.reason`（英文审计串），丢弃 `displayReason`。
+- 工具卡：`src/dsh-adapter/channel/transcript.ts` 的 `toolErrorText` 已显示 `AutoReviewDeniedError: AUTO_REVIEW_DENIED` 与「body 未执行」，但不显示 `error.reason`；`src/dsh-adapter/subagents.ts` 对同一对象 `String(data.error)`，子代理卡显示 `[object Object]`。
 
 ## 目标
 
-- 订阅 `permission-presets/catalog-changed`（payload-free；先订阅后重读
-  catalog），收到即重建 roster，让 Auto 的 live 注册/移除在 Shift+Tab、
-  `/permission` 与补全里即时反映。
-- 为 roster 中非内置条目（`auto` 等）正确本地化：从 registry `optionOf` 元数据
-  取标题/描述，避免回退到裸 key；zh 下显示「自动授权审查」。
-- 选择 Auto 前给出当前会话风险提示并标注实验性（对齐 Web 的 `EXP` 上标 + 风险
-  对话框），避免用户在不知情下启用「模型自动放行 Full access」。
-- 核对并修正 `persistPermissionPref`：Auto 是 current-session-only、不进新会话
-  默认，不应被记为下一会话权限偏好。
-- 在 TUI 自有的工具卡渲染路径覆盖 Auto 的最终拒绝：折叠行标识 Auto review，
-  展开显示 body 未执行 + 可选 reason（structured error detail，不进主模型内容）。
+- 订阅 `permission-presets/catalog-changed`（payload-free；收到即重读 catalog），重建 roster 并重绘，让 Auto 的 live 注册/移除在 Shift+Tab、`/permission` 与补全里即时反映；打开中的 `/permission` picker 随之刷新。
+- TUI 自持 `auto` 的标签与描述（zh「自动授权审查」/ en「Auto review」），Picker、补全、Shift+Tab 指示器统一经一个后端中立的标签辅助取值。
+- `/permission` picker 中 Auto 带 `EXP` 标记，选中后先出当前会话风险确认（仅当前会话、无文件沙箱、每次调用额外一次模型请求、medium 需确认、high 永远拒绝），取消不改权限。手打 `/permission auto` 与 Web 一致直接切换。
+- Shift+Tab：Auto 留在 roster（保证会话已在 Auto 时指示器正确），但只有当前会话日志中出现过切到 `auto` 的记录（picker 确认、手打命令或 resume 曾在 Auto 的会话）才参与循环；新会话重新要求经 picker 确认。
+- Auto 不被记为下一会话偏好：`persistPermissionPref` 跳过 `auto`；旧偏好中的 `auto` 不 seed 新会话；从 Auto 切走的身份变更只有 TUI 自己发起时才学习，插件卸载迁移不改写偏好。
+- 审批面板按当前语言优先显示 `displayReason`，回落 `reason`；工具卡与子代理卡显示 Auto 终局拒绝的 `reason` 并本地化提示，修掉 `[object Object]`。
 - 双语文档同步。
 
 ## 非目标
 
-- 不改 DSH 内核、`dsh-experimental-auto-review`、`dsh-permission-presets` 或审批
-  通道；不实现审查策略本身。
-- 不改阻塞/其它权限预设（read-only / workspace-write / danger-full-access）的既有
-  行为。
+- 不改 DSH 内核、`dsh-experimental-auto-review`、`dsh-permission-presets` 或审批通道；不实现审查策略本身。
+- 不改阻塞/其它权限预设（read-only / workspace-write / danger-full-access）的既有行为。
 - 不把 Auto 加进 General settings 或新会话默认（其契约明确禁止）。
+- 不在 Shift+Tab 上弹确认框；不拦截手打 `/permission auto`；不改工具卡渲染组件与 `src/channel/projection.ts`。
 
 ## 验收
 
-- profile 内 enable/remove Auto layer 后，Shift+Tab、`/permission`、
-  `/permission` 补全三者均即时反映，无需重启或切会话。
-- zh 界面下 Auto 显示「自动授权审查」及其描述，不退化为英文/裸 key。
-- 选择 Auto 出现风险提示；取消则不改动权限。
-- 切换到 Auto 后，下一新会话不被记为 Auto（回落到有效默认）。
-- Auto 拒绝的工具卡在展开态显示「未执行」+ reason。
+- profile 内 enable/remove Auto layer 后，Shift+Tab、`/permission`、`/permission` 补全三者均即时反映，无需重启或切会话。
+- zh 界面下 picker、补全与 Shift+Tab 指示器均显示「自动授权审查」及其描述，不退化为裸 `auto`。
+- picker 选 Auto 出现风险确认；取消不改动权限。
+- 未确认过的会话 Shift+Tab 跳过 Auto；确认后可循环到 Auto；新会话重新跳过；会话在 Auto 时可循环离开。
+- 切换到 Auto 后，下一新会话不被记为 Auto；旧偏好文件中的 `auto` 不生效；Auto 会话存活时卸载插件，偏好保持原值；从 Auto 经 picker 切到其它预设，偏好照常更新。
+- 主会话审查拒绝的审批面板在 zh 下显示中文原因；子代理 Auto 终局拒绝的工具卡显示「未执行」+ reason，不出现 `[object Object]`。
 - 默认关闭时，TUI 行为与现状完全一致。
 
 ## 参考 / 相关 API（@deepseek-ai/dsh-permission-presets@0.2.0-rc.2）
 
-- `get names(): readonly string[]`、`optionOf(name): PresetOption`、
-  `resolve(name): PresetSpec`、`set(session, name): void`、
-  `@Remote('catalog') catalog()`、`registerAuto(admit): () => Promise<void>`。
+- `get names(): readonly string[]`、`optionOf(name): PresetOption`（`auto` 无 name/description）、`resolve(name): PresetSpec`、`set(session, name): void`、`@Remote('catalog') catalog()`、`registerAuto(admit): () => Promise<void>`。
 - 事件 `permission-presets/catalog-changed(): void`（payload-free）。
 - 保留名 `custom` / `auto`。
+- auto-review 拒绝形状：`ask` 路径 `{ kind: 'ask', reason, displayReason: { en, zh } }`；`never` 路径 `{ kind: 'deny', reason, info: { name: 'AutoReviewDeniedError', code: 'AUTO_REVIEW_DENIED', reason? } }`；卸载时把 Auto 会话 `set` 到 `danger-full-access`。
 - 既有相近项：#864（第三方 preset 接入）、#1212（审批条被裁出屏）。
+- 实施方案：`docs/auto-review-preset-adaptation.md` §5。
 ```
 
 ## 4. 事实核查来源
 
+- 版本时间线（npm 发布数据）：首发 0.1.6-alpha.1（2026-09-15，需显式安装、
+  拒绝即终局）；0.1.7-rc.2（2026-09-24）起被 `@deepseek-ai/dsh` 列为依赖、
+  随装默认关闭，并补 `locale/`、`icon.svg`，拒绝改走 `ask` 审批路由；
+  0.2.0-rc.2 与 0.2.0-rc.1 的 `lib/index.js`（均 24039 字节）、README、
+  locale 逐字相同。更早源头为决策记录 2026-08-28-auto-review。
+- 重复检查：`gh issue list -R ccch1mneyyy/dsh-TUI --state all --search
+  "授权审查 OR 自动审查 OR auto-review OR experimental-auto"` 零命中同主题条目；
+  相近项 #864（registry receiver 绑定，已关闭）、#1212（审批条被裁出屏，OPEN）。
 - 插件 tarball：`package.json`（名/版本）、`locale/zh.json`（标题与描述、
   逐字一致）、`cordis.patch.yml`（单行 `id: auto-review`）、
   `lib/types/index.d.ts`（`name`/`inject`/`apply`）、`README.md`。
@@ -149,5 +143,74 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
   `lib/index.js`（`AUTO_PRESET_SPEC`、`names` getter、保留名断言、
   `registerAuto`）与 `lib/typert.host.js`（方法签名与 `catalog-changed` emit）。
 - TUI 缺口：`src/` 全仓 grep（`catalog-changed` 零命中）与逐个文件逐行核对。
-- 上游 issue：606 条标题 + 正文全文 grep「授权审查 / 自动审查 / auto review /
-  experimental-auto」零命中。
+- 上游 issue：按「授权审查 / 自动审查 / auto review / experimental-auto」检索标题
+  与正文，零命中同主题条目。
+
+## 5. 实施方案
+
+按已装 `dsh` 0.2.0-rc.2 的上游源码重新核对后，§2 的两条前提需要先修正，方案按修正后的缺口展开。
+
+### 5.0 对 §2 / #1544 的修正
+
+- **B 的前提不成立**：`optionOf('auto')` 返回 `{ value: 'auto', name: spec.name ?? name }`，而 `AUTO_PRESET_SPEC` 只有 `sandbox/approval`，因此 registry 给出的就是裸 `auto`、无 description。「自动授权审查」是插件 `locale/zh.json` 的 `meta.title`（插件列表标题），不是 preset option 元数据。结论：TUI 像对三个内置名一样自持 `auto` 的标签与描述；#1544「从 registry `optionOf` 元数据取标题」一条应改为「TUI 自持 `auto` 的 i18n」。
+- **E 大部分已通，收窄为两个小缺口**：
+  - 主会话 Auto 的 approval 是 `ask`，审查拒绝走 `askUser()` → 审批面板，请求带本地化的 `displayReason: { en, zh }`；`approvals.ts` 的 `park()` 只拷 `req.reason`（英文审计串 `Auto review denied tool "X": …`），丢了 `displayReason`。
+  - 终局拒绝（`overrideOf === 'never'`，即 in-process 子代理）落成 `tool/result.error = { name: 'AutoReviewDeniedError', code: 'AUTO_REVIEW_DENIED', reason? }`。`transcript.ts` 的 `toolErrorText` 已渲染 `name: code — Error: Auto review rejected tool "X"; its body was not executed`，只漏了 `reason`；`subagents.ts:384` 对同一对象做 `String(data.error)`，子代理卡会显示 `[object Object]`（既有缺陷，Auto 终局拒绝恰好最常出现在子代理）。
+- **新增 F（插件卸载时的自动迁移被误记成偏好）**：例：用户的记忆偏好是 workspace-write；本会话切到 Auto（D 修好后不写偏好，仍是 workspace-write）；随后在 Web 插件页关掉 auto-review。上游卸载时会把所有仍在 Auto 的会话自动 `set(session, 'danger-full-access')`。这条迁移写出的 `permission/preset` 事件被 TUI 的 `onSessionEvent` 当成「用户切换了预设」，于是把偏好改写成 danger-full-access（全权限、无审批）。下一次开新会话就直接以无审批的 Full access 启动——用户从没主动选过它当默认，比原偏好宽得多。触发面窄（Auto 会话存活期间卸载插件），但后果是静默放宽权限。
+
+### 5.1 改动面（按依赖顺序，可拆 2–3 个 PR）
+
+**PR 1：数据面（A + B + D + F）**
+
+1. **共享常量与标签辅助（B）**
+   - `src/dsh-adapter/channel/permissions.ts`：加 `PERMISSION_PRESET_AUTO = 'auto'`，与 `PERMISSION_PRESET_CUSTOM` 同式。
+   - 新增后端中立的 `permissionPresetLabel(option)` / `permissionPresetDescription(option)`（放 `src/sessionModes.ts` 旁或新文件 `src/permissionPresetLabels.ts`，只 import `i18n`，不碰 `dsh-adapter/`，过 `verify:boundary`）：三个内置名 + `auto` 映射到 i18n key，其余回落 `option.name` / `option.description ?? option.name`。`auto` 只在 `option.name === 'auto'`（registry 未给标签）时本地化。
+   - 三处收敛到该辅助：`PermissionsPicker.tsx` 的三元链、`command-completions.ts` 的 `descriptionKey` 三元链、`permissionModeSpec` 的 `label`（否则 Shift+Tab 指示器/状态栏显示裸 `auto`）。注意 `permissionModeSpec` 在构造时取标签，切语言后需随 `refreshMode` 重建——roster 每次 rebuild 都重新调用它，满足。
+   - `src/i18n.ts` 新增：`permission-preset-auto`（zh「自动授权审查」/ en「Auto review」）、`permission-preset-auto-desc`（zh「模型在每次工具调用前审查授权；无文件沙箱，仅当前会话」/ en 对应）、`permission-preset-exp-tag`（`EXP`）。
+2. **catalog-changed 订阅（A）**
+   - `src/dsh-adapter/channel/extensions.ts:767`，与 `commands/change` 同一 `owner.own(ctx.on(...))` 漏斗：
+     `ctx.on('permission-presets/catalog-changed' as never, (() => { if (!owner.current()) return; modeActions.refreshMode(); state.emit() }) as never)`。
+     事件名不在本包已声明的 Events 里，沿用 `host-dsh.ts:302` 的 `as never` 写法，不新增 peer/dev 依赖（避免 `verify:manifest-deps` / contract 连锁）。payload-free，监听里只重读，不读参数。
+   - `refreshMode()` 本身不 emit；roster 成员变化即使 `modeIndex` 不变也要重绘指示器/提示，因此无条件 `state.emit()`。
+   - 打开中的 `/permission` overlay 持有 `clonePermissionPresetSnapshot` 副本：Chat 侧在 channel 的 emit 后若 overlay 为 `permission` 且 live 名册的 value 集合变化，就用新快照重开（保持焦点 value，找不到回落 current）。确认阶段（见 PR 2）中 `auto` 消失则直接关闭确认并提示。
+3. **不记忆 Auto（D + F）**，全部收在 `mode-permission-actions.ts`：
+   - `persistPermissionPref`：`value === PERMISSION_PRESET_AUTO` 时跳过（唯一写入点，三处调用都经它）。
+   - F：`onSessionEvent` 的观察者路径在「上一个已知身份是 `auto`」时不学新身份。实现为每会话记录上次 fold 到的身份（`WeakMap<session, string | undefined>`），在 `permission/preset` 事件里比对。TUI 自己发起的切换（`applyMode` 带 `spec.permission` 或静态 mode、`runPermissionPreset`）在调用点显式 `persistPermissionPref(target)`，因此不受此屏蔽影响——需要给 `runPermissionPreset` 包一层在成功后持久化（现在它依赖观察者路径）。
+   - `applyRememberedPermission`：`pref === PERMISSION_PRESET_AUTO` 时视同不可用（旧版本已写进偏好文件的 `auto` 不得把新会话悄悄 seed 成 Auto；Auto live 时 roster 校验会放行它，所以必须显式拦）。
+
+**PR 2：交互面（C）**
+
+4. **Shift+Tab：本会话确认过才进循环**
+   - `auto` 始终留在 roster（会话已在 Auto 时，`derivePermissionModeIndex` 靠身份项才能显示正确指示器，删掉会掉进 atom 匹配错显为 Full access）。
+   - 是否进入循环按**当前会话**判定：会话日志里出现过 `permission/preset { preset: 'auto' }` 即视为已确认（picker 确认、手打 `/permission auto`、resume 一个曾在 Auto 的会话，都会留下这条事件）。未确认的会话 Shift+Tab 跳过 Auto；确认过之后 Auto 与其它项一样参与循环。
+   - 判定直接 fold 持久化日志（`snapshotLiveSessionEvents`），不另存 TUI 状态：随 `/resume`、`/new`、切会话自然正确，新会话重新要求确认，与上游「风险确认针对当前会话」一致。
+   - 实现：`cycleMode` 的 `(index + 1) % length` 改为向后找第一个可循环项，`auto` 项在未确认时不可循环；从 Auto 出发正常前进。roster 结构不变，不给 `SessionModeSpec` 加字段。
+   - 理由：`cycleMode` 是不能 await 的键盘入口，不适合插确认框；首次启用必须走 picker（或手打命令），之后可以像其它模式一样快速切换。
+5. **picker 二阶段确认 + EXP**
+   - `PermissionsPicker` 的 option 行对 `auto` 追加 `EXP` 上标（`Select` 的 `label` 是 `ReactNode`，用 dim/`warning` 色 `Text` 拼接即可，宽度走现有组件）。
+   - Chat 的 `overlay.kind === 'permission'` 加状态 `confirm?: string`：Enter 选中 `auto`（且当前不是 `auto`）时进入确认态而非直接 `runPermissionCommand`；确认态渲染风险说明 + 「确认 / 取消」，Enter 确认后才 `runPermissionCommand(' auto')`，Esc 回到列表、不改权限。复用 `migrate-confirm` / `kind: 'confirm'` 的既有按键与 `Pane` 样式，不另造对话框组件。
+   - 风险文案（i18n，zh/en 各一）要点：仅当前会话、不会成为新会话默认；无文件沙箱；每次工具调用额外一次模型请求；medium 风险需你确认、high 风险永远拒绝；审查失败即不执行。
+   - 手打 `/permission auto`：走 `mounted` 分支直达上游 handler，与 Web 一致不拦截，文档写明。
+   - 补全：`/permission` 补全对 `auto` 的 description 加 `EXP` 前缀即可，不做确认。
+
+**PR 3：呈现面（E）**
+
+6. `src/dsh-adapter/approvals.ts` `park()`：结构化读 `(req as { displayReason?: unknown }).displayReason`，若为 record 且取到 `getLang()` 键或 `en` 键的字符串，就以它作 `snapshot.reason`（经 `cleanRenderText` 限宽），否则回落 `req.reason`。不改 `ApprovalRequest` 的 import 版本线（低版本无该字段，结构化读保证兼容）；`external` 判定不受影响。
+7. `src/dsh-adapter/channel/transcript.ts` `toolErrorText`：`failure.reason` 为非空字符串时追加一行（`— reason`）；对 `code === 'AUTO_REVIEW_DENIED'` 用本地化前缀（zh「自动授权审查拒绝，未执行」）替换 `name: code` 身份串。live 与 replay 都经此函数（`backend/translate.ts:323`、`subagent-transcript.ts:323`），一处覆盖。
+8. `src/dsh-adapter/subagents.ts:384`：`String(data.error)` 改为复用同一格式化（对象取 `name/code/reason`），修掉 `[object Object]`。
+
+**文档**：`README.md` / `README_ZH.md` 同步「picker 选 Auto 需确认、Shift+Tab 仅在本会话确认过 Auto 后才循环到它、`/permission auto` 直切、Auto 不被记为下一会话偏好」；本文 §2 表格按 5.0 改 B/E、加 F；给 #1544 准备修订文本（只出草稿，不直接 `gh issue edit`）。
+
+### 5.2 不做的事
+
+- 不在 Shift+Tab 上弹确认；不拦截手打 `/permission auto`。
+- 不读 `catalog()` 判「会话专属」：`ui-policy` 下 `permissionPresets` 为 read-only，且固定名 `auto` 是上游保留名，常量足够；若上游以后出现第二个会话专属预设再改为读 `catalog().defaultOptions`。
+- 不改工具卡渲染组件与 `projection.ts`；不做审查结果的独立 UI。
+
+### 5.3 验证
+
+- 聚焦脚本（先 `pnpm build`）：`scripts/verify-permission-roster.mjs`（新增：catalog-changed 后 roster 增删、`auto` 标签本地化、未确认会话跳过 Auto）、`verify-shift-tab-mode.mjs`（未确认会话从 Full access 循环不进 Auto；picker 确认后再循环可到 Auto；新会话重新跳过；会话在 Auto 时指示器正确且可循环离开）、`verify-permission-prefs.mjs`（选 Auto 不写偏好；旧偏好 `auto` 不 seed；卸载迁移到 `danger-full-access` 不被学习；从 Auto 经 picker 切走仍被学习）、`verify-permission-modes.mjs`、`verify-approval-panel-options.tsx` / `verify-approval-visibility.tsx`（`displayReason` zh/en 选择与回落）。
+- `toolErrorText` / 子代理：在现有 transcript 回归里加 `AUTO_REVIEW_DENIED` 带/不带 `reason` 两例。
+- 改了 `Chat.tsx` overlay 与 picker → 跑 CI 回归；`pnpm verify:build`（boundary、contract、terminal-size-source）。
+- 手动：装有 dsh 0.2.0-rc.2 的环境 `dsh plugin --profile web add` 开启 auto-review，inline 与 fullscreen、窄终端下演练 picker 确认/取消、Shift+Tab、启停插件时 roster 即时变化、一次被审查拒绝的工具调用（主会话审批面板 + 子代理工具卡）。
+- 默认关闭时回归：上述脚本的既有用例全部不变（Auto 不在 names 中时所有新分支不触发）。
