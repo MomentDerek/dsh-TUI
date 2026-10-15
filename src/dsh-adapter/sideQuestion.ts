@@ -7,8 +7,10 @@
  * @module
  */
 
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import { BlockAssembler, type ContentBlock, type Message, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { randomUUID } from 'node:crypto'
 import { sideQuestionPrompt } from '../channel/side-prompts.js'
 import { answeredToolCallIds } from './compat/messages.js'
 
@@ -156,4 +158,55 @@ export async function runSideQuestion(params: {
     .trim()
   if (answer === '') return { answer: null, error: 'No response received' }
   return { answer }
+}
+
+/** The `agents` service as {@link runAsSideBranch} needs it. */
+export interface InitiatorScope {
+  withInitiator<T>(agent: Agent, operation: () => T): T
+}
+
+/**
+ * Run a side question with a seeded fork of `agent` as its initiator. The
+ * call replays the session's history without entering it, which DSH models as
+ * a fork (`parentSession` + `isSeeded` on the child header). Initiator-keyed
+ * consumers then see a branch of the conversation rather than an agentless
+ * call: a compressing proxy (billion-context) adopts the parent's state for
+ * the branch instead of sending the raw replay, which overflows long sessions.
+ * Questions asked while the parent surface is unchanged share one branch id.
+ * Without the service, or once its scope is closing, the call runs as before.
+ */
+export function runAsSideBranch<T>(agents: Partial<InitiatorScope> | undefined, agent: Agent, operation: () => Promise<T>): Promise<T> {
+  if (typeof agents?.withInitiator !== 'function') return operation()
+  try {
+    return agents.withInitiator(sideBranchOf(agent), operation)
+  } catch {
+    return operation()
+  }
+}
+
+function sideBranchOf(agent: Agent): Agent {
+  const session = agent.session
+  const surface = (session as { surface?: { nodes?: readonly number[]; replaceGeneration?: number } }).surface
+  const last = surface?.nodes?.at(-1)
+  const generation = surface?.replaceGeneration
+  const id = last === undefined || generation === undefined
+    ? `${session.id}-btw-${randomUUID()}`
+    : `${session.id}-btw-${generation}-${last}`
+  const header = { ...session.header, parentSession: session.id, isSeeded: true }
+  return readThrough(agent, { session: readThrough(session, { id, header }) })
+}
+
+/**
+ * A view of `target` with some properties replaced. Everything else, methods
+ * included, still acts on `target` (a mutating call reaches the real
+ * session); the view lives only for one side call's stream.
+ */
+function readThrough<T extends object>(target: T, overrides: Record<PropertyKey, unknown>): T {
+  return new Proxy(target, {
+    get(object, key) {
+      if (Object.hasOwn(overrides, key)) return overrides[key]
+      const value: unknown = Reflect.get(object, key, object)
+      return typeof value === 'function' ? value.bind(object) : value
+    },
+  })
 }
