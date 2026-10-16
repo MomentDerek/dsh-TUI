@@ -119,14 +119,6 @@ export function getApprovalStore(ctx: Parameters<typeof compositionRoot>[0]): Ap
 const COMMAND_CLIP = 500
 
 /**
- * Recover the gated command from the session log: the approval request
- * links to an already-presented tool call via `callId`, so the arguments
- * are not duplicated on the request. Mirrors the web client's `commandOf`.
- * @param req - The pending approval request.
- * @returns The `command` argument when present, else the raw arguments
- *   string (clipped), else undefined when the call cannot be found.
- */
-/**
  * The ask's reason in the UI language. Requests may carry a localized
  * `displayReason: { en, zh }` next to the English audit `reason` (DSH's
  * auto-review asks do); older request types lack the field, so it is read
@@ -146,6 +138,14 @@ function reasonOf(req: ApprovalRequest): string | undefined {
   return req.reason
 }
 
+/**
+ * Recover the gated command from the session log: the approval request
+ * links to an already-presented tool call via `callId`, so the arguments
+ * are not duplicated on the request. Mirrors the web client's `commandOf`.
+ * @param req - The pending approval request.
+ * @returns The `command` argument when present, else the raw arguments
+ *   string (clipped), else undefined when the call cannot be found.
+ */
 function commandOf(req: ApprovalRequest): string | undefined {
   if (req.callId === undefined) return undefined
   const events = snapshotLiveSessionEvents(req.agent.session)
