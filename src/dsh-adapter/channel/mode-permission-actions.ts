@@ -138,7 +138,7 @@ export function createPermissionModeActions(
   onSessionEvent(session: unknown, event: unknown): void
   applyRememberedPermission(): Promise<void>
   runPermissionPreset(name: string): Promise<boolean>
-  trackUserPermissionSwitch<T>(run: () => Promise<T>): Promise<T>
+  trackUserPermissionSwitch<T>(target: string, run: () => Promise<T>): Promise<T>
   permission: PermissionIdentity
 } {
   const { owner, binding, sessionModes, roster, commandService, executeRegistryCommand, notify } = deps
@@ -168,18 +168,19 @@ export function createPermissionModeActions(
   /** Sessions the remembered permission was already seeded into (or decided
    *  against): one attempt per session object, rebinds stay quiet. */
   const permissionPrefSeeded = new WeakSet<object>()
-  /** Permission switches this TUI is driving right now (the `/permission`
-   *  command or the service write path). A switch AWAY from `auto` is learned
-   *  only inside one: the auto-review plugin migrates every Auto session to
-   *  danger-full-access when it unloads, and that migration must not become
-   *  the next session's default. */
-  let userPermissionSwitches = 0
-  const trackUserPermissionSwitch = async <T>(run: () => Promise<T>): Promise<T> => {
-    userPermissionSwitches += 1
+  /** Target presets of the permission switches this TUI is driving right now
+   *  (the `/permission` command or the service write path). A switch AWAY
+   *  from `auto` is learned only when it lands on one of them: the
+   *  auto-review plugin migrates every Auto session to danger-full-access
+   *  when it unloads, and that migration — even one racing a pending switch
+   *  to another target — must not become the next session's default. */
+  const userPermissionTargets: string[] = []
+  const trackUserPermissionSwitch = async <T>(target: string, run: () => Promise<T>): Promise<T> => {
+    userPermissionTargets.push(target)
     try {
       return await run()
     } finally {
-      userPermissionSwitches -= 1
+      userPermissionTargets.splice(userPermissionTargets.indexOf(target), 1)
     }
   }
 
@@ -310,15 +311,18 @@ export function createPermissionModeActions(
       // preset a plan entry reseats to (in flight below) and any identity
       // switched to while plan is active (the exit restore re-seats the
       // pre-plan one, and that restore event lands here again). Leaving
-      // `auto` is learned only when this TUI drove the switch (see
-      // trackUserPermissionSwitch); explicit mode switches persist on their own.
+      // `auto` is learned only when it lands on a target this TUI is driving
+      // (see trackUserPermissionSwitch); explicit mode switches persist on
+      // their own.
       const events = snapshotLiveSessionEvents(subject)
+      const current = foldPermissionPreset(events)
       if (
         !planEntryInFlight
         && !foldPlanActive(events)
-        && (userPermissionSwitches > 0 || previousPermissionPreset(events) !== PERMISSION_PRESET_AUTO)
+        && (previousPermissionPreset(events) !== PERMISSION_PRESET_AUTO
+          || (current !== undefined && userPermissionTargets.includes(current)))
       ) {
-        persistPermissionPref(foldPermissionPreset(events))
+        persistPermissionPref(current)
       }
     }
     if (type !== 'plan/mode' || (sessionEvent.data as unknown as { active?: boolean }).active !== false) return
@@ -426,7 +430,7 @@ export function createPermissionModeActions(
     applyMode,
     onSessionEvent,
     applyRememberedPermission,
-    runPermissionPreset: name => trackUserPermissionSwitch(() => permission.runPermissionPreset(name)),
+    runPermissionPreset: name => trackUserPermissionSwitch(name.trim(), () => permission.runPermissionPreset(name)),
     trackUserPermissionSwitch,
     permission,
   }

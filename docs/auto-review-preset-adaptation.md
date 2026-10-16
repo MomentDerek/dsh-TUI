@@ -174,7 +174,7 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
    - 打开中的 `/permission` overlay 持有 `clonePermissionPresetSnapshot` 副本：Chat 侧在 channel 的 emit 后若 overlay 为 `permission` 且 live 名册的 value 集合变化，就用新快照重开（保持焦点 value，找不到回落 current）。确认阶段（见 PR 2）中 `auto` 消失则直接关闭确认并提示。
 3. **不记忆 Auto（D + F）**，全部收在 `mode-permission-actions.ts`：
    - `persistPermissionPref`：`value === PERMISSION_PRESET_AUTO` 时跳过（唯一写入点，三处调用都经它）。
-   - F：`onSessionEvent` 的观察者路径在「上一个身份是 `auto`」时只学 TUI 发起的切换。picker 与手打 `/permission` 走 external 命令而非 `modeActions`，因此 `extensions.ts` 把 `runExternalCommand(Outcome)('permission', …)` 与 `runPermissionPreset` 包进 `trackUserPermissionSwitch`（计数器），计数器非零时才学习「离开 auto」；静态模式切换仍在 `applyMode` 内显式持久化。上游卸载迁移发生在 `auto` 仍注册时，不能靠 names 判断。
+   - F：`onSessionEvent` 的观察者路径在「上一个身份是 `auto`」时只学 TUI 发起的切换。picker 与手打 `/permission` 走 external 命令而非 `modeActions`，因此 `extensions.ts` 把 `runExternalCommand(Outcome)('permission', …)` 与 `runPermissionPreset` 包进 `trackUserPermissionSwitch`（登记切换目标），新身份正是某个进行中的目标时才学习「离开 auto」，与进行中切换竞态的卸载迁移不会被学到；静态模式切换仍在 `applyMode` 内显式持久化。上游卸载迁移发生在 `auto` 仍注册时，不能靠 names 判断。
    - `permissionBundlesFromService` 跳过 `auto`：否则配置了 `danger-full-access + ask` 静态模式时，Shift+Tab 会把它 canonicalize 成 `auto`，绕过确认。
    - `applyRememberedPermission`：`pref === PERMISSION_PRESET_AUTO` 时视同不可用（旧版本已写进偏好文件的 `auto` 不得把新会话悄悄 seed 成 Auto；Auto live 时 roster 校验会放行它，所以必须显式拦）。
 

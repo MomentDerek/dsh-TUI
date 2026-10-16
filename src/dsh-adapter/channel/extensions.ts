@@ -742,10 +742,10 @@ export function attachDshExtensions(
     // A `/permission` the user ran is a TUI-driven switch: the preference may
     // learn it even when it leaves `auto` (see trackUserPermissionSwitch).
     runExternalCommand: (name, rawInput, images) => name === 'permission'
-      ? modeActions.trackUserPermissionSwitch(() => externalCommands.invokeText(name, rawInput, images))
+      ? modeActions.trackUserPermissionSwitch(rawInput.trim(), () => externalCommands.invokeText(name, rawInput, images))
       : externalCommands.invokeText(name, rawInput, images),
     runExternalCommandOutcome: (name, rawInput, images) => name === 'permission'
-      ? modeActions.trackUserPermissionSwitch(() => externalCommands.invoke(name, rawInput, images))
+      ? modeActions.trackUserPermissionSwitch(rawInput.trim(), () => externalCommands.invoke(name, rawInput, images))
       : externalCommands.invoke(name, rawInput, images),
     mcpStatus: reportActions.mcpStatus,
     exportSession: reportActions.exportSession,

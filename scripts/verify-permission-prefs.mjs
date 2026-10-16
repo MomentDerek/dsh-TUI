@@ -467,6 +467,15 @@ const presetEvents = (events, from = 0) => events.slice(from)
   await channel.runPermissionPreset('safe')
   await settle()
   check('auto: a TUI-driven switch away from it is learned', readPermissionPref() === 'safe', readPermissionPref())
+  // An unload migration racing a pending TUI switch to another target is
+  // still the plugin's doing, not the user's choice.
+  env.agent.session.append('permission/preset', { preset: 'auto' })
+  await settle()
+  const pending = channel.runPermissionPreset('gone-with-the-plugin')
+  env.agent.session.append('permission/preset', { preset: 'danger-full-access' })
+  await pending
+  await settle()
+  check('auto: an unload migration during a pending switch elsewhere is not learned', readPermissionPref() === 'safe', readPermissionPref())
 }
 
 {
