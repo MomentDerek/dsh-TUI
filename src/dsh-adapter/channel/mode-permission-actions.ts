@@ -175,7 +175,10 @@ export function createPermissionModeActions(
    *  when it unloads, and that migration — even one racing a pending switch
    *  to another target — must not become the next session's default. */
   const userPermissionTargets: string[] = []
-  const trackUserPermissionSwitch = async <T>(target: string, run: () => Promise<T>): Promise<T> => {
+  /** `input` is the raw `/permission` argument; its first token names the
+   *  target preset. */
+  const trackUserPermissionSwitch = async <T>(input: string, run: () => Promise<T>): Promise<T> => {
+    const target = input.trim().split(/\s+/)[0] ?? ''
     userPermissionTargets.push(target)
     try {
       return await run()
@@ -430,7 +433,7 @@ export function createPermissionModeActions(
     applyMode,
     onSessionEvent,
     applyRememberedPermission,
-    runPermissionPreset: name => trackUserPermissionSwitch(name.trim(), () => permission.runPermissionPreset(name)),
+    runPermissionPreset: name => trackUserPermissionSwitch(name, () => permission.runPermissionPreset(name)),
     trackUserPermissionSwitch,
     permission,
   }

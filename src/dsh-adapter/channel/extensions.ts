@@ -525,6 +525,10 @@ export function attachDshExtensions(
     executeRegistryCommand,
     notify,
   })
+  // A `/permission` the user ran is a TUI-driven switch: the preference may
+  // learn it even when it leaves `auto` (see trackUserPermissionSwitch).
+  const trackPermissionCommand = <T>(name: string, rawInput: string, run: () => Promise<T>): Promise<T> =>
+    name === 'permission' ? modeActions.trackUserPermissionSwitch(rawInput, run) : run()
 
   // Event subscription routing is a distinct binding owner. Its hooks run in
   // every core bind: owner-level child listeners once, then the activity seed,
@@ -739,14 +743,10 @@ export function attachDshExtensions(
     renameSessionTo: sessionMetadataActions.renameSessionTo,
     compact: manualCompaction.compact,
     cancelCompact: manualCompaction.cancel,
-    // A `/permission` the user ran is a TUI-driven switch: the preference may
-    // learn it even when it leaves `auto` (see trackUserPermissionSwitch).
-    runExternalCommand: (name, rawInput, images) => name === 'permission'
-      ? modeActions.trackUserPermissionSwitch(rawInput.trim(), () => externalCommands.invokeText(name, rawInput, images))
-      : externalCommands.invokeText(name, rawInput, images),
-    runExternalCommandOutcome: (name, rawInput, images) => name === 'permission'
-      ? modeActions.trackUserPermissionSwitch(rawInput.trim(), () => externalCommands.invoke(name, rawInput, images))
-      : externalCommands.invoke(name, rawInput, images),
+    runExternalCommand: (name, rawInput, images) => trackPermissionCommand(name, rawInput,
+      () => externalCommands.invokeText(name, rawInput, images)),
+    runExternalCommandOutcome: (name, rawInput, images) => trackPermissionCommand(name, rawInput,
+      () => externalCommands.invoke(name, rawInput, images)),
     mcpStatus: reportActions.mcpStatus,
     exportSession: reportActions.exportSession,
     initWorkspace: reportActions.initWorkspace,
