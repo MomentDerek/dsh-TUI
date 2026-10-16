@@ -127,7 +127,7 @@ import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
 import type { KernelBackendId } from '../kernelPrefs.js'
 import { modeDisplayName } from '../sessionModes.js'
-import { PERMISSION_PRESET_AUTO } from '../permissionPresetLabels.js'
+import { PERMISSION_PRESET_AUTO, permissionPresetLabel } from '../permissionPresetLabels.js'
 import { PlanPicker } from '../components/PlanPicker.js'
 import { LangPicker } from '../components/LangPicker.js'
 import { ThemePicker, getThemeOptions } from '../components/ThemePicker.js'
@@ -263,6 +263,13 @@ function cleanCommandError(error: unknown): string {
 function needsAutoConfirm(snapshot: PermissionPresetSnapshot, value: string | undefined): boolean {
   return value === PERMISSION_PRESET_AUTO
     && !(snapshot.current?.kind === 'preset' && snapshot.current.value === PERMISSION_PRESET_AUTO)
+}
+
+/** The current identity's display name, localized like the picker rows. */
+function currentPermissionName(snapshot: PermissionPresetSnapshot): string | undefined {
+  const current = snapshot.current
+  if (current === undefined) return undefined
+  return current.kind === 'preset' ? permissionPresetLabel(current) : current.name
 }
 
 function clonePermissionPresetSnapshot(snapshot: PermissionPresetSnapshot): PermissionPresetSnapshot {
@@ -3700,7 +3707,7 @@ export function Chat({
           }
           const currentName = snapshot.availability === 'unavailable'
             ? t('permission-roster-unavailable')
-            : snapshot.current?.name ?? '—'
+            : currentPermissionName(snapshot) ?? '—'
           channel.pushLocal('/permission', [
             t('permission-current', { name: currentName }),
             t('permission-policy-hint'),
@@ -6275,7 +6282,7 @@ export function Chat({
     let launchpadPermission: string | undefined
     try {
       const snapshot = channel.permissionPresets()
-      launchpadPermission = snapshot.availability === 'runtime' ? snapshot.current?.name : undefined
+      launchpadPermission = snapshot.availability === 'runtime' ? currentPermissionName(snapshot) : undefined
     } catch {
       launchpadPermission = undefined
     }
