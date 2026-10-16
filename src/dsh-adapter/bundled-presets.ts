@@ -8,6 +8,9 @@ import { parse } from 'yaml'
 import { packagedPresetRoot } from './packaged-presets.js'
 import { PRESET_PATCH_MODULE } from '../preset-patch.js'
 
+/** Upstream presets copied into the roster by id; liangshen ships in this package. */
+const UPSTREAM_PRESET_IDS: readonly string[] = ['standard', 'ptc', 'minimal', 'cordis']
+
 interface DeclarativePresets {
   register(definition: PresetDefinition): Promise<() => Promise<void>>
 }
@@ -108,7 +111,7 @@ export async function registerBundledPresets(ctx: Context): Promise<boolean> {
   }
   const patches = presetPatches(ctx, loader)
   const require = createRequire(ctx.baseUrl ?? import.meta.url)
-  for (const id of ['standard', 'ptc', 'minimal', 'cordis']) {
+  for (const id of UPSTREAM_PRESET_IDS) {
     if (declared.has(id)) continue
     const path = require.resolve(`@deepseek-ai/dsh-web-app/presets/${id}.patch.yml`)
     const owner = ctx.extend({ baseUrl: pathToFileURL(path).href })
@@ -133,6 +136,12 @@ export async function registerBundledPresets(ctx: Context): Promise<boolean> {
       }],
     })
     ctx.effect(() => dispose)
+  }
+  // A typo in `preset` would otherwise be a silent no-op (row ids warn inside
+  // patchDefinition). Profile-declared presets are the profile's own seats.
+  for (const preset of patches.keys()) {
+    if (preset === 'liangshen' || UPSTREAM_PRESET_IDS.includes(preset) || declared.has(preset)) continue
+    ctx.logger.warn(`dsh-tui: preset-patch row names a preset dsh-tui does not register: "${preset}"`)
   }
   return true
 }

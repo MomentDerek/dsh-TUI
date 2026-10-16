@@ -173,6 +173,12 @@ export interface InitiatorScope {
  * call: a compressing proxy (billion-context) adopts the parent's state for
  * the branch instead of sending the raw replay, which overflows long sessions.
  * Without the service, or once its scope is closing, the call runs as before.
+ *
+ * The view is no stored Session: `session.id` carries the branch identity
+ * while `header.id` deliberately keeps the parent's (a stored fork's header id
+ * mirrors its own session). The verified consumer path reads `session.id`;
+ * aligning `header.id` changes what a parent-resolving consumer sees and needs
+ * the same real-host recheck. scripts/verify-preset-patch.ts pins this shape.
  */
 export function runAsSideBranch<T>(agents: Partial<InitiatorScope> | undefined, agent: Agent, operation: () => Promise<T>): Promise<T> {
   if (typeof agents?.withInitiator !== 'function') return operation()
@@ -191,6 +197,7 @@ function sideBranchOf(agent: Agent): Agent {
   const id = last === undefined || generation === undefined
     ? `${session.id}-btw-${randomUUID()}`
     : `${session.id}-btw-${generation}-${last}`
+  // header.id stays the parent's on purpose; see runAsSideBranch.
   const header = { ...session.header, parentSession: session.id, isSeeded: true }
   return readThrough(agent, { session: readThrough(session, { id, header }) })
 }

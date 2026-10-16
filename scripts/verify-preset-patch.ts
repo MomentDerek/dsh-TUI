@@ -4,12 +4,14 @@
  *     to the upstream presets it registers — rows nested in groups included,
  *     other rows and the parsed input untouched — merges several rows for one
  *     preset, passes liangshen's as include patches, skips disabled rows and
- *     profile-declared presets, and warns on unknown or malformed rows;
+ *     profile-declared presets, and warns on unknown rows, unknown presets or
+ *     malformed rows;
  *  2. without preset-patch rows every definition is registered unchanged;
  *  3. runAsSideBranch runs the side call under a seeded fork of the agent
- *     (stable id per parent surface, parent header kept, methods still bound
- *     to the real session) and falls back to a plain call when the agents
- *     service is absent or its scope throws.
+ *     (stable id per parent surface, the branch id on `session.id` with the
+ *     parent header kept by design, methods still bound to the real session)
+ *     and falls back to a plain call when the agents service is absent or its
+ *     scope throws.
  * Run: node --import tsx/esm scripts/verify-preset-patch.ts
  */
 import assert from 'node:assert/strict'
@@ -63,6 +65,8 @@ const patched = await register([
   marker({ preset: 'ptc', config: { 'compaction-basic': { auto: true } } }, true),
   marker({ preset: 'liangshen', config: { 'compaction-basic': { auto: false } } }),
   marker({ preset: 'cordis', config: { 'no-such-row': {} } }),
+  marker({ preset: 'minimal', config: { 'compaction-basic': { auto: false } } }),
+  marker({ preset: 'no-such-preset', config: { 'compaction-basic': { auto: false } } }),
   marker({ preset: 'standard' }),
   { disabled: false, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'minimal' } } },
 ])
@@ -77,6 +81,14 @@ assert.equal(patched.defs.has('minimal'), false, 'profile-declared preset is not
 assert.deepEqual((patched.defs.get('liangshen')!.plugins[0]!.config as { patches: unknown }).patches, [{ id: 'compaction-basic', config: { auto: false } }])
 assert.ok(patched.warnings.some(warning => warning.includes('"no-such-row"') && warning.includes('"cordis"')), 'unknown row warned')
 assert.ok(patched.warnings.some(warning => warning.includes('without `preset`')), 'malformed row warned')
+const unknownPreset = (preset: string): boolean =>
+  patched.warnings.some(warning => warning.includes('does not register') && warning.includes(`"${preset}"`))
+assert.ok(unknownPreset('no-such-preset'), 'unknown preset warned')
+// Registered and profile-declared presets keep quiet: a declared preset's
+// patch is inert by contract, not a typo.
+for (const preset of ['standard', 'ptc', 'minimal', 'cordis', 'liangshen']) {
+  assert.ok(!unknownPreset(preset), `no unknown-preset warning for ${preset}`)
+}
 
 // 3. side branch
 const store = new AsyncLocalStorage<unknown>()
@@ -98,6 +110,8 @@ const observe = () => runAsSideBranch(agents, agent, async (): Promise<Seen> => 
 })
 const first = await observe()
 assert.equal(first.id, 'parent-btw-2-9')
+// Pin the deviation on purpose: the branch identity is `session.id`; header.id
+// keeps the parent's (see runAsSideBranch before "fixing" this to the branch id).
 assert.deepEqual(first.header, { id: 'parent', cwd: '/work', parentSession: 'parent', isSeeded: true })
 assert.equal(first.model, 'deepseek-flash', 'methods stay bound to the real session')
 assert.equal((await observe()).id, first.id, 'same parent surface → same branch')
