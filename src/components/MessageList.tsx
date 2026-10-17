@@ -98,6 +98,12 @@ function isTurnRow(row: ChatRow): boolean {
   return row.kind === 'user' && row.label !== 'team-message'
 }
 
+/** The sender a team-message row shows (empty when the event named none);
+ *  undefined for every other row, which renders as the human's prompt. */
+function teamSenderOf(row: ChatRow): string | undefined {
+  return row.label === 'team-message' ? row.sender ?? '' : undefined
+}
+
 function assistantRevealText(row: ChatRow, enabled: boolean): string {
   const stripped = stripNarration(row.text)
   return revealTextOf(`a${row.id}`, stripped, {
@@ -334,7 +340,7 @@ function signatureParts(
         stringWidth(displaySelectionPath(row.selectionAttached?.path ?? '', sessionCwd)),
         String(row.selectionAttached?.lines ?? ''),
         // A team message adds its sender line above the body.
-        row.sender ?? '',
+        teamSenderOf(row) ?? '',
       )
       // Long-line fold: expanding a folded row swaps the folded preview for
       // the raw line (thousands of rows), so both expansion switches are
@@ -1561,7 +1567,7 @@ export function MessageList({
               textFull={row.kind === 'reasoning' ? row.text : undefined}
               executionTarget={row.executionTarget}
               selectionAttached={row.selectionAttached}
-              sender={row.sender}
+              sender={teamSenderOf(row)}
               streaming={displayStreaming}
               thinkingOpen={row.thinkingOpen === true}
               durationMs={row.durationMs}

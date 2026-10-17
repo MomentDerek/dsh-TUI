@@ -1608,8 +1608,16 @@ const dict = {
     en: 'This row belongs to the host layer (dsh-base): switching it off unloads services this application injects, and the app may restart or exit.',
   },
   'plugins-manage-team-active-facts': {
-    zh: '本会话有 {{members}} 个 teammate 正在运行或准备中。它们不会被停止：会以普通子代理身份跑完当前回合，回合中途失去团队工具；团队消息与任务板停止，记录留在会话里，重新开启后恢复。',
-    en: '{{members}} teammate(s) in this session are running or being created. They are not stopped: each finishes its current turn as a plain subagent, losing the team tools mid-turn; team messages and the task board stop, and the record stays in the session and comes back when the team is switched on again.',
+    zh: '本会话有 {{members}} 个 teammate 正在运行或准备中。',
+    en: '{{members}} teammate(s) in this session are running or being created.',
+  },
+  'plugins-manage-team-unseen-facts': {
+    zh: '团队里有 {{members}} 个 teammate 可能正在运行：从 teammate 会话里看不到它们的运行状态。',
+    en: '{{members}} teammate(s) of this team may be running: their runs are not visible from a teammate session.',
+  },
+  'plugins-manage-team-active-stop': {
+    zh: '关闭团队会停止它们：团队服务卸载时释放仍在运行的 teammate。团队消息与任务板停止，团队记录留在会话里。',
+    en: 'Switching the team off stops them: the team service releases the teammates still running as it unloads. Team messages and the task board stop; the team record stays in the session.',
   },
   'plugins-manage-key-confirm': { zh: '⏎ 执行 · esc 关闭', en: '⏎ do it · esc close' },
   'plugins-manage-key-busy': { zh: '写入中 · esc 只关面板，操作会继续（这三个动作没有取消面）', en: 'writing · esc only closes the pane, the action goes on (these three have no cancellation)' },
@@ -1795,6 +1803,10 @@ const dict = {
     zh: '团队 bundle 未安装。在这里安装：/plugin install {{bundle}}（装完即开启）；或在终端：dsh plugin --profile {{profile}} add {{bundle}}',
     en: 'The team bundle is not installed. Install it here with /plugin install {{bundle}} (it is switched on once installed), or in a terminal with dsh plugin --profile {{profile}} add {{bundle}}',
   },
+  'team-cmd-kernel-unsupported': {
+    zh: '运行中的 DSH {{version}} 没有本应用能读取的团队 bundle：先把 DSH 升级到 {{lines}} 之一，再安装同版本的团队 bundle。',
+    en: 'The running DSH {{version}} has no team bundle this app can read: upgrade DSH to one of {{lines}} first, then install the team bundle of that same version.',
+  },
   'team-cmd-off-not-installed': { zh: '团队 bundle 未安装，团队本就是关闭的，无需改动。', en: 'The team bundle is not installed, so the team is already off; nothing to change.' },
   'team-cmd-service': { zh: '团队服务：{{state}}', en: 'Team service: {{state}}' },
   'team-cmd-running': { zh: '运行中', en: 'running' },
@@ -1803,6 +1815,10 @@ const dict = {
   'team-cmd-pending-off': { zh: 'profile 已关闭团队，但服务仍在运行：重启后生效。', en: 'The profile has the team off but the service is still running: it applies after a restart.' },
   'team-cmd-no-members': { zh: '本会话没有 teammate。', en: 'No teammates in this session.' },
   'team-cmd-members': { zh: '本会话 teammate：{{total}} 个，其中 {{active}} 个运行中或准备中。', en: 'Teammates in this session: {{total}}, {{active}} running or provisioning.' },
+  'team-cmd-members-unseen': {
+    zh: '本会话 teammate：{{total}} 个，其中 {{active}} 个运行中或准备中，{{unseen}} 个可能在运行（从 teammate 会话里看不到）。',
+    en: 'Teammates in this session: {{total}}, {{active}} running or provisioning, {{unseen}} may be running (not visible from a teammate).',
+  },
 
   // ── agent team：子代理转录视图、发消息输入框、消息流 ──
   'agent-view-title': { zh: '子代理转录', en: 'Agent transcript' },

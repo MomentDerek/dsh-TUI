@@ -84,6 +84,18 @@ export type PluginManageTarget =
   }
 
 /**
+ * Teammates the team-off question names: known to be running or
+ * provisioning (`active`), and those whose run a teammate session cannot see
+ * (`unseen`).
+ */
+export interface TeamActiveMembers {
+  readonly active: number
+  readonly unseen: number
+}
+
+const NO_TEAM_MEMBERS: TeamActiveMembers = { active: 0, unseen: 0 }
+
+/**
  * What the action asks a person, when it asks. Which question it is decides the
  * wording and the risk it names; all three end in the same write.
  */
@@ -98,11 +110,12 @@ export type PluginManageQuestion =
    */
   | { readonly kind: 'host-row' }
   /**
-   * `disable` of the Agent Teams bundle while teammates run or are being
-   * created: they are not stopped — they finish the turn as plain subagents,
-   * without the team tools — so the person decides with that in view.
+   * `disable` of the Agent Teams bundle while teammates run, are being
+   * created, or may be running unseen (`unseen`, from a teammate session):
+   * the team service stops them as it unloads, so the person decides with
+   * that in view.
    */
-  | { readonly kind: 'team-active'; readonly members: number }
+  | { readonly kind: 'team-active'; readonly members: number; readonly unseen: number }
 
 /**
  * What `/plugin remove|enable|disable` has to say next. `done` means the flow
@@ -121,7 +134,7 @@ export interface PluginManageSink {
   /** Where the flow's transcript lines go (already sanitized and capped). */
   readonly onLines: (lines: readonly string[]) => void
   /** See `teamActiveMembers` on the flow's options. */
-  readonly teamActiveMembers?: (() => number) | undefined
+  readonly teamActiveMembers?: (() => TeamActiveMembers) | undefined
 }
 
 /**
@@ -158,10 +171,11 @@ export interface PluginManageFlowOptions {
    */
   readonly residueOf?: ((name: string) => PluginResidueWatch | undefined) | undefined
   /**
-   * Teammates of the bound session that are running or provisioning. Read
-   * when `disable` resolves to the Agent Teams bundle; absent reads as none.
+   * Teammates of the bound session that are running or provisioning, and
+   * those that may be running. Read when `disable` resolves to the Agent
+   * Teams bundle; absent reads as none.
    */
-  readonly teamActiveMembers?: (() => number) | undefined
+  readonly teamActiveMembers?: (() => TeamActiveMembers) | undefined
 }
 
 export interface PluginManageFlow {
@@ -392,8 +406,8 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     if (options.action === 'disable') {
       const hostRow = resolved.kind === 'row' && resolved.patchId !== undefined && hostRowIds.has(resolved.patchId)
       if (hostRow) return { kind: 'confirm', target: resolved, question: { kind: 'host-row' } }
-      const members = resolved.kind === 'bundle' && resolved.name === TEAM_BUNDLE ? options.teamActiveMembers?.() ?? 0 : 0
-      return members > 0 ? { kind: 'confirm', target: resolved, question: { kind: 'team-active', members } } : run()
+      const { active, unseen } = resolved.kind === 'bundle' && resolved.name === TEAM_BUNDLE ? options.teamActiveMembers?.() ?? NO_TEAM_MEMBERS : NO_TEAM_MEMBERS
+      return active + unseen > 0 ? { kind: 'confirm', target: resolved, question: { kind: 'team-active', members: active, unseen } } : run()
     }
     return { kind: 'confirm', target: resolved, question: { kind: 'trust' } }
   }

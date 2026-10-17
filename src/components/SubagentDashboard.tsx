@@ -279,6 +279,12 @@ export function SubagentDashboard({
               <Text dimColor>{' ' + t('team-status-running') + teamSep}</Text>
               <Text color="accent">{memberCount('idle')}</Text>
               <Text dimColor>{' ' + t('team-status-idle') + teamSep}</Text>
+              {memberCount('provisioning') > 0 && (
+                <>
+                  <Text dimColor>{memberCount('provisioning')}</Text>
+                  <Text dimColor>{' ' + t('team-status-provisioning') + teamSep}</Text>
+                </>
+              )}
               {memberCount('active') > 0 && (
                 <>
                   <Text color="accent">{memberCount('active')}</Text>

@@ -5,7 +5,8 @@
  * views fold known shapes into one line; anything else (an error text, a
  * changed upstream shape) falls back to the plain card. A presenter the tool
  * itself registers always wins: these run only when it has none.
- * `spawn_teammate` is not here — it renders as the subagent row.
+ * `spawn_teammate` is not here — it renders as the subagent row, and as a
+ * plain card only when it fails before the teammate exists (translate.ts).
  *
  * Three names are shared with the legacy subagent controls, which also ship
  * no presenters: a team call is told apart by its `target` argument (the
@@ -32,6 +33,14 @@ const DISPLAY_KEYS: Readonly<Record<string, string>> = {
   team_task_list: 'tool-name-team-task',
   team_task_get: 'tool-name-team-task',
   team_task_update: 'tool-name-team-task',
+}
+
+/** The team's own delegation tool; its presence is what "team on" means to a request. */
+export const TEAM_SPAWN_TOOL = 'spawn_teammate'
+
+/** Whether `name` is a team tool with a compact card here (not `spawn_teammate`). */
+export function isTeamToolName(name: string): boolean {
+  return DISPLAY_KEYS[name] !== undefined
 }
 
 function isRecord(value: unknown): value is Args {

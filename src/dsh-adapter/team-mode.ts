@@ -17,33 +17,37 @@ import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import { t } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
 import { installedKernelVersion, UPSTREAM_VALIDATED_VERSION } from './contract.js'
-import { createPluginManageFlow, type PluginManageFlow, type PluginManageSink } from './plugin-manage.js'
+import { createPluginManageFlow, type PluginManageFlow, type PluginManageSink, type TeamActiveMembers } from './plugin-manage.js'
 import { pluginManagerOf } from './plugin-manager.js'
 import { cell } from './plugins-info.js'
 import { TEAM_BUNDLE } from './team-roster.js'
+import { TEAM_SPAWN_TOOL } from './team-tools.js'
 
 /**
- * The DSH lines whose team bundle this adapter reads: the validated line and
- * the 0.2.0 compat line (compat/agent-team-0.2.0.ts; rc.1 ships the same
- * team code as rc.2). Other lines' team
- * projection may lack the `wire` view `channel.team` needs.
+ * The DSH lines whose team bundle this adapter reads: the validated line,
+ * 0.2.1-alpha.5 (its team packages differ from rc.2 only in version) and the
+ * 0.2.0 compat line (compat/agent-team-0.2.0.ts; rc.1 ships the same team
+ * code as rc.2). Other lines' team projection may lack the `wire` view
+ * `channel.team` needs.
  */
-const TEAM_LINES: ReadonlySet<string> = new Set([UPSTREAM_VALIDATED_VERSION, '0.2.0-rc.1', '0.2.0-rc.2'])
+const TEAM_LINES: ReadonlySet<string> = new Set([UPSTREAM_VALIDATED_VERSION, '0.2.1-alpha.5', '0.2.0-rc.1', '0.2.0-rc.2'])
 
 /**
  * The install spec the hints name. The team packages ship in lockstep with
  * DSH and pin their DSH peers exactly, so only the bundle of the running
  * kernel's own version installs into this host (npm `latest` and `next`
  * both name other lines).
- * @param kernel - The running DSH version; unknown or not a team line falls back to the validated line.
- * @returns `<bundle>@<version>`.
+ * @param kernel - The running DSH version; unknown falls back to the validated line.
+ * @returns `<bundle>@<version>`, or undefined on a known kernel that is not a
+ *   team line: no bundle installs there, DSH needs an upgrade first.
  */
-export function teamBundleSpec(kernel: string | undefined): string {
-  return `${TEAM_BUNDLE}@${kernel !== undefined && TEAM_LINES.has(kernel) ? kernel : UPSTREAM_VALIDATED_VERSION}`
+export function teamBundleSpec(kernel: string | undefined): string | undefined {
+  if (kernel === undefined) return `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`
+  return TEAM_LINES.has(kernel) ? `${TEAM_BUNDLE}@${kernel}` : undefined
 }
 
-/** The team's own delegation tool; its presence is what "team on" means to a request. */
-const TEAM_SPAWN_TOOL = 'spawn_teammate'
+/** The install hints that name the bundle spec. */
+type TeamInstallHint = 'team-cmd-not-installed' | 'team-cmd-no-manager'
 
 /**
  * Legacy delegation tools that `spawn_teammate` replaces. The four control
@@ -84,8 +88,8 @@ export function parseTeamArgs(args: string): TeamCommand {
 
 /** What the screen supplies: the plugin flow's sink, plus the team's live state. */
 export interface TeamCommandSink extends PluginManageSink {
-  /** Teammates of the bound session, and how many are running or provisioning. */
-  readonly members: () => { readonly total: number; readonly active: number }
+  /** Teammates of the bound session, how many are running or provisioning, and how many may be running. */
+  readonly members: () => { readonly total: number } & TeamActiveMembers
 }
 
 /** What one `/team` input turned into. */
@@ -106,17 +110,23 @@ export function createTeamCommandEntry(
 ): (args: string, sink: TeamCommandSink) => TeamCommandOutcome {
   const profile = (): string => options.profileName ?? resolveDshProfileName() ?? 'dsh-tui'
   // The version does not change in a process: read it once, on the first hint.
-  let spec: string | undefined
-  const bundle = (): string => spec ??= teamBundleSpec(options.kernelVersion ?? installedKernelVersion())
+  let kernel: { readonly version: string | undefined } | undefined
+  const hint = (key: TeamInstallHint): string => {
+    kernel ??= { version: options.kernelVersion ?? installedKernelVersion() }
+    const spec = teamBundleSpec(kernel.version)
+    return spec === undefined
+      ? t('team-cmd-kernel-unsupported', { version: cell(kernel.version ?? ''), lines: [...TEAM_LINES].join(' / ') })
+      : t(key, { profile: cell(profile()), bundle: spec })
+  }
   return (args, sink) => {
     const parsed = parseTeamArgs(args)
     if (parsed.kind === 'unknown') {
       return { kind: 'lines', lines: Promise.resolve([t('team-cmd-usage', { sub: cell(parsed.sub) })]) }
     }
     const manager = pluginManagerOf(ctx)
-    if (parsed.kind === 'status') return { kind: 'lines', lines: teamStatusLines(ctx, sink, profile(), bundle) }
+    if (parsed.kind === 'status') return { kind: 'lines', lines: teamStatusLines(ctx, sink, hint) }
     if (manager === undefined) {
-      return { kind: 'lines', lines: Promise.resolve([t('team-cmd-no-manager', { profile: cell(profile()), bundle: bundle() })]) }
+      return { kind: 'lines', lines: Promise.resolve([hint('team-cmd-no-manager')]) }
     }
     const flow = createPluginManageFlow({
       manager,
@@ -126,7 +136,7 @@ export function createTeamCommandEntry(
       busy: sink.busy,
       onLines: sink.onLines,
       profileName: profile(),
-      teamActiveMembers: () => sink.members().active,
+      teamActiveMembers: sink.members,
     })
     // Without the package the lifecycle flow would answer with its generic
     // "no such target" and every addressable name. Say what is missing
@@ -158,7 +168,7 @@ export function createTeamCommandEntry(
           if (installed && !enabled) return flow.begin()
           if (sink.binding() === bindingAtStart) {
             sink.onLines(!installed
-              ? [t('team-cmd-not-installed', { profile: cell(profile()), bundle: bundle() })]
+              ? [hint('team-cmd-not-installed')]
               : [t('team-cmd-already-on'), ...ctx.get('agentTeams', false) === undefined ? [t('team-cmd-pending-on')] : []])
           }
           return { kind: 'done' }
@@ -172,13 +182,13 @@ export function createTeamCommandEntry(
  * `/team` and `/team status`: whether the profile selects the bundle, whether
  * the team service is running in this process, and the bound session's team.
  */
-async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: string, spec: () => string): Promise<readonly string[]> {
+async function teamStatusLines(ctx: Context, sink: TeamCommandSink, hint: (key: TeamInstallHint) => string): Promise<readonly string[]> {
   const manager = pluginManagerOf(ctx)
   const service = ctx.get('agentTeams', false) !== undefined
   const lines: string[] = []
   if (manager === undefined) {
     lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
-    lines.push(t('team-cmd-no-manager', { profile: cell(profile), bundle: spec() }))
+    lines.push(hint('team-cmd-no-manager'))
   } else {
     let selected: boolean | undefined
     let installed = false
@@ -192,7 +202,7 @@ async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: str
     if (selected !== undefined || installed) {
       lines.push(t('team-cmd-bundle', { state: t(selected === true ? 'team-cmd-on' : 'team-cmd-off') }))
     } else if (lines.length === 0) {
-      lines.push(t('team-cmd-not-installed', { profile: cell(profile), bundle: spec() }))
+      lines.push(hint('team-cmd-not-installed'))
     }
     lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
     // The profile says on but nothing runs (a startup-only profile, or the
@@ -200,7 +210,9 @@ async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: str
     if (selected === true && !service) lines.push(t('team-cmd-pending-on'))
     if (selected === false && service) lines.push(t('team-cmd-pending-off'))
   }
-  const { total, active } = sink.members()
-  lines.push(total === 0 ? t('team-cmd-no-members') : t('team-cmd-members', { total: String(total), active: String(active) }))
+  const { total, active, unseen } = sink.members()
+  lines.push(total === 0
+    ? t('team-cmd-no-members')
+    : t(unseen === 0 ? 'team-cmd-members' : 'team-cmd-members-unseen', { total: String(total), active: String(active), unseen: String(unseen) }))
   return lines
 }

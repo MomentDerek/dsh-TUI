@@ -98,10 +98,10 @@ const subagents: SubagentState[] = [
   check('teammate view: no row is joined to a member', peer.teammates.every(r => r.subagent === undefined))
   check('teammate view: its own rows stay other subagents', peer.others.map(r => r.agentId).join() === 'mate-run,child-1')
   check('status: an unknown run of an active member reads active', teamMemberStatus(active, row('x', { status: 'running' }), false) === 'active')
-  check('counts: from the Lead, running and provisioning members are active',
-    JSON.stringify(teamMemberCounts(team, subagents, LEAD)) === '{"total":4,"active":2}', JSON.stringify(teamMemberCounts(team, subagents, LEAD)))
-  check('counts: inside a teammate, siblings count but the teammate itself does not',
-    JSON.stringify(teamMemberCounts(team, [], 'mate-done')) === '{"total":4,"active":2}', JSON.stringify(teamMemberCounts(team, [], 'mate-done')))
+  check('counts: from the Lead, running and provisioning members are active, none unseen',
+    JSON.stringify(teamMemberCounts(team, subagents, LEAD)) === '{"total":4,"active":2,"unseen":0}', JSON.stringify(teamMemberCounts(team, subagents, LEAD)))
+  check('counts: inside a teammate, a sibling\'s run is unseen, provisioning stays known, the teammate itself counts in neither',
+    JSON.stringify(teamMemberCounts(team, [], 'mate-done')) === '{"total":4,"active":1,"unseen":1}', JSON.stringify(teamMemberCounts(team, [], 'mate-done')))
   check('tasks: progress counts completed', JSON.stringify(teamTaskProgress(team.tasks)) === '{"completed":1,"total":3}')
 }
 
@@ -143,8 +143,8 @@ try {
     const f = await mount(100, 40, { team, onSelect: (id: string) => selected.push(id), onClose: () => {} }, 'Tasks')
     const screen = f.lines.join('\n')
     check('full: team title', screen.includes('Agent Team'), f.lines[0])
-    check('full: member counts and task progress in the header',
-      /1 running\s+1 idle\s+1 failed\s+tasks 1\/3/.test(screen), f.lines.slice(0, 4).join('|'))
+    check('full: member counts (provisioning included) and task progress in the header',
+      /1 running\s+1 idle\s+1 provisioning\s+1 failed\s+tasks 1\/3/.test(screen), f.lines.slice(0, 4).join('|'))
     check('full: the Lead line', screen.includes('◆ lead · this session'))
     check('full: a teammate card shows its name, not its description',
       f.lines.some(line => line.includes('builder') && line.includes('running')) && !screen.includes('desc of mate-run'))

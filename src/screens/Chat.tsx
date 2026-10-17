@@ -1051,10 +1051,10 @@ export function Chat({
     initialStep: { kind: 'done' },
     failureLine: error => t('plugins-manage-failed', { reason: cleanScalarText(error, COMMAND_RESULT_CELLS) }),
   })
-  /** 绑定会话的 teammate 数与其中运行中／准备中的数（关闭团队前的确认用）。 */
-  const teamMembers = (): { total: number; active: number } => {
+  /** 绑定会话的 teammate 数、其中运行中／准备中的数与可能在运行的数（关闭团队前的确认用）。 */
+  const teamMembers = (): { total: number; active: number; unseen: number } => {
     const team = channel.team
-    return team === undefined ? { total: 0, active: 0 } : teamMemberCounts(team, [...channel.subagents], channel.sessionId)
+    return team === undefined ? { total: 0, active: 0, unseen: 0 } : teamMemberCounts(team, [...channel.subagents], channel.sessionId)
   }
   /** 开始一次生命周期动作；`false` 表示这段输入不是那三种形式（或本启动没有服务）。 */
   const startPluginManage = (rawArgs: string): boolean => {
@@ -1063,7 +1063,7 @@ export function Chat({
       // 回合运行中改 profile 会触发应用／HMR：门禁在流程里（解析之前与写入之前各查一次）。
       busy: () => channel.working,
       onLines: lines => channel.pushLocal('/plugin', lines),
-      teamActiveMembers: () => teamMembers().active,
+      teamActiveMembers: teamMembers,
     })
     if (flow === undefined) return false
     pluginManage.start(flow, flow.begin())

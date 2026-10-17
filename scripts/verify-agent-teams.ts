@@ -241,4 +241,33 @@ assert.equal(teamToolResultView('team_task_get', '{}', '{"unexpected":true}'), u
   const owned = call({ presentCall: () => ({ card: 'generic', title: 'own' }) })
   assert.ok(owned?.type === 'tool.call' && owned.presentation !== undefined && 'title' in owned.presentation && owned.presentation.title === 'own')
 }
-console.log('PASS team tool cards (spawn_teammate → subagent row, one-line call/result summaries, legacy names and unknown shapes stay raw)')
+{
+  // The team refuses a teammate before any member or subagent/start exists:
+  // only the call and its error are on the log, and the error shows once.
+  const spawnArgs = JSON.stringify({ name: 'reviewer', description: 'Review the diff', prompt: 'review' })
+  const spawnCall = { type: 'tool/call', seq: 40, time: 1, data: { callId: 'spawn-1', name: 'spawn_teammate', arguments: spawnArgs, turn: 1, step: 1 } }
+  const refused = 'teammate name "reviewer" was already used in this Team'
+  const spawnResult = (isError: boolean) => ({
+    type: 'tool/result', seq: 41, time: 2,
+    data: {
+      turn: 1, step: 1,
+      message: { id: 'msg-spawn', role: 'tool', content: [{ type: 'text', text: isError ? refused : '{"id":"m1","name":"reviewer"}' }], source: { kind: 'tool', callId: 'spawn-1' }, toolCallId: 'spawn-1', ...isError ? { isError: true } : {} },
+      ...isError ? { error: { name: 'TeamError', code: 'TEAM_MEMBER_NAME_TAKEN', reason: refused } } : {},
+    },
+  })
+  for (const replaying of [false, true]) {
+    const translator = createDshTranslator(deps)
+    const harness = createProjectorHarness()
+    harness.apply([spawnCall, spawnResult(true)].flatMap(event => translator.translateEvent(event as never)), replaying)
+    const cards = harness.state.rows.filter(row => row.kind === 'tool')
+    assert.equal(cards.length, 1, `a refused spawn shows one card (${replaying ? 'replay' : 'live'})`)
+    assert.equal(cards[0]!.tool?.name, 'spawn_teammate')
+    assert.equal(cards[0]!.tool?.status, 'error')
+    assert.match(cards[0]!.tool?.errorText ?? '', /already used in this Team/, 'the upstream reason is on the card')
+    const accepted = createProjectorHarness()
+    const fresh = createDshTranslator(deps)
+    accepted.apply([spawnCall, spawnResult(false)].flatMap(event => fresh.translateEvent(event as never)), replaying)
+    assert.deepEqual(accepted.state.rows.filter(row => row.kind === 'tool'), [], 'an accepted spawn leaves the teammate to the subagent row')
+  }
+}
+console.log('PASS team tool cards (spawn_teammate → subagent row, a refused spawn → one error card live and on replay, one-line call/result summaries, legacy names and unknown shapes stay raw)')

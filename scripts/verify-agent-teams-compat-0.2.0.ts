@@ -123,7 +123,19 @@ const current = delivery(relaySource, [{ type: 'text', text: 'Team message from 
   const views = folded(legacy)
   assert.equal(views.length, 1)
   assert.deepEqual(views, folded(current))
-  console.log('PASS subagent projection folds a mailbox delivery as the relay')
+  assert.equal(views[0]!.text, body.text, 'the feed shows the body, not the framing block')
+  // The same delivery into the parent (the Lead's own feed).
+  const parentFolded = (event: unknown) => {
+    const stateStub = { rows: [], subagents: [] as unknown[], subagentCost: [], emitCount: 0, emit() { this.emitCount += 1 }, emitStream() {} }
+    const agent = { id: 'ag-1', status: 'idle', session: { id: LEAD } }
+    const service = { prompt: async () => ({ messageId: 'msg-1' }), listChildren: async () => [] }
+    const projection = createSubagentProjection(() => stateStub as never, { rowIds: { value: 0 }, agent: () => agent as never, subagents: () => service, lookupChild: () => undefined })
+    projection.onParentEvent(event, false, LEAD)
+    return projection.control.message!.messages().map(view => view.text)
+  }
+  assert.deepEqual(parentFolded(legacy), [body.text], 'a 0.2.0 delivery into the Lead: body only')
+  assert.deepEqual(parentFolded(current), [body.text], 'a 0.2.1 delivery into the Lead: body only')
+  console.log('PASS subagent projection folds a mailbox delivery as the relay, the feed without the team framing')
 }
 
 // ── send_message result ────────────────────────────────────────────────────

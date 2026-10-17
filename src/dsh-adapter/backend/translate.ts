@@ -26,7 +26,7 @@ import { harnessToolResultView, prepareReplayEvents, toolErrorText } from '../ch
 import type { ToolCallView, ToolResultView, ToolsRegistryLike } from '../channel/types.js'
 import { isCompactionCheckpointSource, toolResultPayload } from '../compat/messages.js'
 import { transcriptImagesOf } from '../transcript-images.js'
-import { teamMessageOf, teamToolCallView, teamToolResultView } from '../team-tools.js'
+import { isTeamToolName, TEAM_SPAWN_TOOL, teamMessageOf, teamToolCallView, teamToolResultView } from '../team-tools.js'
 import { teamMailboxAsRelay, withoutTeammateReminder } from '../compat/agent-team-0.2.0.js'
 
 export interface DshTranslatorDeps {
@@ -228,10 +228,11 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
    * Open calls by callId until their result: what the result's presenter,
    * images and task feeds need. `card: false` = question-presented (the
    * projector projects the record from the result text). Subagent calls are
-   * not tracked: nothing about their result is projected. Bounded like the
-   * projector's own card index: deleted on result, cleared on reset.
+   * not tracked: nothing about their result is projected, except a failed
+   * `spawn_teammate` (`failed`: the plain call it renders as then). Bounded
+   * like the projector's own card index: deleted on result, cleared on reset.
    */
-  const openCalls = new Map<string, { readonly name: string; readonly args: string; readonly card: boolean }>()
+  const openCalls = new Map<string, { readonly name: string; readonly args: string; readonly card: boolean; readonly failed?: AgentEventOf<'tool.call'> }>()
 
   /** Ask the producing tool how its call should render (diff/terminal/…).
    *  Unknown tool, unparseable args, or a throwing presenter all degrade to
@@ -257,6 +258,8 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
       if (local !== undefined) return local
       const tool = deps.tools()?.get(name, deps.scope())
       if (tool?.presentResult === undefined) {
+        // Only the team tools read the text: skip joining every other result.
+        if (!isTeamToolName(name)) return undefined
         const text = toolResultPayload(data.message).content.map(item => (item.type === 'text' ? item.text : '')).join('').trim()
         return teamToolResultView(name, rawArgs, text)
       }
@@ -342,6 +345,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
       ...(data.meta === undefined ? {} : { meta: data.meta }),
       ...(card === undefined || isError ? {} : { presentation: presentResultView(card.name, card.args, data) as ToolResultPresentation | undefined }),
     }
+    if (call?.failed !== undefined) return isError ? [call.failed, result] : [result]
     if (card === undefined || isError) return [result]
     const events: AgentEvent[] = [result]
     // A job_output read doubles as the job card's output feed (the
@@ -410,7 +414,15 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
           return [{ ...base, presentation: QUESTION }]
         }
         // The delegation tools render as the live subagent card.
-        if (isSubagentToolName(data.name)) return [{ ...base, presentation: SUBAGENT }]
+        if (isSubagentToolName(data.name)) {
+          // The team refuses a teammate (name taken or invalid, member limit)
+          // before any member or subagent/start exists: no row would carry
+          // that error, so a failed result brings back the plain card.
+          if (data.name === TEAM_SPAWN_TOOL) {
+            openCalls.set(callId, { name: data.name, args: data.arguments, card: false, failed: { ...base, presentation: presentCallView(data.name, data.arguments) as ToolCallPresentation | undefined } })
+          }
+          return [{ ...base, presentation: SUBAGENT }]
+        }
         openCalls.set(callId, { name: data.name, args: data.arguments, card: true })
         return [{ ...base, presentation: presentCallView(data.name, data.arguments) as ToolCallPresentation | undefined }]
       }

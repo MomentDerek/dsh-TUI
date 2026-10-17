@@ -8,6 +8,14 @@ import type { AgentIdentity, AgentMessageControl, AgentMessageSubmitInput, Agent
 import type { ChannelState, ChatRow, SubagentControl, SubagentRow } from './types.js'
 import { isSubagentToolName } from './projection-helpers.js'
 import { teamMailboxAsRelay } from '../compat/agent-team-0.2.0.js'
+import { teamMessageOf } from '../team-tools.js'
+
+/** A relay's body as the agent-message feed shows it: a team message without
+ *  its `Team message from <name>:` framing block (the sender is `from`). */
+function relayTextOf(source: unknown, content: unknown): string {
+  const team = Array.isArray(content) ? teamMessageOf(source, content as readonly { readonly type: string }[]) : undefined
+  return team?.text ?? agentMessageTextOf(content)
+}
 
 /**
  * Bound the retained description text. Evicting an older term does not cancel
@@ -311,7 +319,7 @@ function createSessionSubagentProjection(
       from: relay.senderSessionId,
       to: childId,
       via: 'agent-relay',
-      text: agentMessageTextOf(data.content),
+      text: relayTextOf(data.source, data.content),
       state: 'queued',
       ...(typeof (event as { seq?: unknown }).seq === 'number' ? { sourceRef: `seq:${(event as { seq: number }).seq}` } : {}),
       observedAt: eventTime(event) ?? Date.now(),
@@ -432,7 +440,7 @@ function createSessionSubagentProjection(
           from: relay.senderSessionId,
           ...(parentSessionId === undefined ? {} : { to: parentSessionId, parentSessionId }),
           via: 'agent-relay',
-          text: agentMessageTextOf(delivered.content),
+          text: relayTextOf(delivered.source, delivered.content),
           state: 'queued',
           ...(typeof ev.seq === 'number' ? { sourceRef: `seq:${ev.seq}` } : {}),
           observedAt: eventTime(event) ?? Date.now(),

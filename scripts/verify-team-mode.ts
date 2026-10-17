@@ -189,7 +189,8 @@ try {
   assert.equal(teamBundleSpec('0.2.0-rc.2'), `${TEAM_BUNDLE}@0.2.0-rc.2`)
   assert.equal(teamBundleSpec('0.2.0-rc.1'), `${TEAM_BUNDLE}@0.2.0-rc.1`, 'rc.1 ships the same team code as rc.2')
   assert.equal(teamBundleSpec(undefined), `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`, 'an unknown kernel falls back to the validated line')
-  assert.equal(teamBundleSpec('0.1.5-alpha.2'), `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`, 'a line without a readable team bundle falls back to the validated line')
+  assert.equal(teamBundleSpec('0.2.1-alpha.5'), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'alpha.5 ships the same team code as rc.2')
+  assert.equal(teamBundleSpec('0.1.5-alpha.2'), undefined, 'a line without a readable team bundle names no bundle')
   assert.deepEqual(parseTeamArgs(''), { kind: 'status' })
   assert.deepEqual(parseTeamArgs(' status '), { kind: 'status' })
   assert.deepEqual(parseTeamArgs('on'), { kind: 'on' })
@@ -215,11 +216,11 @@ try {
     }
     return { ctx, calls, manager }
   }
-  const sink = (members: { total: number; active: number }, lines: string[]) => ({
+  const sink = (members: { total: number; active: number; unseen?: number }, lines: string[]) => ({
     binding: () => 1,
     busy: () => false,
     onLines: (next: readonly string[]) => { lines.push(...next) },
-    members: () => members,
+    members: () => ({ unseen: 0, ...members }),
   })
   const linesOf = async (outcome: ReturnType<ReturnType<typeof createTeamCommandEntry>>): Promise<string[]> => {
     assert.equal(outcome.kind, 'lines')
@@ -242,6 +243,10 @@ try {
     // The entry passes the running host's version; it wins over this package's own resolution.
     const hosted = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui', kernelVersion: '0.2.0-rc.2' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
     assert.match(hosted, /\/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.0-rc\.2 /)
+    // A kernel no team bundle installs into is told to upgrade, not handed a bundle it cannot load.
+    const older = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui', kernelVersion: '0.1.5-alpha.2' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
+    assert.match(older, /The running DSH 0\.1\.5-alpha\.2 has no team bundle this app can read: upgrade DSH/)
+    assert.doesNotMatch(older, /plugin install/, 'no install command for a kernel it cannot serve')
     const unmanaged = createTeamCommandEntry(rig({ manager: false }).ctx as never, { profileName: 'dsh-tui' })
     assert.match((await linesOf(unmanaged('off', sink({ total: 0, active: 0 }, [])))).join('\n'), /no profile plugin service/)
     assert.match((await linesOf(entry('toggle', sink({ total: 0, active: 0 }, [])))).join('\n'), /Usage: \/team/)
@@ -308,19 +313,28 @@ try {
     const loud = createTeamCommandEntry(busy.ctx as never, { profileName: 'dsh-tui' })('off', sink({ total: 3, active: 2 }, []))
     if (loud.kind !== 'flow') throw new Error('expected a flow')
     const step = await loud.flow.begin()
-    assert.deepEqual(step.kind === 'confirm' ? step.question : undefined, { kind: 'team-active', members: 2 })
+    assert.deepEqual(step.kind === 'confirm' ? step.question : undefined, { kind: 'team-active', members: 2, unseen: 0 })
     assert.deepEqual(busy.calls, [], 'nothing is written before the answer')
     await loud.flow.confirm()
     assert.deepEqual(busy.calls, [`setBundleEnabled:${TEAM_BUNDLE}:false`])
+    // From a teammate: siblings that may be running still ask first.
+    const unseen = rig()
+    const guarded = createTeamCommandEntry(unseen.ctx as never, { profileName: 'dsh-tui' })('off', sink({ total: 2, active: 0, unseen: 1 }, []))
+    if (guarded.kind !== 'flow') throw new Error('expected a flow')
+    const asked = await guarded.flow.begin()
+    assert.deepEqual(asked.kind === 'confirm' ? asked.question : undefined, { kind: 'team-active', members: 0, unseen: 1 })
+    assert.deepEqual(unseen.calls, [], 'nothing is written before the answer')
+    const status = (await linesOf(createTeamCommandEntry(rig().ctx as never, { profileName: 'dsh-tui' })('', sink({ total: 2, active: 0, unseen: 1 }, [])))).join('\n')
+    assert.match(status, /Teammates in this session: 2, 0 running or provisioning, 1 may be running \(not visible from a teammate\)/)
   }
   {
     // `/plugin disable <team bundle>` asks the same question; another bundle does not.
     const { manager } = rig({ bundles: [teamBundle(true), { ...teamBundle(true), name: 'other-bundle' }] })
     const plugin = createPluginManageEntry({ get: (name: string) => (name === 'pluginManager' ? manager : undefined) } as never, { profileName: 'dsh-tui' })
-    const pluginSink = { binding: () => 1, busy: () => false, onLines: () => undefined, teamActiveMembers: () => 1 }
+    const pluginSink = { binding: () => 1, busy: () => false, onLines: () => undefined, teamActiveMembers: () => ({ active: 1, unseen: 0 }) }
     const team = plugin(`disable ${TEAM_BUNDLE}`, pluginSink)
     const step = await team!.begin()
-    assert.deepEqual(step.kind === 'confirm' ? step.question : undefined, { kind: 'team-active', members: 1 })
+    assert.deepEqual(step.kind === 'confirm' ? step.question : undefined, { kind: 'team-active', members: 1, unseen: 0 })
     const other = await plugin('disable other-bundle', pluginSink)!.begin()
     assert.equal(other.kind, 'done', 'only the team bundle asks')
   }

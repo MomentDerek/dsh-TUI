@@ -306,17 +306,20 @@ bundle, the service and this session's teammates). The switch enables or
 disables the bundle in the profile, so it persists across restarts, and on a
 `dsh --profile` launch it applies at once — running sessions included: the
 model is told which tools came and went. Turning it off while teammates run
-asks first; they are not stopped but finish their turn as plain subagents,
-and the team record stays in the session for the next `/team on`.
+asks first, and switching off stops them: the team service releases the
+teammates still running as it unloads. Inside a teammate session the other
+teammates' runs are not visible, so the question counts them as possibly
+running. The team record stays in the session for the next `/team on`.
 `/plugin enable|disable` on the bundle does the same.
 
 Pin the version to exactly your installed DSH version (the command above
-uses the primary line `0.2.1-rc.2`; on DSH `0.2.0-rc.1` or `0.2.0-rc.2`
-install `…-profile@` that same version). The team packages ship in lockstep with DSH and pin
+uses the primary line `0.2.1-rc.2`; on DSH `0.2.1-alpha.5`, `0.2.0-rc.1` or
+`0.2.0-rc.2` install `…-profile@` that same version). The team packages ship in lockstep with DSH and pin
 their DSH peers exactly, so neither the untagged install nor `next` works.
 When the package is missing, `/team on` prints the command with your
-DSH version filled in if it is one of those two lines, and `0.2.1-rc.2`
-otherwise.
+DSH version filled in on those lines (`0.2.1-rc.2` when the version cannot
+be read); on any other DSH version it asks you to upgrade DSH first, since
+no team bundle installs there.
 
 While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /
 `subagent_fork` from it, and the team's `send_message` / `list_agents` /

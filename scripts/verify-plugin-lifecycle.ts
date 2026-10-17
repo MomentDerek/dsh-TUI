@@ -609,6 +609,59 @@ for (const order of ['registry first', 'guard first'] as const) {
   check(`${order}: root.effect itself stays refused to the plugin`, outcome.rootEffect === 'denied', JSON.stringify(outcome))
   await teamFiber.dispose()
   check(`${order}: unloading the plugin drops its projection key`, !registry.registrations.has('agentTeamProbe'))
+
+  // TeamService's own shape: the registration inside an outer effect whose
+  // async disposer still reads the key before unregistering it. A sibling
+  // effect on the plugin's fiber would drop the key mid-teardown.
+  const teardown: string[] = []
+  const ordered = teamRoot.plugin({
+    name: 'agent-team-ordered',
+    apply(ctx: Context) {
+      ctx.effect(() => {
+        const disposeProjection = (ctx.root as unknown as { sessionProjections: { register(def: unknown): () => void } }).sessionProjections.register(definition)
+        return async () => {
+          try {
+            await (async () => {})()
+            teardown.push(registry.registrations.has('agentTeamProbe') ? 'present' : 'gone')
+          } finally {
+            disposeProjection()
+          }
+        }
+      }, 'agentTeams.runtimeLifecycle()')
+    },
+  })
+  await ordered
+  await ordered.dispose()
+  check(`${order}: the key stays readable through the plugin's async teardown`, teardown.join() === 'present', teardown.join())
+  check(`${order}: and goes once that teardown unregisters it`, !registry.registrations.has('agentTeamProbe'))
+
+  // A reload releases the old registration before the new one lands.
+  const reloading = teamRoot.plugin({
+    name: 'agent-team-reload',
+    apply(ctx: Context) {
+      ;(ctx.root as unknown as { sessionProjections: { register(def: unknown): () => void } }).sessionProjections.register(definition)
+    },
+  }, { generation: 1 })
+  await reloading
+  reloading.update({ generation: 2 })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  const refs = (registry.registrations.get('agentTeamProbe') as { refs?: number } | undefined)?.refs
+  check(`${order}: a reload holds one registration, not two`, refs === 1, String(refs))
+  await reloading.dispose()
+  check(`${order}: unloading the reloaded plugin drops the key`, !registry.registrations.has('agentTeamProbe'))
+
+  // An activation that throws after registering leaves nothing behind.
+  const failing = teamRoot.plugin({
+    name: 'agent-team-failing',
+    apply(ctx: Context) {
+      ;(ctx.root as unknown as { sessionProjections: { register(def: unknown): () => void } }).sessionProjections.register(definition)
+      throw new Error('activation failed')
+    },
+  })
+  await Promise.resolve(failing).catch(() => undefined)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  check(`${order}: a failed activation leaves no projection key`, !registry.registrations.has('agentTeamProbe'))
+  await failing.dispose()
   await teamRoot.fiber.dispose()
 }
 if (failures > 0) {
