@@ -153,6 +153,8 @@ const dict = {
   'export-dir': { zh: '- 目录: {{cwd}}', en: '- Directory: {{cwd}}' },
   'mentions-attached': { zh: '已附加 {{count}} 个文件引用', en: { one: 'Attached {{count}} file reference', other: 'Attached {{count}} file references' } },
   'mentions-missing': { zh: '未找到引用: {{paths}}', en: 'References not found: {{paths}}' },
+  // Agent Teams: the tag after the sender of a peer message bubble.
+  'team-message-label': { zh: '团队消息', en: 'team message' },
   // T06 (PR-B · AC-5): transcript indicator above a user bubble whose send
   // consumed the live IDE selection. The ⧉ glyph lives in MessageList, not here.
   'selection-attached': {
@@ -1050,6 +1052,12 @@ const dict = {
   'tool-name-write': { zh: '写入', en: 'Write' },
   'tool-name-todo_write': { zh: '待办清单', en: 'TodoWrite' },
   'tool-name-subagent': { zh: '子代理', en: 'Task' },
+  // Agent Teams tools (dsh-adapter/team-tools.ts supplies these as displayKey).
+  'tool-name-team-message': { zh: '团队消息', en: 'Message' },
+  'tool-name-team-roster': { zh: '团队成员', en: 'Team' },
+  'tool-name-team-wait': { zh: '等待团队', en: 'Wait' },
+  'tool-name-team-interrupt': { zh: '中断成员', en: 'Interrupt' },
+  'tool-name-team-task': { zh: '任务板', en: 'Tasks' },
   'tool-name-web_search': { zh: '联网搜索', en: 'WebSearch' },
   'tool-name-multiedit': { zh: '多处编辑', en: 'MultiEdit' },
   'tool-name-notebookedit': { zh: '笔记本编辑', en: 'NotebookEdit' },

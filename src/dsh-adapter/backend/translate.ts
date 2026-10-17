@@ -26,6 +26,7 @@ import { harnessToolResultView, prepareReplayEvents, toolErrorText } from '../ch
 import type { ToolCallView, ToolResultView, ToolsRegistryLike } from '../channel/types.js'
 import { isCompactionCheckpointSource, toolResultPayload } from '../compat/messages.js'
 import { transcriptImagesOf } from '../transcript-images.js'
+import { teamMessageOf, teamToolCallView, teamToolResultView } from '../team-tools.js'
 
 export interface DshTranslatorDeps {
   /** The host-plane tools registry (dsh-tools); absent in bare embedders,
@@ -235,7 +236,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
   const presentCallView = (name: string, rawArgs: string): ToolCallView | undefined => {
     try {
       const tool = deps.tools()?.get(name, deps.scope())
-      if (tool?.presentCall === undefined) return undefined
+      if (tool?.presentCall === undefined) return teamToolCallView(name, rawArgs)
       return tool.presentCall(JSON.parse(rawArgs)) as ToolCallView | undefined
     } catch {
       return undefined
@@ -252,7 +253,10 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
       const local = harnessToolResultView(name, data)
       if (local !== undefined) return local
       const tool = deps.tools()?.get(name, deps.scope())
-      if (tool?.presentResult === undefined) return undefined
+      if (tool?.presentResult === undefined) {
+        const text = toolResultPayload(data.message).content.map(item => (item.type === 'text' ? item.text : '')).join('').trim()
+        return teamToolResultView(name, rawArgs, text)
+      }
       return tool.presentResult(JSON.parse(rawArgs), {
         ...toolResultPayload(data.message),
         ...(data.meta !== undefined ? { meta: data.meta } : {}),
@@ -286,6 +290,11 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
     }
     if ((data.source as { kind: string }).kind === 'model-selection') {
       return [{ type: 'notice', level: 'info', text: textOf(data.content) }]
+    }
+    // An Agent Teams peer message: a bubble labelled with its sender.
+    const team = teamMessageOf(data.source, data.content)
+    if (team !== undefined) {
+      return [{ type: 'user.message', ...base, blocks: team.blocks, source: 'team-message', sender: team.sender, text: team.text }]
     }
     // Injected context (plugin/skill source) is model-facing only; it has no
     // transcript-facing text.

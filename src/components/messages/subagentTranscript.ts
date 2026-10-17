@@ -21,6 +21,8 @@ export type TranscriptLeaf =
   | { kind: 'text'; key: string; text: string }
   | { kind: 'tool'; key: string; tool: ToolRow }
   | { kind: 'agent-message'; key: string; message: AgentMessageView }
+  /** An Agent Teams message this child received (its sender's name). */
+  | { kind: 'team-message'; key: string; sender: string; text: string; id: string }
 
 /** Presentations that never earn a duplicate card here either (the main
  *  projector's rule): a nested delegation renders as the subagent card, a
@@ -85,6 +87,12 @@ export function foldTranscriptLeaves(events: readonly AgentEvent[], into: Transc
   for (const event of events) {
     const at = eventTime(event)
     if (at !== undefined) flushMessages(at)
+    if (event.type === 'user.message') {
+      if (event.source === 'team-message' && event.sender !== undefined) {
+        into.push({ kind: 'team-message', key: event.anchor, sender: event.sender, text: event.text, id: event.id })
+      }
+      continue
+    }
     if (event.type === 'tool.call') {
       if (event.presentation !== undefined && TRANSCRIPT_SUPPRESSED_CARDS.has(event.presentation.card)) continue
       into.push({ kind: 'tool', key: event.callId, tool: {
@@ -136,7 +144,7 @@ export function foldTranscriptLeaves(events: readonly AgentEvent[], into: Transc
 }
 
 const eventTime = (event: AgentEvent): number | undefined =>
-  event.type === 'tool.call' || event.type === 'tool.result' || event.type === 'assistant.message' ? event.time : undefined
+  event.type === 'tool.call' || event.type === 'tool.result' || event.type === 'assistant.message' || (event.type === 'user.message' && event.source === 'team-message') ? event.time : undefined
 
 /** The transcript page's load state. `ready` keeps its rows while a newer
  *  page reloads (settlement) and while an older window prepends. */
@@ -250,6 +258,7 @@ const capLike = (line: string): string => (line.length > 400 ? `${line.slice(0, 
 /** Merge the channel's live window into the folded history: tool records
  *  pair by call id (live status/previews win while the disk has not
  *  recorded the result; a call the history never saw appends as live),
+ *  a team message the history holds (same id) is dropped,
  *  and text/thinking tail lines the loaded history already paints are
  *  suppressed — a settled block's lines are identical on both sides — so
  *  history and live neither double a row nor drop a tail. */
@@ -292,11 +301,18 @@ export function mergeLiveWindow(leaves: readonly TranscriptLeaf[], subagent: Sub
     return rows
   }
   const seen = new Set<string>()
+  const teamIds = new Set<string>()
   for (const leaf of leaves) {
+    if (leaf.kind === 'team-message') teamIds.add(leaf.id)
     if (leaf.kind !== 'text' && leaf.kind !== 'thinking') continue
     for (const line of leaf.text.split('\n')) if (line.trim() !== '') seen.add(capLike(line))
   }
   for (const line of subagent.outputEvents) {
+    // A team message pairs by its durable id; its body is not prose.
+    if (line.kind === 'team-message') {
+      if (line.id === undefined || !teamIds.has(line.id)) rows.push({ kind: 'live', line })
+      continue
+    }
     if (line.text.trim() !== '' && seen.has(capLike(line.text))) continue
     rows.push({ kind: 'live', line })
   }

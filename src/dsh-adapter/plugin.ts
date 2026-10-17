@@ -81,6 +81,7 @@ import { getHostStatusStore, type TuiStatusRuntime } from './status.js'
 import { attachSessionListMetadata } from './session-list-metadata.js'
 import { createActivityStore } from './activity-store.js'
 import { createContextOccupancyStore } from './context-occupancy.js'
+import { createTeamRosterStore } from './team-roster.js'
 import { getHostToastStore, type TuiToastRuntime } from './toast.js'
 import { getHostShortcuts, type TuiShortcutRuntime } from './shortcuts.js'
 import { getHostThemes, type TuiThemeHost, type TuiThemeRuntime } from './themes.js'
@@ -879,6 +880,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // empty and the channel falls back to the last-request sample — as does a
   // non-DSH session, whose id the DSH meter never projects.
   const contextOccupancyStore = createContextOccupancyStore(ctx)
+  // Read side of the Agent Teams `agentTeam` projection, for the same TDZ
+  // reason; empty unless the profile mounts the team service.
+  const teamRosterStore = createTeamRosterStore(ctx)
   // The channel holds a backend session; this DSH one owns the resolved
   // handle (disposed by the binding when a later adoption replaces it).
   let startupSession: AgentSession
@@ -947,6 +951,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // change, so a resumed session reads one baseline at bind time.
     contextPressure: contextOccupancyStore,
     seedContextOccupancy: session => contextOccupancyStore.seed(session),
+    team: teamRosterStore,
+    seedTeam: session => teamRosterStore.seed(session),
     // A RESUMED session keeps its persisted header cwd (issue #96 review):
     // pre-upgrade sessions recorded the launch directory, and re-resolving
     // from the current launch directory would split @ expansion / file

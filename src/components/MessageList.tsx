@@ -10,6 +10,7 @@ import type { TranscriptImage } from '../dsh-adapter/transcript-images.js'
 import type { DOMElement } from '../ink/dom.js'
 import { Divider } from './design-system/Divider.js'
 import { UserPromptMessage } from './messages/UserPromptMessage.js'
+import { TeamMessageBubble } from './messages/TeamMessageBubble.js'
 import { AssistantTextLeafRow, ThinkingLeafRow, ToolLeafRow } from './messages/TranscriptLeaves.js'
 import { liveOutputMaxLines, liveOutputRows } from './messages/liveOutputLines.js'
 import { SubagentMessage } from './Chat/SubagentMessage.js'
@@ -326,6 +327,8 @@ function signatureParts(
         row.selectionAttached === undefined ? 0 : 1,
         stringWidth(displaySelectionPath(row.selectionAttached?.path ?? '', sessionCwd)),
         String(row.selectionAttached?.lines ?? ''),
+        // A team message adds its sender line above the body.
+        row.sender ?? '',
       )
       // Long-line fold: expanding a folded row swaps the folded preview for
       // the raw line (thousands of rows), so both expansion switches are
@@ -1482,6 +1485,7 @@ export function MessageList({
               textFull={row.kind === 'reasoning' ? row.text : undefined}
               executionTarget={row.executionTarget}
               selectionAttached={row.selectionAttached}
+              sender={row.sender}
               streaming={displayStreaming}
               thinkingOpen={row.thinkingOpen === true}
               durationMs={row.durationMs}
@@ -1564,6 +1568,7 @@ type MemoRowProps = {
   executionTarget: string | undefined
   /** IDE selection indicator (user rows): rendered above the prompt bubble. */
   selectionAttached: ChatRow['selectionAttached']
+  sender: ChatRow['sender']
   /** Session cwd for the indicator's display-path relativization (T-FIX-01). */
   sessionCwd: string | undefined
   streaming: boolean
@@ -1670,6 +1675,7 @@ function TranscriptRow({
   textFull,
   executionTarget,
   selectionAttached,
+  sender,
   sessionCwd,
   streaming,
   thinkingOpen,
@@ -1793,7 +1799,15 @@ function TranscriptRow({
               })}
             </Text>
           )}
-          {text !== '' && (
+          {text !== '' && sender !== undefined && (
+            <TeamMessageBubble
+              sender={sender}
+              text={displayText}
+              marginTopOnTurn={marginTopOnTurn}
+              isSelected={isSelected}
+            />
+          )}
+          {text !== '' && sender === undefined && (
             <UserPromptMessage
               text={displayText}
               marginTopOnTurn={marginTopOnTurn}

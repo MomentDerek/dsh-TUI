@@ -3,6 +3,7 @@ import { Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTerminalSize }
 import type { SubagentOutputLine, SubagentState } from '../dsh-adapter/subagents.js'
 import { AgentMessageLeafRow, AssistantTextLeafRow, ThinkingLeafRow, ToolLeafRow } from './messages/TranscriptLeaves.js'
 import { AgentMessageFlowRow } from './messages/AgentMessageFlow.js'
+import { TeamMessageBubble } from './messages/TeamMessageBubble.js'
 import { AgentMessageComposer, type ComposerKeyHandler } from './AgentMessageComposer.js'
 import type { AgentComposeTarget, AgentMessageControl, AgentMessageView } from './messages/agentTeam.js'
 import { subagentDetailMemory } from './subagentDetailMemory.js'
@@ -602,6 +603,9 @@ export function SubagentDetailScene({
                 }
                 const line = block.line
                 const unsettled = !line.settled && isRunning ? ' ▍' : ''
+                if (line.kind === 'team-message' && line.sender !== undefined) {
+                  return <TeamMessageBubble key={`team-${index}`} sender={line.sender} text={line.text} marginTopOnTurn={index !== 0} />
+                }
                 if (line.kind === 'text' && isActivityLine(line.text)) {
                   return (
                     <Box key={`act-${index}`} flexDirection="row" gap={1}>
@@ -664,6 +668,14 @@ export function SubagentDetailScene({
                       if (row.kind === 'live') {
                         const line = row.line
                         const unsettled = !line.settled && isRunning ? ' ▍' : ''
+                        if (line.kind === 'team-message' && line.sender !== undefined) {
+                          return (
+                            <React.Fragment key={`live-${index}`}>
+                              {index === liveStart && <Text dimColor>{`── ${t('subagent-transcript-live')} ──`}</Text>}
+                              <TeamMessageBubble sender={line.sender} text={line.text} marginTopOnTurn={margin} />
+                            </React.Fragment>
+                          )
+                        }
                         return (
                           <React.Fragment key={`live-${index}`}>
                             {index === liveStart && <Text dimColor>{`── ${t('subagent-transcript-live')} ──`}</Text>}
@@ -702,6 +714,9 @@ export function SubagentDetailScene({
                       }
                       if (row.kind === 'agent-message') {
                         return <AgentMessageLeafRow key={`am-${row.key}`} message={row.message} selfAgentId={subagent.agentId} marginTopOnTurn={margin} />
+                      }
+                      if (row.kind === 'team-message') {
+                        return <TeamMessageBubble key={`tm-${row.key}`} sender={row.sender} text={row.text} marginTopOnTurn={margin} />
                       }
                       return (
                         <ToolLeafRow

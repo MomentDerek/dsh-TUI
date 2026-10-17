@@ -27,6 +27,37 @@ function declarativePresets(ctx: Context): DeclarativePresets | undefined {
     : undefined
 }
 
+/** The Agent Teams tool row an enabled `dsh-experimental-agent-team-profile` bundle inserts. */
+const TEAM_TOOLS_PLUGIN = '@deepseek-ai/dsh-experimental-tool-agent-team'
+
+/**
+ * Preset `delegation` rows that Agent Teams replaces: `spawn_teammate` is the
+ * direct delegation tool, and the team-scoped `send_message` / `list_agents` /
+ * `interrupt_agent` take over from the continuable-child controls. The
+ * upstream bundle only disables dsh-base's copies, out of reach of preset
+ * realms; workflow and ralph rows keep their `spawn` provider.
+ */
+const TEAM_REPLACED_ROWS: ReadonlySet<string> = new Set([
+  'tool-subagent', 'tool-subagent-fork', 'tool-subagent-control', 'tool-subagent-list-agents',
+])
+
+function teamToolsEnabled(loader: PresetLoader | undefined): boolean {
+  for (const entry of loader?.entries() ?? []) {
+    if (!entry.disabled && entry.options.name === TEAM_TOOLS_PLUGIN) return true
+  }
+  return false
+}
+
+/** Copy an entry list with the team-replaced rows disabled, nested groups included. */
+function withoutTeamReplacedRows<T>(rows: readonly T[]): T[] {
+  return rows.map((row) => {
+    const entry = row as { id?: unknown; group?: unknown; config?: unknown }
+    if (typeof entry.id === 'string' && TEAM_REPLACED_ROWS.has(entry.id)) return { ...row, disabled: true }
+    if (entry.group === true && Array.isArray(entry.config)) return { ...row, config: withoutTeamReplacedRows(entry.config) }
+    return row
+  })
+}
+
 /** Preserve the Loader's expressions; only the owning plugin may evaluate them. */
 function readPresetPatch(path: string): PresetDefinition {
   const patches: unknown = parse(readFileSync(path, 'utf8'), {
@@ -110,12 +141,15 @@ export async function registerBundledPresets(ctx: Context): Promise<boolean> {
     }
   }
   const patches = presetPatches(ctx, loader)
+  const team = teamToolsEnabled(loader)
   const require = createRequire(ctx.baseUrl ?? import.meta.url)
   for (const id of UPSTREAM_PRESET_IDS) {
     if (declared.has(id)) continue
     const path = require.resolve(`@deepseek-ai/dsh-web-app/presets/${id}.patch.yml`)
     const owner = ctx.extend({ baseUrl: pathToFileURL(path).href })
-    const dispose = await declarativePresets(owner)!.register(patchDefinition(ctx, readPresetPatch(path), patches.get(id)))
+    const definition = patchDefinition(ctx, readPresetPatch(path), patches.get(id))
+    const dispose = await declarativePresets(owner)!.register(
+      team ? { ...definition, plugins: withoutTeamReplacedRows(definition.plugins) } : definition)
     ctx.effect(() => dispose)
   }
   if (!declared.has('liangshen')) {
@@ -131,7 +165,10 @@ export async function registerBundledPresets(ctx: Context): Promise<boolean> {
         name: '@deepseek-ai/cordis-plugin-include',
         config: {
           path: pathToFileURL(join(root, 'agent.cordis.yml')).href,
-          patches: [...patches.get('liangshen') ?? []].map(([id, config]) => ({ id, config })),
+          patches: [
+            ...[...patches.get('liangshen') ?? []].map(([id, config]) => ({ id, config })),
+            ...team ? [...TEAM_REPLACED_ROWS].map(id => ({ id, disabled: true })) : [],
+          ],
         },
       }],
     })

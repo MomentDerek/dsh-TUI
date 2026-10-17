@@ -232,6 +232,27 @@ TPS 计入隐藏推理的生成时间，剔除工具执行时间；实时文本�
 自动变化仅 Codex 标识/标题，不改配色与宠物。第三方客户端使用 ChatGPT 订阅令牌受
 OpenAI 条款约束。完整操作与当前边界：[Codex 后端](docs/codex-backend.md)。
 
+### 实验性：DSH Agent Teams
+
+DSH 的实验性 Agent Teams 让会话的主 agent（Lead）创建有名字的 teammate：它们共用
+工作目录、互相发消息，并在一块共享任务板上协作。默认关闭。把上游 bundle 加进 TUI
+profile 后重启 TUI 即可开启：
+
+```sh
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile
+```
+
+团队工具启用后，dsh-TUI 注册的 preset（`liangshen` 与官方 `standard` / `ptc` /
+`cordis`）会去掉 `subagent` / `subagent_fork` 行和旧版 `send_message` /
+`list_agents` / `interrupt_agent` 控件：委派工具只剩 `spawn_teammate`，同名工具只剩
+团队作用域的那一份；workflow 与 ralph 仍用 `spawn` provider。teammate 显示为子代理行，
+成员间的消息在接收方会话里显示为 `✉ <发送者>` 气泡（teammate 收到的在其子代理详情的 Transcript 页），其余团队工具显示为单行卡片
+（`send_message` 带目标与 `accepted` / `queued`）。
+
+限制：bundle 的启用/停用在下次启动生效；profile 自己声明的 preset 不会被调整；
+agents 仪表盘暂不显示成员名单与任务板，也还不能「进入 teammate 会话」。上游限制同样
+适用：teammate 共用一个工作目录、团队只在单进程内、任务负责人不会自动释放。
+
 ## 快捷键与鼠标
 
 `Enter` 发送 · `Tab` 补全 · `Ctrl+Enter` 打断并发送 · `Alt+Up` 取回上一条 · `Esc` 逐层关闭，空输入双击回溯 · `Ctrl+B` 侧栏 · `Ctrl+O` 详情 · `Ctrl+R` 搜历史（`↑`/`↓` 与 `Ctrl+R` 按当前项目隔离） · `Ctrl+V` 粘贴 · `Ctrl+Shift+E` 全屏草稿编辑器 · `?` 快捷键 · `←` 打开会话管理（DSH 会先将当前会话转后台）。

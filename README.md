@@ -285,6 +285,34 @@ Using ChatGPT subscription tokens in third-party clients is subject to
 OpenAI’s terms. Full instructions and current boundaries:
 [Codex backend](docs/codex-backend.en.md).
 
+### Experimental: DSH Agent Teams
+
+DSH's experimental Agent Teams lets the session's agent (the Lead) create
+named teammates that share the working directory, message each other and
+coordinate on a shared task board. It is off by default. Enable it by adding
+the upstream bundle to the TUI profile, then restart the TUI:
+
+```sh
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile
+```
+
+With its tools enabled, the presets dsh-TUI registers (`liangshen` and the
+official `standard` / `ptc` / `cordis`) drop their `subagent` / `subagent_fork`
+rows and the legacy `send_message` / `list_agents` / `interrupt_agent`
+controls, so `spawn_teammate` is the delegation tool and the team-scoped
+tools of the same names are the only ones; workflow and ralph keep their
+`spawn` provider. A teammate shows up as a subagent row, a message between
+members as a `✉ <sender>` bubble in the receiving session (for a teammate, on
+its subagent detail's Transcript page), and the other team
+tools as one-line cards (`send_message` with its target and
+`accepted` / `queued`).
+
+Limits: enabling or disabling the bundle takes effect on the next start; a
+preset the profile declares itself is not adjusted; the agents dashboard does
+not yet show the roster and task board, and there is no "enter teammate
+session". Upstream limits apply: teammates share one working directory, a
+team lives in one process, and a task owner is never released automatically.
+
 ## Keybindings & Mouse
 
 `Enter` send · `Tab` complete · `Ctrl+Enter` interrupt and send · `Alt+Up` recall the last message · `Esc` dismiss, double-`Esc` rewinds · `Ctrl+B` side panel · `Ctrl+O` details · `Ctrl+R` history (`↑`/`↓` and `Ctrl+R` are scoped to the current project) · `Ctrl+V` paste · `Ctrl+Shift+E` fullscreen draft editor · `?` shortcuts · `←` open the session manager (DSH backgrounds the current session first).

@@ -1,9 +1,15 @@
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 import { addUsageToCostBuckets, cloneCostBuckets, emptyCostBuckets, isDeepSeekOfficialProvider, isPeakHour, priceForModel } from '../deepseekPricing.js'
 import { toolResultPayload } from './compat/messages.js'
+import { teamMessageOf } from './team-tools.js'
 import type { CostTokenBuckets, SubagentCostEntry, SubagentState, SubagentStatus, SubagentOutputLine, SubagentOutputKind, SubagentToolCall, SubagentTokenUsage } from '../adapter/ports/channel-view.js'
 export type { SubagentState, SubagentStatus, SubagentOutputLine, SubagentOutputKind, SubagentToolCall, SubagentTokenUsage, SubagentCostEntry } from '../adapter/ports/channel-view.js'
 
+
+/** A plain tail line: a received team message names its sender, so a card's
+ *  last line never reads as the child's own words. */
+const outputText = (line: SubagentOutputLine): string =>
+  line.kind === 'team-message' && line.sender !== undefined ? `✉ ${line.sender}: ${line.text}` : line.text
 
 const MAX_OUTPUT_EVENTS = 160
 const MAX_OUTPUT_LINES = 160
@@ -60,7 +66,7 @@ export class SubagentActivityStore {
   private pushLine(state: SubagentState, line: SubagentOutputLine): void {
     state.outputEvents.push(line)
     if (state.outputEvents.length > MAX_OUTPUT_EVENTS) state.outputEvents.splice(0, state.outputEvents.length - MAX_OUTPUT_EVENTS)
-    state.output = state.outputEvents.map(entry => entry.text)
+    state.output = state.outputEvents.map(outputText)
     if (state.output.length > MAX_OUTPUT_LINES) state.output.splice(0, state.output.length - MAX_OUTPUT_LINES)
   }
 
@@ -257,7 +263,7 @@ export class SubagentActivityStore {
       const tail = parts[parts.length - 1] ?? ''
       if (tail) this.pushLine(state, { kind, text: tail, at: Date.now(), settled: false })
     } else {
-      state.output = state.outputEvents.map(entry => entry.text)
+      state.output = state.outputEvents.map(outputText)
     }
     this.notify()
   }
@@ -309,7 +315,7 @@ export class SubagentActivityStore {
     const state = this.states.get(agentId)
     if (!state || stream.attempt === undefined) return
     state.outputEvents = stream.attempt.before
-    state.output = state.outputEvents.map(line => line.text)
+    state.output = state.outputEvents.map(outputText)
     stream.attempt = undefined
     this.notify()
   }
@@ -388,6 +394,18 @@ export class SubagentActivityStore {
           }
           this.notify()
         }
+        break
+      }
+      case 'user/message': {
+        // An Agent Teams message this child received: its own settled line,
+        // so the transcript shows it live (the history page carries it too).
+        const team = teamMessageOf(data.source, Array.isArray(data.content) ? data.content : [])
+        const state = this.states.get(agentId)
+        if (team === undefined || team.text === '' || state === undefined) break
+        const last = state.outputEvents.at(-1)
+        if (last !== undefined) last.settled = true
+        this.pushLine(state, { kind: 'team-message', text: team.text, sender: team.sender, at: Date.now(), settled: true, ...(typeof data.id === 'string' ? { id: data.id } : {}) })
+        this.notify()
         break
       }
       case 'subagent/descriptor': {

@@ -1467,8 +1467,8 @@ export function Chat({
   }, [autoRecapSessionId])
   // The user starts a new message → the auto recap has served its purpose
   // (catching them up) and bows out. A newer user row is the signal; the
-  // assistant's own streamed rows don't count.
-  const lastUserRowId = channel.rows.filter(row => row.kind === 'user').at(-1)?.id ?? -1
+  // assistant's own streamed rows (and a teammate's message) don't count.
+  const lastUserRowId = channel.rows.filter(row => row.kind === 'user' && row.label === undefined).at(-1)?.id ?? -1
   React.useEffect(() => {
     if (
       recap !== null &&

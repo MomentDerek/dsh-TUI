@@ -2,6 +2,7 @@ import React from 'react'
 import { Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTerminalSize } from '../ui.js'
 import type { SubagentState } from '../dsh-adapter/subagents.js'
 import { AgentMessageLeafRow, AssistantTextLeafRow, ThinkingLeafRow, ToolLeafRow } from '../components/messages/TranscriptLeaves.js'
+import { TeamMessageBubble } from '../components/messages/TeamMessageBubble.js'
 import {
   mergeLiveWindow,
   OUTPUT_WINDOW_CAP,
@@ -331,6 +332,14 @@ export function AgentTranscriptScene({ subagent, source, onExit, loadTranscript,
                       if (row.kind === 'live') {
                         const line = row.line
                         const unsettled = !line.settled && isRunning ? ' ▍' : ''
+                        if (line.kind === 'team-message' && line.sender !== undefined) {
+                          return (
+                            <React.Fragment key={`live-${index}`}>
+                              {index === liveStart && <Text dimColor>{`── ${t('subagent-transcript-live')} ──`}</Text>}
+                              <TeamMessageBubble sender={line.sender} text={line.text} marginTopOnTurn={margin} />
+                            </React.Fragment>
+                          )
+                        }
                         return (
                           <React.Fragment key={`live-${index}`}>
                             {index === liveStart && <Text dimColor>{`── ${t('subagent-transcript-live')} ──`}</Text>}
@@ -360,6 +369,9 @@ export function AgentTranscriptScene({ subagent, source, onExit, loadTranscript,
                       }
                       if (row.kind === 'agent-message') {
                         return <AgentMessageLeafRow key={`am-${row.key}`} message={row.message} selfAgentId={agentId} marginTopOnTurn={margin} />
+                      }
+                      if (row.kind === 'team-message') {
+                        return <TeamMessageBubble key={`tm-${row.key}`} sender={row.sender} text={row.text} marginTopOnTurn={margin} />
                       }
                       return (
                         <ToolLeafRow
