@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict'
 import { createDshTranslator } from '../src/dsh-adapter/backend/translate.js'
 import { createSubagentProjection } from '../src/dsh-adapter/channel/subagent-projection.js'
-import { teamMailboxAsRelay } from '../src/dsh-adapter/compat/agent-team-0.2.0.js'
+import { asCurrentTeamMessage } from '../src/dsh-adapter/compat/agent-team-0.2.0.js'
 import { teamToolResultView } from '../src/dsh-adapter/team-tools.js'
 
 const LEAD = 'lead-1'
@@ -26,23 +26,30 @@ const delivery = (source: unknown, content: readonly unknown[]) => ({
 })
 const mailboxSource = { kind: 'team-message', teamId: LEAD, messageId, senderId: MATE, senderName: 'reviewer' }
 const relaySource = { kind: 'agent-message', form: 'relay', senderSessionId: MATE }
+/** The identity block 0.2.0 spawn_teammate put before the first prompt (dsh-experimental-tool-agent-team 0.2.0-rc.2). */
+const reminder = `<system-reminder>
+You are teammate "reviewer".
+Your Team Lead is named "lead".
+Use list_agents({}) to find your teammates and their names.
+To message your Team Lead, use send_message({ target: "lead", message: "..." }).
+To message another teammate, use send_message({ target: "<teammate name>", message: "..." }).
+</system-reminder>
+
+`
 const legacy = delivery(mailboxSource, [{ type: 'text', text: `Team message ${messageId} from reviewer:` }, body])
 const current = delivery(relaySource, [{ type: 'text', text: 'Team message from reviewer:' }, body])
 
 // ── the normalization itself ───────────────────────────────────────────────
 {
-  assert.deepEqual(teamMailboxAsRelay(legacy.data.source, legacy.data.content), { source: current.data.source, content: current.data.content })
+  assert.deepEqual(asCurrentTeamMessage(legacy.data), current.data)
   // Framing that does not match this message's identity stays content.
   const reframed = [{ type: 'text', text: 'Team message other from reviewer:' }, body]
-  assert.deepEqual(teamMailboxAsRelay(mailboxSource, reframed).content, [{ type: 'text', text: 'Team message from reviewer:' }, ...reframed])
-  // Anything else comes back as it was.
-  const plain = { kind: 'user' }
-  const content = [body]
-  const same = teamMailboxAsRelay(plain, content)
-  assert.equal(same.source, plain)
-  assert.equal(same.content, content)
-  assert.equal(teamMailboxAsRelay(relaySource, content).source, relaySource)
-  console.log('PASS mailbox delivery → relay (exact framing replaced, other framing kept, other sources untouched)')
+  assert.deepEqual(asCurrentTeamMessage({ source: mailboxSource, content: reframed }).content, [{ type: 'text', text: 'Team message from reviewer:' }, ...reframed])
+  // Anything else comes back as the same object.
+  for (const data of [{ source: { kind: 'user' }, content: [body] }, current.data, { source: { kind: 'user' }, content: [{ type: 'text', text: reminder.replace('Your Team Lead', 'My Team Lead') }, body] }]) {
+    assert.equal(asCurrentTeamMessage(data), data)
+  }
+  console.log('PASS mailbox delivery → relay (exact framing replaced, other framing kept, other messages untouched)')
 }
 
 // ── translator: transcript bubble, live and replay ─────────────────────────
@@ -59,6 +66,27 @@ const current = delivery(relaySource, [{ type: 'text', text: 'Team message from 
   const message = createDshTranslator(deps).translateEvent(reframedLegacy as never).find(event => event.type === 'user.message')
   assert.ok(message?.type === 'user.message' && message.source === 'team-message' && message.text.startsWith('Team message other from reviewer:'))
   console.log('PASS translator reads a mailbox delivery as the relay (live + replay; foreign framing stays visible)')
+}
+
+// ── a teammate's first prompt ──────────────────────────────────────────────
+{
+  const deps = { tools: () => undefined, scope: () => ({}), attachments: () => undefined }
+  const prompt = { type: 'text', text: 'Review src/ and report back.' }
+  const first = (content: readonly unknown[]) => delivery({ kind: 'user' }, content)
+  for (const replaying of [false, true]) {
+    const translate = (event: unknown) => {
+      const translator = createDshTranslator(deps)
+      return replaying ? translator.translateReplay([event] as never) : translator.translateEvent(event as never)
+    }
+    const events = translate(first([{ type: 'text', text: reminder }, prompt]))
+    assert.deepEqual(events, translate(first([prompt])), `the identity block is dropped (${replaying ? 'replay' : 'live'})`)
+    const message = events.find(event => event.type === 'user.message')
+    assert.ok(message?.type === 'user.message' && message.text === prompt.text, 'the bubble shows the task')
+  }
+  // The block alone (nothing after it) is somebody's text, kept.
+  const alone = first([{ type: 'text', text: reminder }])
+  assert.equal(asCurrentTeamMessage(alone.data), alone.data)
+  console.log('PASS teammate first prompt drops the 0.2.0 identity block (live + replay; exact template only)')
 }
 
 // ── subagent projection: the agent-message feed ────────────────────────────

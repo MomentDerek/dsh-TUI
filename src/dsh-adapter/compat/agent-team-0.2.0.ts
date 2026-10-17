@@ -27,27 +27,60 @@ function mailboxSourceOf(source: unknown): MailboxSource | undefined {
     : undefined
 }
 
+/** The identity block 0.2.0 `spawn_teammate` put before a teammate's first prompt. */
+function teammateReminder(name: string): string {
+  return `<system-reminder>
+You are teammate "${name}".
+Your Team Lead is named "lead".
+Use list_agents({}) to find your teammates and their names.
+To message your Team Lead, use send_message({ target: "lead", message: "..." }).
+To message another teammate, use send_message({ target: "<teammate name>", message: "..." }).
+</system-reminder>
+
+`
+}
+
+const TEAMMATE_REMINDER_NAME = /^<system-reminder>\nYou are teammate "([^\n]*)"\.\n/
+
+function isTeammateReminder(block: unknown): boolean {
+  const { type, text } = (block ?? {}) as { type?: unknown; text?: unknown }
+  if (type !== 'text' || typeof text !== 'string') return false
+  const name = TEAMMATE_REMINDER_NAME.exec(text)?.[1]
+  return name !== undefined && text === teammateReminder(name)
+}
+
 /**
- * A team message delivered by the 0.2.0 mailbox, rewritten as the 0.2.1
- * relay: source `{ kind: 'agent-message', form: 'relay', senderSessionId }`,
- * first block `Team message from <name>:`. The 0.2.0 framing block
- * (`Team message <id> from <name>:`) is replaced only when it matches this
- * message's identity exactly; otherwise it stays as content, as it did.
- * Anything else comes back unchanged.
- * @param source - a `user/message` source.
- * @param content - that message's content blocks.
- * @returns the 0.2.1 form of the message.
+ * One `user/message` in its 0.2.1 form. Two 0.2.0 shapes change; anything
+ * else comes back as the same object.
+ *
+ * - A team message delivered by the mailbox becomes the relay: source
+ *   `{ kind: 'agent-message', form: 'relay', senderSessionId }`, first block
+ *   `Team message from <name>:`. The 0.2.0 framing block
+ *   (`Team message <id> from <name>:`) is replaced only when it matches this
+ *   message's identity exactly; otherwise it stays as content, as it did.
+ * - A teammate's first prompt drops the leading `<system-reminder>` identity
+ *   block (0.2.1 carries it as a system-prompt context), matched against
+ *   the whole 0.2.0 template so a person's own text is never cut.
+ * @param data - the message's source and content (other fields are kept).
+ * @returns `data`, or a copy in the 0.2.1 form.
  */
-export function teamMailboxAsRelay<C>(source: unknown, content: C): { readonly source: unknown; readonly content: C } {
+export function asCurrentTeamMessage<T extends { readonly source?: unknown; readonly content?: unknown }>(data: T): T {
+  const { source, content } = data
+  if (!Array.isArray(content)) return data
   const mailbox = mailboxSourceOf(source)
-  if (mailbox === undefined || !Array.isArray(content)) return { source, content }
-  const first = content[0] as { type?: unknown; text?: unknown } | undefined
-  const legacyFraming = `Team message ${String(mailbox.messageId)} from ${mailbox.senderName}:`
-  const body = first?.type === 'text' && first.text === legacyFraming ? content.slice(1) : content
-  return {
-    source: { kind: 'agent-message', form: 'relay', senderSessionId: mailbox.senderId },
-    content: [{ type: 'text', text: `Team message from ${mailbox.senderName}:` }, ...body] as C,
+  if (mailbox !== undefined) {
+    const first = content[0] as { type?: unknown; text?: unknown } | undefined
+    const legacyFraming = `Team message ${String(mailbox.messageId)} from ${mailbox.senderName}:`
+    const body = first?.type === 'text' && first.text === legacyFraming ? content.slice(1) : content
+    return {
+      ...data,
+      source: { kind: 'agent-message', form: 'relay', senderSessionId: mailbox.senderId },
+      content: [{ type: 'text', text: `Team message from ${mailbox.senderName}:` }, ...body],
+    } as T
   }
+  const user = (source as { kind?: unknown } | null | undefined)?.kind === 'user'
+  if (user && content.length > 1 && isTeammateReminder(content[0])) return { ...data, content: content.slice(1) } as T
+  return data
 }
 
 /**

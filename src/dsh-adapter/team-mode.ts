@@ -16,18 +16,23 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import { t } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
-import { UPSTREAM_VALIDATED_VERSION } from './contract.js'
+import { installedKernelVersion, UPSTREAM_VALIDATED_VERSION } from './contract.js'
 import { createPluginManageFlow, type PluginManageFlow, type PluginManageSink } from './plugin-manage.js'
 import { pluginManagerOf } from './plugin-manager.js'
 import { cell } from './plugins-info.js'
 import { TEAM_BUNDLE } from './team-roster.js'
 
 /**
- * The install spec the hints name. The team packages pin their DSH peers
- * exactly, so only the bundle of the validated line installs into this host
- * (npm `latest` and `next` both name other lines).
+ * The install spec the hints name. The team packages ship in lockstep with
+ * DSH and pin their DSH peers exactly, so only the bundle of the running
+ * kernel's own version installs into this host (npm `latest` and `next`
+ * both name other lines).
+ * @param kernel - The installed DSH version; unknown falls back to the validated line.
+ * @returns `<bundle>@<version>`.
  */
-const TEAM_BUNDLE_SPEC = `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`
+export function teamBundleSpec(kernel: string | undefined): string {
+  return `${TEAM_BUNDLE}@${kernel ?? UPSTREAM_VALIDATED_VERSION}`
+}
 
 /** The team's own delegation tool; its presence is what "team on" means to a request. */
 const TEAM_SPAWN_TOOL = 'spawn_teammate'
@@ -99,7 +104,7 @@ export function createTeamCommandEntry(
     const manager = pluginManagerOf(ctx)
     if (parsed.kind === 'status') return { kind: 'lines', lines: teamStatusLines(ctx, sink, profile()) }
     if (manager === undefined) {
-      return { kind: 'lines', lines: Promise.resolve([t('team-cmd-no-manager', { profile: cell(profile()), bundle: TEAM_BUNDLE_SPEC })]) }
+      return { kind: 'lines', lines: Promise.resolve([t('team-cmd-no-manager', { profile: cell(profile()), bundle: teamBundleSpec(installedKernelVersion()) })]) }
     }
     const flow = createPluginManageFlow({
       manager,
@@ -136,7 +141,7 @@ export function createTeamCommandEntry(
           if (installed && !enabled) return flow.begin()
           if (sink.binding() === bindingAtStart) {
             sink.onLines(!installed
-              ? [t('team-cmd-not-installed', { profile: cell(profile()), bundle: TEAM_BUNDLE_SPEC })]
+              ? [t('team-cmd-not-installed', { profile: cell(profile()), bundle: teamBundleSpec(installedKernelVersion()) })]
               : [t('team-cmd-already-on'), ...ctx.get('agentTeams', false) === undefined ? [t('team-cmd-pending-on')] : []])
           }
           return { kind: 'done' }
@@ -156,7 +161,7 @@ async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: str
   const lines: string[] = []
   if (manager === undefined) {
     lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
-    lines.push(t('team-cmd-no-manager', { profile: cell(profile), bundle: TEAM_BUNDLE_SPEC }))
+    lines.push(t('team-cmd-no-manager', { profile: cell(profile), bundle: teamBundleSpec(installedKernelVersion()) }))
   } else {
     let selected: boolean | undefined
     let installed = false
@@ -170,7 +175,7 @@ async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: str
     if (selected !== undefined || installed) {
       lines.push(t('team-cmd-bundle', { state: t(selected === true ? 'team-cmd-on' : 'team-cmd-off') }))
     } else if (lines.length === 0) {
-      lines.push(t('team-cmd-not-installed', { profile: cell(profile), bundle: TEAM_BUNDLE_SPEC }))
+      lines.push(t('team-cmd-not-installed', { profile: cell(profile), bundle: teamBundleSpec(installedKernelVersion()) }))
     }
     lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
     // The profile says on but nothing runs (a startup-only profile, or the

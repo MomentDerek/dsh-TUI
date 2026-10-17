@@ -7,7 +7,7 @@ import type { SubagentTranscriptPage, SubagentTranscriptWindow } from '../../age
 import type { AgentIdentity, AgentMessageControl, AgentMessageSubmitInput, AgentMessageSubmitResult, AgentMessageView } from '../../adapter/ports/channel-view.js'
 import type { ChannelState, ChatRow, SubagentControl, SubagentRow } from './types.js'
 import { isSubagentToolName } from './projection-helpers.js'
-import { teamMailboxAsRelay } from '../compat/agent-team-0.2.0.js'
+import { asCurrentTeamMessage } from '../compat/agent-team-0.2.0.js'
 
 /**
  * Bound the retained description text. Evicting an older term does not cancel
@@ -302,12 +302,12 @@ function createSessionSubagentProjection(
   const noteChildRelay = (childId: string, event: unknown): void => {
     const raw = (event as { readonly data?: { readonly id?: unknown; readonly source?: unknown; readonly content?: unknown } }).data
     if (raw === undefined || typeof raw.id !== 'string' || raw.id === '') return
-    // compat(dsh 0.2.0, log): an Agent Teams mailbox delivery reads as the relay it became.
-    const data = { id: raw.id, ...teamMailboxAsRelay(raw.source, raw.content) }
+    // compat(dsh 0.2.0, log): Agent Teams 0.2.0 messages read in their 0.2.1 form.
+    const data = asCurrentTeamMessage(raw)
     const relay = agentRelaySourceOf(data.source)
     if (relay === undefined) return
     foldAgentMessage(agentMessages, {
-      messageId: data.id,
+      messageId: raw.id,
       from: relay.senderSessionId,
       to: childId,
       via: 'agent-relay',
@@ -423,8 +423,8 @@ function createSessionSubagentProjection(
       // names the sending session. Plain user text, injected context and
       // settlement notices are not relays; they stay invisible here, just as
       // the translator keeps them out of bubbles.
-      // compat(dsh 0.2.0, log): an Agent Teams mailbox delivery reads as the relay it became.
-      const delivered = teamMailboxAsRelay(data.source, data.content)
+      // compat(dsh 0.2.0, log): Agent Teams 0.2.0 messages read in their 0.2.1 form.
+      const delivered = asCurrentTeamMessage(data)
       const relay = agentRelaySourceOf(delivered.source)
       if (relay !== undefined && typeof data.id === 'string' && data.id !== '') {
         foldAgentMessage(agentMessages, {

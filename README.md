@@ -305,9 +305,12 @@ asks first; they are not stopped but finish their turn as plain subagents,
 and the team record stays in the session for the next `/team on`.
 `/plugin enable|disable` on the bundle does the same.
 
-Pin the version: it must match the supported DSH line (`0.2.1-alpha.5`). The
-team packages pin their DSH peers exactly, and neither the untagged install
-nor `next` resolves to that line.
+Pin the version to exactly your installed DSH version (the command above
+uses the primary line `0.2.1-alpha.5`; on DSH `0.2.0-rc.2` install
+`…-profile@0.2.0-rc.2`). The team packages ship in lockstep with DSH and pin
+their DSH peers exactly, so neither the untagged install nor `next` works.
+When the package is missing, `/team on` prints the command with your
+installed DSH version filled in.
 
 While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /
 `subagent_fork` from it, and the team's `send_message` / `list_agents` /

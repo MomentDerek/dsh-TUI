@@ -855,7 +855,7 @@ const GROUPS = {
 // seed）、0.2.1 relay 团队消息的气泡（按前缀块取发送者并剔除、不算人类提问、不进
 // 回退目标）与团队工具单行卡片（与同名旧版子代理控件区分）。
     ["verify-agent-teams", ['node', '--import', 'tsx/esm', 'scripts/verify-agent-teams.ts']],
-// compat(dsh 0.2.0, log)：0.2.0 邮箱来源的团队消息与 send_message 结果经 compat 归一化后，
+// compat(dsh 0.2.0, log)：0.2.0 邮箱来源的团队消息、teammate 首条消息的身份块与 send_message 结果经 compat 归一化后，
 // 与 0.2.1 形态在翻译器（含回放）、子代理投影、工具卡上产出完全相同；随 compat 模块一起删除。
     ["verify-agent-teams-compat-0.2.0", ['node', '--import', 'tsx/esm', 'scripts/verify-agent-teams-compat-0.2.0.ts']],
 // 团队消息气泡渲染（#1241）：发送者行 + 悬挂缩进正文，常规与窄终端宽度、宽字符下不越界。

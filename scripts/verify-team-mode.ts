@@ -27,7 +27,7 @@ const [teamMode, roster, manage] = await Promise.all([
   import('../src/dsh-adapter/team-roster.js'),
   import('../src/dsh-adapter/plugin-manage.js'),
 ])
-const { createTeamCommandEntry, filterTeamReplacedTools, parseTeamArgs } = teamMode
+const { createTeamCommandEntry, filterTeamReplacedTools, parseTeamArgs, teamBundleSpec } = teamMode
 const { createTeamRosterStore, TEAM_BUNDLE, TEAM_PROJECTION_KEY } = roster
 const { createPluginManageEntry } = manage
 type PluginManagerView = import('../src/dsh-adapter/plugin-manager.js').PluginManagerView
@@ -182,6 +182,9 @@ try {
   }
 
   // ── /team ──────────────────────────────────────────────────────────────
+  // The bundle ships in lockstep with DSH: the hint names the running kernel's version.
+  assert.equal(teamBundleSpec('0.2.0-rc.2'), `${TEAM_BUNDLE}@0.2.0-rc.2`)
+  assert.equal(teamBundleSpec(undefined), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'an unknown kernel falls back to the validated line')
   assert.deepEqual(parseTeamArgs(''), { kind: 'status' })
   assert.deepEqual(parseTeamArgs(' status '), { kind: 'status' })
   assert.deepEqual(parseTeamArgs('on'), { kind: 'on' })
