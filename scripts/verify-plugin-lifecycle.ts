@@ -623,9 +623,9 @@ await root.fiber.dispose()
     && statement.declarationList.declarations.some(declaration => ts.isIdentifier(declaration.name) && declaration.name.text === 'ctx')
   const ctxAt = statements.findIndex(bindsCtx)
   const next = statements[ctxAt + 1]
-  // The call counts only where a host root reaches it: a conditional on `root`
-  // only on its root-present branch; other conditionals' branches, the right of
-  // a short circuit and deferred functions not at all.
+  // The call counts only where a host root reaches it: a conditional expression
+  // or `if` on `root` only on its root-present branch; other conditionals'
+  // branches, the right of a short circuit and deferred functions not at all.
   const rootPresentWhen = (condition: import('typescript').Expression): boolean | undefined => {
     if (!ts.isBinaryExpression(condition) || !ts.isIdentifier(condition.left) || condition.left.text !== 'root'
       || !ts.isIdentifier(condition.right) || condition.right.text !== 'undefined') return undefined
@@ -641,6 +641,12 @@ await root.fiber.dispose()
     else if (ts.isConditionalExpression(node)) {
       const present = rootPresentWhen(node.condition)
       if (present !== undefined) visit(present ? node.whenTrue : node.whenFalse)
+    } else if (ts.isIfStatement(node)) {
+      const present = rootPresentWhen(node.expression)
+      if (present !== undefined) {
+        const branch = present ? node.thenStatement : node.elseStatement
+        if (branch !== undefined) visit(branch)
+      }
     } else if (ts.isBinaryExpression(node) && shortCircuits.has(node.operatorToken.kind)) visit(node.left)
     else if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit)
   }
