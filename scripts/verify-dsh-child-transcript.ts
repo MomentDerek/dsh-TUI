@@ -221,12 +221,10 @@ const rosterService = (ids: readonly string[]) => ({
     JSON.stringify({ raw: leaves.map(l => l.key), uniqued: uniqued.map(l => l.key) }))
 }
 
-// An Agent Teams teammate's received messages, in both durable forms, stay
-// out of the lane: the agent-message feed places them on this child's pages
+// An Agent Teams teammate's received messages stay out of the lane: the agent-message feed places them on this child's pages
 // (docs/agent-teams-design.md), so a leaf of their own would show them twice.
 {
   const log = new Log()
-  log.add('user/message', { id: 'tm-1', role: 'user', source: { kind: 'team-message', teamId: PARENT, messageId: 'm-1', senderId: PARENT, senderName: 'lead' }, content: [text('Team message m-1 from lead:'), text('check src/ too')] })
   log.add('user/message', { id: 'tm-2', role: 'user', source: { kind: 'agent-message', form: 'relay', senderSessionId: PARENT }, content: [text('Team message from lead:'), text('and docs/')] })
   log.assistant('am-1', [text('on it')])
   const memory = createMemoryPersistence()
@@ -234,7 +232,7 @@ const rosterService = (ids: readonly string[]) => ({
   const { deps } = makeDeps({ subagents: () => rosterService([CHILD]), persistence: () => memory.source })
   const page = await readChildTranscriptPage(deps, CHILD)
   assert.ok(page !== null)
-  check('T11 team messages (0.2.0 mailbox and 0.2.1 relay) are left to the agent-message feed',
+  check('T11 team messages are left to the agent-message feed',
     page.events.map(e => e.type).join(',') === 'assistant.message',
     page.events.map(e => e.type))
 }

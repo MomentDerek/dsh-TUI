@@ -4,7 +4,7 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 
 ## 已实测的事实
 
-以下事实来自真实的 `0.2.0-rc.2` 团队服务与工具，模型为脚本化桩；`scripts/verify-agent-teams.ts` 的 fixture 就是这些形态。
+以下事实来自真实的 `0.2.0-rc.2` 团队服务与工具，模型为脚本化桩。投影与记录形态在 0.2.1 不变；`scripts/verify-agent-teams.ts` 的消息与结果 fixture 用 0.2.1 形态，0.2.0 形态只在兼容回归里（见「兼容（0.2.0）」）。
 
 - **每个根会话都是隐式 Lead。** 服务挂上后，任何根 Agent 的 `tryMembership` 都返回 `{ role: 'lead', name: 'lead' }`，`agentTeam` 投影在没有任何团队事件时就是 `{ members: [lead], tasks: [] }`。因此「存在团队」= 至少一个 teammate、或有任务、或有 `failure`，而不是成员非空。
 - **团队工具装在每个根 Agent 上，与 preset 无关。** `tool-agent-team` 在 `agent/created` 时按成员身份装到 Agent 自己的 `ctx`，所以团队模式是 profile 级的。Agent 作用域会遮蔽祖先层同名工具，所以团队的 `send_message` 等会盖住旧版控件；但 `subagent` / `subagent_fork` 名字不同，会和 `spawn_teammate` 并存。上述遮蔽结论只实测了「根层全局 vs Agent 作用域」，没有实测「preset 常驻作用域 vs Agent 作用域」。
@@ -24,7 +24,7 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 - **`interrupt_agent` 可关**：工具包新增 `interrupt` 配置（默认开）。
 - 团队投影（`agentTeam`）与任务、成员记录的形态不变。
 
-渲染的归属（每个界面只有一个渲染者，两种形态同一套）：上游 main 已经把 relay 折进通用的 agent-message 流（`subagent-projection.ts` 的 `agentMessages`，子代理页的 `agent-message` 叶子与 messages 页），但不进主 transcript。团队消息因此分两处显示：接收方主 transcript 里是 `✉ <发送者>` 气泡（`teamMessageOf`）；teammate 自己的页面交给 agent-message 流。0.2.0 的邮箱来源按它在 0.2.1 里变成的 relay 折进同一个流（`teamMailboxRelayOf`：发送方取 `senderId`），旧日志与新版本走同一条路径。
+渲染的归属（每个界面只有一个渲染者，两种形态同一套）：上游 main 已经把 relay 折进通用的 agent-message 流（`subagent-projection.ts` 的 `agentMessages`，子代理页的 `agent-message` 叶子与 messages 页），但不进主 transcript。团队消息因此分两处显示：接收方主 transcript 里是 `✉ <发送者>` 气泡（`teamMessageOf`）；teammate 自己的页面交给 agent-message 流。0.2.0 的邮箱来源先由 compat 改写成它在 0.2.1 里变成的 relay（见「兼容（0.2.0）」），旧日志与新版本走同一条路径。
 
 ### 运行时启停（实测，0.2.0-rc.2）
 
@@ -42,7 +42,7 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 
 - **开启**：用户把 `@deepseek-ai/dsh-experimental-agent-team-profile` 加进 TUI profile。第一阶段曾在 `registerBundledPresets` 里按 profile 行禁用 preset 的旧版委派行；这一做法已由「开关机制」的按 assembly 取舍取代。不改 `cordis.patch.yml`，也不新增依赖。
 - **投影**：`src/dsh-adapter/session-projection-store.ts` 是「单 key + 本地收窄 + 绑定时 seed + 只留当前会话」的小工厂；`team-roster.ts` 是它的第一个使用者，teammate 会话经 `parentSession` 读 Lead 的值。经 channel 的 `team` getter 暴露，UI 只依赖端口类型 `TeamView`。
-- **消息气泡**：translate 按身份剔除前缀块，映射到中立来源 `team-message`（带 `sender`）；投影器产出 `label: 'team-message'` 的 user 行，不计入回退目标和最近提问；`TeamMessageBubble` 渲染。识别两种形态都由 `team-tools.ts` 的 `teamMessageOf` 完成（`verify-agent-teams.ts`）。teammate 自己的页面（子代理 transcript 的历史页与实时尾巴）不另做团队叶子，见上节「渲染的归属」（`verify-dsh-child-transcript.ts` T11、`verify-agent-team-channel.ts` B3b）。
+- **消息气泡**：translate 按身份剔除前缀块，映射到中立来源 `team-message`（带 `sender`）；投影器产出 `label: 'team-message'` 的 user 行，不计入回退目标和最近提问；`TeamMessageBubble` 渲染。识别由 `team-tools.ts` 的 `teamMessageOf` 完成，只认 0.2.1 relay（`verify-agent-teams.ts`）。teammate 自己的页面（子代理 transcript 的历史页与实时尾巴）不另做团队叶子，见上节「渲染的归属」（`verify-dsh-child-transcript.ts` T11）。
 - **工具卡片**：`spawn_teammate` 并入子代理行；其余工具在上游没有 presenter 时由 `team-tools.ts` 给出单行卡片。三个与旧版控件同名的工具，调用按参数区分（团队用 `target`，旧版用 `agent_id`），结果按记录形态区分。
 
 ## 第二阶段
@@ -68,6 +68,23 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 - **实现后实测**（副本 profile，真实模型）：`/team` status、on（trust 确认）、off（有成员运行时的 `team-active` 确认）；关掉后存活会话的请求换回 `subagent` / `subagent_fork`，`developer` 消息逐个列出增减；仪表盘退回子代理视图，运行中的 teammate 显示为可继续子代理；重新打开后名单与任务板（含进行中的任务和负责人）恢复。
 - **未实测**：关闭时正处于 provisioning 的成员；liangshen（include）下的遮蔽；被藏起的工具在执行时是否仍可调用（即使能，结果也合法）。
 - **会话级开关（上游需求）**：需要上游提供按根会话 opt-in 的 membership，比如 `agentTeams.enable(root)` 写一条会话事件、`tryMembership` 只认已 opt-in 的根。那时 `/team on` 改为对当前会话调用它，profile 级的 bundle 只表示「可用」。
+
+## 兼容（0.2.0）
+
+主路径只认 0.2.1 形态；0.2.0 形态全部集中在 `src/dsh-adapter/compat/agent-team-0.2.0.ts`，由读取方在入口归一化一次。每个兼容点带可 grep 的标记 `compat(dsh 0.2.0, <类别>)`，淘汰时 `grep -rn "compat(dsh 0.2.0"` 即完整清单。
+
+类别决定淘汰时机：`host` 只在仍支持 0.2.0 宿主时需要；`log` 读 0.2.0 时期落盘的会话日志，0.2.1 宿主恢复旧会话时照样用到，不随宿主线淘汰，要单独决定何时放弃读旧日志。目前的兼容点都是 `log`：
+
+| 兼容点 | 归一化 | 调用处 |
+| --- | --- | --- |
+| 邮箱来源的团队消息（`{kind:'team-message', senderId, senderName}`，首块 `Team message <id> from <name>:`） | `teamMailboxAsRelay`：改写成 relay 来源与 `Team message from <name>:` 首块；首块不按身份匹配时保留为正文 | `backend/translate.ts`（主 transcript 与子代理 transcript 页）、`channel/subagent-projection.ts` 两处（agent-message 流） |
+| `send_message` 结果 `{messageId, status:'accepted'\|'queued'}` | `legacySendMessageStatus` | `team-tools.ts` 的 `resultLine` |
+
+回归：`scripts/verify-agent-teams-compat-0.2.0.ts`，每条只断言「0.2.0 输入与对应 0.2.1 输入产出相同」。主回归不含 0.2.0 形态。
+
+淘汰步骤：删除 compat 模块与上述调用、删除兼容回归及其 `run-ci-group.mjs` / `docs/contributing*.md` 登记、删除本节。
+
+未实现：0.2.0 teammate 首条消息的 `<system-reminder>You are teammate …` 前缀块（见「第二阶段」）；需要时也放进 compat 模块。
 
 ## 已知限制
 

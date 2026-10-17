@@ -852,9 +852,12 @@ const GROUPS = {
     ["verify-context-occupancy", ['node', '--import', 'tsx/esm', 'scripts/verify-context-occupancy.ts']],
 // Agent Teams 读侧回归（#1241）：agentTeam 投影 store（仅 Lead 的隐式单人团队视为
 // 无团队、teammate 经 parentSession 读 Lead、他会话/他 key 不串、迟到 registry 补
-// seed）、team-message 来源的消息气泡（按身份剔除服务前缀块、带发送者、不算人类
-// 提问、不进回退目标）与团队工具单行卡片（与同名旧版子代理控件区分）。
+// seed）、0.2.1 relay 团队消息的气泡（按前缀块取发送者并剔除、不算人类提问、不进
+// 回退目标）与团队工具单行卡片（与同名旧版子代理控件区分）。
     ["verify-agent-teams", ['node', '--import', 'tsx/esm', 'scripts/verify-agent-teams.ts']],
+// compat(dsh 0.2.0, log)：0.2.0 邮箱来源的团队消息与 send_message 结果经 compat 归一化后，
+// 与 0.2.1 形态在翻译器（含回放）、子代理投影、工具卡上产出完全相同；随 compat 模块一起删除。
+    ["verify-agent-teams-compat-0.2.0", ['node', '--import', 'tsx/esm', 'scripts/verify-agent-teams-compat-0.2.0.ts']],
 // 团队消息气泡渲染（#1241）：发送者行 + 悬挂缩进正文，常规与窄终端宽度、宽字符下不越界。
     ["verify-team-message-bubble", ['node', '--import', 'tsx/esm', 'scripts/verify-team-message-bubble.tsx']],
 // 代理面板的团队模式（#1241 第二阶段）：名单与子代理行按 id 合并、状态合成（跑完的

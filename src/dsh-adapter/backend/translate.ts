@@ -27,6 +27,7 @@ import type { ToolCallView, ToolResultView, ToolsRegistryLike } from '../channel
 import { isCompactionCheckpointSource, toolResultPayload } from '../compat/messages.js'
 import { transcriptImagesOf } from '../transcript-images.js'
 import { teamMessageOf, teamToolCallView, teamToolResultView } from '../team-tools.js'
+import { teamMailboxAsRelay } from '../compat/agent-team-0.2.0.js'
 
 export interface DshTranslatorDeps {
   /** The host-plane tools registry (dsh-tools); absent in bare embedders,
@@ -292,7 +293,9 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
       return [{ type: 'notice', level: 'info', text: textOf(data.content) }]
     }
     // An Agent Teams peer message: a bubble labelled with its sender.
-    const team = teamMessageOf(data.source, data.content)
+    // compat(dsh 0.2.0, log): a mailbox delivery reads as the relay it became.
+    const delivered = teamMailboxAsRelay(data.source, data.content)
+    const team = teamMessageOf(delivered.source, delivered.content)
     if (team !== undefined) {
       return [{ type: 'user.message', ...base, blocks: team.blocks, source: 'team-message', sender: team.sender, text: team.text }]
     }

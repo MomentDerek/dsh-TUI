@@ -166,15 +166,6 @@ const flush = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
   projection.onSessionEvent(childSession, { type: 'user/message', seq: 21, time: 121, data: { id: 'relay-2', source: { kind: 'agent-message', form: 'relay', senderSessionId: 'sess-parent-1' }, content: [{ type: 'text', text: 'please continue' }] } })
   messages = control.message!.messages()
   check('B3 a relay into a tracked child folds parent→child', messages.length === 2 && messages[1]!.to === 'child-1' && messages[1]!.from === 'sess-parent-1', messages)
-  {
-    // An Agent Teams 0.2.0 mailbox delivery (older logs) folds as the relay it became in 0.2.1.
-    const team = createSubagentProjection(() => ({ ...stateStub, rows: [] }) as never, { rowIds: { value: 0 }, agent: () => agent as never, subagents: () => service, lookupChild: () => undefined })
-    team.store.onSpawned('child-1', 'subagent')
-    team.store.linkSession('child-1', childSession)
-    team.onSessionEvent(childSession, { type: 'user/message', seq: 22, time: 122, data: { id: 'tm-1', source: { kind: 'team-message', teamId: 'sess-parent-1', messageId: 'm-1', senderId: 'sess-parent-1', senderName: 'lead' }, content: [{ type: 'text', text: 'Team message m-1 from lead:' }, { type: 'text', text: 'check src/' }] } })
-    const folded = team.control.message!.messages()
-    check('B3b a 0.2.0 team mailbox message folds as a relay', folded.length === 1 && folded[0]!.messageId === 'tm-1' && folded[0]!.to === 'child-1' && folded[0]!.from === 'sess-parent-1' && folded[0]!.via === 'agent-relay', folded)
-  }
 
   // The direct prompt submit.
   let result = await control.message!.submit({ targetId: 'child-cont', text: '  focus on tests  ', delivery: 'queue' })
