@@ -570,26 +570,85 @@ await root.fiber.dispose()
 // is chosen. It must run inside the deferral: a root first seen undeferred is
 // guarded for good, and DSH 0.2.0-rc.2's first Remote service then fails on
 // `ctx.root.accessor('invocation')` (a root effect) in its own activation.
+// The root reads a profile that lists one installed bundle, so the assembly
+// reaches `compositionLoader` (and the composition root) rather than returning
+// early; the undeferred control shows the check can fail.
 {
   const { armRootCapabilityGuard, deferRootCapabilityGuard } = await import('../src/dsh-adapter/host-access.js')
   const { assembleBackendsFromProfile } = await import('../src/dsh-adapter/backend-assembly.js')
-  const entryRoot = new Context()
-  const release = deferRootCapabilityGuard(entryRoot)
-  assembleBackendsFromProfile(entryRoot)
-  armRootCapabilityGuard(entryRoot)
-  let result = 'allowed'
-  await entryRoot.plugin({ name: 'dsh-remote-row', apply(ctx: Context) {
-    try { ctx.root.accessor('invocation', { get: () => undefined }) } catch (error) { result = error instanceof Error ? error.message : String(error) }
-  } })
-  check('deferred guard: backend assembly leaves DSH rows their root effects', result === 'allowed', result)
-  release()
-  await entryRoot.fiber.dispose()
+  const { mkdtempSync, readFileSync, rmSync, writeFileSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { pathToFileURL } = await import('node:url')
+  const profileDir = mkdtempSync(join(tmpdir(), 'dsh-tui-lifecycle-profile-'))
+  writeFileSync(join(profileDir, 'package.json'), JSON.stringify({ dsh: { profile: { bundles: ['example-backend-bundle'] } } }))
+  const rowAfterAssembly = async (deferred: boolean): Promise<string> => {
+    const entryRoot = new Context()
+    ;(entryRoot as { baseUrl?: string }).baseUrl = pathToFileURL(profileDir).href + '/'
+    const release = deferred ? deferRootCapabilityGuard(entryRoot) : undefined
+    try {
+      const assembled = assembleBackendsFromProfile(entryRoot)
+      if (assembled.scanned.length !== 1) return `assembly scanned ${assembled.scanned.length} bundle(s)`
+      armRootCapabilityGuard(entryRoot)
+      let result = 'allowed'
+      await entryRoot.plugin({ name: 'dsh-remote-row', apply(ctx: Context) {
+        try { ctx.root.accessor('invocation', { get: () => undefined }) } catch (error) { result = error instanceof Error ? error.message : String(error) }
+      } })
+      return result
+    } finally {
+      release?.()
+      await entryRoot.fiber.dispose()
+    }
+  }
+  try {
+    const undeferred = await rowAfterAssembly(false)
+    check('undeferred backend assembly guards the root for good (control)', undeferred !== 'allowed' && !undeferred.startsWith('assembly'), undeferred)
+    const deferred = await rowAfterAssembly(true)
+    check('deferred guard: backend assembly leaves DSH rows their root effects', deferred === 'allowed', deferred)
+  } finally {
+    rmSync(profileDir, { recursive: true, force: true })
+  }
 
-  const { readFileSync } = await import('node:fs')
-  const entry = readFileSync(new URL('../src/dsh-adapter/host-entry.ts', import.meta.url), 'utf8')
-  const deferAt = entry.indexOf('deferRootCapabilityGuard(ctx)')
-  const assembleAt = entry.indexOf('assembleBackendsFromProfile(ctx)')
-  check('host entry defers the root guard before its backend assembly', deferAt !== -1 && assembleAt !== -1 && deferAt < assembleAt, `defer@${deferAt} assemble@${assembleAt}`)
+  // The order inside `runInEntry` is not reachable without a host dsh: read it
+  // from the syntax tree, so neither comments nor another function's text can
+  // stand in for a call. The defer is a statement of the function body itself
+  // (on every path), ahead of the first call that resolves the composition root,
+  // and a failed kernel selection releases the deferral before it returns.
+  const { default: ts } = await import('typescript')
+  const entryPath = new URL('../src/dsh-adapter/host-entry.ts', import.meta.url)
+  const source = ts.createSourceFile(entryPath.pathname, readFileSync(entryPath, 'utf8'), ts.ScriptTarget.Latest, true)
+  const runInEntry = source.statements.find((node): node is import('typescript').FunctionDeclaration =>
+    ts.isFunctionDeclaration(node) && node.name?.text === 'runInEntry')
+  const calleeName = (call: import('typescript').CallExpression): string | undefined => {
+    const callee = call.expression
+    if (ts.isIdentifier(callee)) return callee.text
+    if (ts.isPropertyAccessExpression(callee)) return callee.name.text
+    return undefined
+  }
+  const callsIn = (node: import('typescript').Node, name: string): import('typescript').CallExpression[] => {
+    const found: import('typescript').CallExpression[] = []
+    const visit = (child: import('typescript').Node): void => {
+      if (ts.isCallExpression(child) && calleeName(child) === name) found.push(child)
+      ts.forEachChild(child, visit)
+    }
+    visit(node)
+    return found
+  }
+  const body = runInEntry?.body
+  const firstAt = (name: string): number => body === undefined ? -1 : (callsIn(body, name)[0]?.getStart(source) ?? -1)
+  const deferStatement = body?.statements.find(statement => callsIn(statement, 'deferRootCapabilityGuard').length > 0)
+  const deferAt = deferStatement === undefined ? -1 : deferStatement.getStart(source)
+  const assembleAt = firstAt('assembleBackendsFromProfile')
+  const selectAt = firstAt('selectKernel')
+  check('host entry defers the root guard before its backend assembly and kernel selection',
+    deferAt !== -1 && assembleAt !== -1 && selectAt !== -1 && deferAt < assembleAt && deferAt < selectAt,
+    `defer@${deferAt} assemble@${assembleAt} select@${selectAt}`)
+  const selectTry = body?.statements.find((statement): statement is import('typescript').TryStatement =>
+    ts.isTryStatement(statement) && callsIn(statement.tryBlock, 'selectKernel').length > 0)
+  const releasedFirst = selectTry?.catchClause?.block.statements[0]
+  check('a failed kernel selection releases the deferral before it returns',
+    releasedFirst !== undefined && callsIn(releasedFirst, 'releaseRootGuard').length > 0,
+    releasedFirst?.getText(source) ?? 'no catch after selectKernel')
 }
 
 // DSH's agent-team service registers its projection through

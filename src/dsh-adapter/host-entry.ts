@@ -146,6 +146,11 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   ])
   markBoot('entry-modules')
   const ctx: Context = root?.ctx ?? new (await import('@deepseek-ai/cordis')).Context()
+  // Plugins use root capabilities while they activate: hold the TUI's guard
+  // back until composition arms it (./host-access.ts). Before anything resolves
+  // the composition root (the assembly below does): a root first seen undeferred
+  // is guarded for good, and DSH's base rows would fail on their own root effects.
+  const releaseRootGuard = root === undefined ? undefined : deferRootCapabilityGuard(ctx)
   const env = process.env
   // D-1: this entry decides the kernel *before* `apply` runs, and that decision is
   // registry membership — `entryKernel` drops an id no backend answers for, and a
@@ -154,16 +159,13 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   // the route is re-decided afterwards. `apply` assembles again; the pass is a
   // no-op the second time. Without a host root there is no Loader and no profile to
   // read: the assembly says so and registers nothing.
-  // Plugins use root capabilities while they activate: hold the TUI's guard
-  // back until composition arms it (./host-access.ts). Before the assembly: it
-  // resolves the composition root, and a root first seen undeferred is guarded
-  // for good — DSH's base rows would then fail on their own root effects.
-  const releaseRootGuard = root === undefined ? undefined : deferRootCapabilityGuard(ctx)
   assembleBackendsFromProfile(ctx)
   const kernel: KernelBackendId = entryKernel(env, { configured: configuredBackend(profile) })
   try {
     await root?.selectKernel(kernel === 'dsh')
   } catch (error) {
+    // No composition follows on this root: end the deferral its release owns.
+    releaseRootGuard?.()
     if (kernel === 'dsh') {
       noteHostUnavailable(kernel, error)
       delegateToDsh()
