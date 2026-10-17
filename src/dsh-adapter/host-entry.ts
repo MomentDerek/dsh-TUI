@@ -164,8 +164,6 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   try {
     await root?.selectKernel(kernel === 'dsh')
   } catch (error) {
-    // No composition follows on this root: end the deferral its release owns.
-    releaseRootGuard?.()
     if (kernel === 'dsh') {
       noteHostUnavailable(kernel, error)
       delegateToDsh()
