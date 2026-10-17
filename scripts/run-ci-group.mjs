@@ -903,6 +903,10 @@ const GROUPS = {
 // 共享权限面板 store：FIFO、选项与呈现规则、四种结局（含拒绝理由）、撤回/会话释放/
 // 拆除时不重复作答；channel 把会话的 permission/question 事件接到 store 与问卷。
     ["verify-permission-store", ['node', '--import', 'tsx/esm', 'scripts/verify-permission-store.ts']],
+// 自动授权审查的偏好学习：选 auto 不写偏好、旧偏好 auto 不 seed、卸载迁移
+// 不学习（含进行中的外部 /permission 切换）、picker/手打路径的目标登记、
+// catalog-changed 后的名册刷新，以及 traceable 服务下快照缓存必须命中。
+    ["verify-permission-prefs", ['node', 'scripts/verify-permission-prefs.mjs']],
 // Claude 权限桥（假 Query）：允许一次/始终允许/拒绝、选项生成与抑制、死锁规则、
 // AskUserQuestion、ExitPlanMode、permission_denied 记录；同一 requestId 重投后任一处
 // 取消都只结算一次。

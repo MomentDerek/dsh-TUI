@@ -38,6 +38,7 @@ import { DEFAULT_SESSION_MODES, resolveSessionModes } from '../../sessionModes.j
 import { installedMeetsVersion } from '../contract.js'
 import { createDshSession } from '../backend/session.js'
 import { createDshTranslator, dshPricingWindow } from '../backend/translate.js'
+import { concreteService } from '../host-access.js'
 import { getHostMessageObserver, type TuiMessageObserverRuntime } from '../message-observer.js'
 import { createForeignBrowser } from '../migrate/browse.js'
 import type { JobsRuntime } from '../jobs.js'
@@ -302,12 +303,19 @@ export function attachDshExtensions(
       return unavailablePermissionPresetSnapshot()
     }
     if (service === undefined) return legacyPermissionPresetSnapshot(state.mode.sandbox)
+    // `ctx.get` hands out a fresh traceable proxy on every call; comparing it
+    // directly would make this cache miss forever. The concrete service
+    // instance behind the proxy is stable across reads and changes only when
+    // the host re-provides the service.
+    const serviceKey = service !== null && (typeof service === 'object' || typeof service === 'function')
+      ? concreteService(service as object)
+      : service
     const session = binding.agent.session
     const events = snapshotLiveSessionEvents(session)
     const lang = getLang()
     const cached = permissionSnapshotCache
     if (
-      cached?.service === service && cached.events === events && cached.eventCount === events.length
+      cached?.service === serviceKey && cached.events === events && cached.eventCount === events.length
       && cached.revision === permissionCatalogRevision && cached.lang === lang
     ) {
       return cached.snapshot
@@ -316,7 +324,7 @@ export function attachDshExtensions(
     const snapshot = read.availability === 'runtime' && autoPresetConfirmed(events)
       ? Object.freeze({ ...read, autoConfirmed: true })
       : read
-    permissionSnapshotCache = { service, events, eventCount: events.length, revision: permissionCatalogRevision, lang, snapshot }
+    permissionSnapshotCache = { service: serviceKey, events, eventCount: events.length, revision: permissionCatalogRevision, lang, snapshot }
     return snapshot
   }
   // Immutable per-append snapshot (dsh-session caches the frozen array);

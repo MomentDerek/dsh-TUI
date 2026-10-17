@@ -195,6 +195,11 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
   const warnings = []
   const handlers = new Map()
   const events = [...history]
+  /** Runs between the external `/permission` switch and its event append. */
+  let beforeCommand = () => {}
+  /** Models the command settling without appending the user's target. */
+  let skipTarget = false
+  const permissionCommand = { name: 'permission' }
   const registry = {
     // The composition default dsh-permission-presets pins into every fresh
     // session (mirrors the service's `defaultPreset` getter); undefined models
@@ -256,9 +261,17 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
     planMode: { get: () => ({}) },
     commands: {
       list: () => [],
-      find: (_agent, name) => (withCommand && name === 'permission' ? { name: 'permission' } : undefined),
-      execute: async () => undefined,
+      find: (_agent, name) => (withCommand && name === 'permission' ? permissionCommand : undefined),
+      execute: async (_agent, line) => {
+        if (!withCommand) return undefined
+        beforeCommand()
+        if (skipTarget) return { result: { kind: 'error', text: 'blocked' } }
+        const target = line.replace(/^\/permission\s*/, '').trim().split(/\s+/)[0]
+        if (target !== undefined && target !== '') agent.session.append('permission/preset', { preset: target })
+        return { result: { kind: 'success', text: '' } }
+      },
     },
+    ...(withCommand ? { tuiPluginHost: { grants: { allows: () => true } } } : {}),
     approval: { setPolicy: (agent, policy) => agent.session.append('approval/policy', { policy }) },
     sandboxPolicy: { defaultMode: 'workspace-write' },
     permissionPresets: registry,
@@ -285,7 +298,11 @@ const makeEnv = ({ history = [], withCommand = false, settings, options, default
     },
     ctx: { on: () => () => {} },
   }
-  return { ctx, agent, registry, commands, warnings, events, handlers }
+  return {
+    ctx, agent, registry, commands, warnings, events, handlers,
+    setBeforeCommand: fn => { beforeCommand = fn },
+    setSkipTarget: value => { skipTarget = value },
+  }
 }
 
 const baseOptions = { model: 'deepseek-chat', cwd: '/tmp', provider: 'deepseek', activity: false }
@@ -611,6 +628,76 @@ const presetEvents = (events, from = 0) => events.slice(from)
   await settle()
   check('catalog: a change re-renders', renders > 0, String(renders))
   check('catalog: the roster gains auto', channel.permissionPresets().options.some(option => option.value === 'auto'))
+}
+
+// Real Cordis hands a fresh traceable proxy per `ctx.get`; key the memoized
+// snapshot by the concrete service behind it, or the cache never hits.
+{
+  clearPref()
+  const env = makeEnv({ withAuto: true, history: AUTO_SEED })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  const rawGet = env.ctx.get
+  env.ctx.get = name => {
+    const service = rawGet(name)
+    if (name !== 'permissionPresets' || service === undefined) return service
+    return new Proxy(service, {
+      get(target, prop, receiver) {
+        if (prop === Symbol.for('cordis.original')) return target
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+  }
+  const first = channel.permissionPresets()
+  const second = channel.permissionPresets()
+  check('catalog: the snapshot cache keys on the concrete service, not the traceable proxy', first === second)
+}
+
+{
+  clearPref()
+  const env = makeEnv({
+    withAuto: true,
+    withCommand: true,
+    history: [
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+      { type: 'permission/preset', data: { preset: 'auto' } },
+    ],
+  })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  const outcome = await channel.runExternalCommandOutcome('permission', ' safe')
+  await settle()
+  check('auto: the external /permission path learns a switch away from it',
+    outcome?.kind === 'success' && readPermissionPref() === 'safe',
+    `${outcome?.kind} ${readPermissionPref()}`)
+}
+
+{
+  // The dangerous shape: the user's external switch is still pending when the
+  // auto bundle unloads and migrates the session to danger-full-access. The
+  // migration must not be learned just because a switch is in flight.
+  clearPref()
+  const env = makeEnv({
+    withAuto: true,
+    withCommand: true,
+    history: [
+      { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
+      { type: 'approval/policy', data: { policy: 'ask' } },
+      { type: 'permission/preset', data: { preset: 'auto' } },
+    ],
+  })
+  const channel = createChannel(env.ctx, env.agent, baseOptions)
+  await settle()
+  env.setBeforeCommand(() => {
+    env.agent.session.append('permission/preset', { preset: 'danger-full-access' })
+    env.setSkipTarget(true)
+  })
+  const outcome = await channel.runExternalCommandOutcome('permission', ' safe')
+  await settle()
+  check('auto: an unload migration during a pending external switch is not learned',
+    outcome?.kind === 'error' && readPermissionPref() === undefined,
+    `${outcome?.kind} ${readPermissionPref()}`)
 }
 
 // ---- D. upstream retry follows the route the session actually uses --------

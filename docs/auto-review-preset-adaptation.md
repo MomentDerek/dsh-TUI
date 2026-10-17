@@ -3,7 +3,7 @@
 - 日期：2026-10-13
 - 状态：设计稿 + issue 正文（#1544，2026-10-15 修订）+ 实施方案（§5）；已在 `feat/auto-review-preset-adaptation` 实现（§5 已按实现更新）
 - 关联：`ccch1mneyyy/dsh-TUI` #1544（已开）
-- 上游（核对版本线，非引入版本）：`@deepseek-ai/dsh-experimental-auto-review@0.2.0-rc.2`、`@deepseek-ai/dsh-permission-presets@0.2.0-rc.2`
+- 上游（核对版本线，非引入版本）：`@deepseek-ai/dsh-experimental-auto-review@0.2.0-rc.2`、`@deepseek-ai/dsh-permission-presets@0.2.0-rc.2`；`0.2.1-rc.2` 复核对齐：`AUTO_PRESET_SPEC`（danger-full-access + ask）、`optionOf('auto')` 仍为裸名、`displayReason` en/zh、`AUTO_REVIEW_DENIED` 的 `reason`、卸载时 `set(session, 'danger-full-access')`、`permission-presets/catalog-changed` 均不变。
 - 范围：`src/dsh-adapter/channel/`（`mode-roster.ts`、`permissions.ts`、`mode-permission-actions.ts`、`command-completions.ts`、`extensions.ts`、`transcript.ts`）、`src/dsh-adapter/approvals.ts`、`src/dsh-adapter/subagents.ts`、`src/components/PermissionsPicker.tsx`、`src/screens/Chat.tsx`、`src/sessionModes.ts`、`src/i18n.ts`
 
 ---
@@ -209,7 +209,7 @@ TUI 目前能读到 registry 的 roster（Auto 会出现在 Shift+Tab / `/permis
 
 ### 5.3 验证
 
-- 聚焦脚本（先 `pnpm build`）：`scripts/verify-permission-roster.mjs`（新增：catalog-changed 后 roster 增删、`auto` 标签本地化、未确认会话跳过 Auto）、`verify-shift-tab-mode.mjs`（未确认会话从 Full access 循环不进 Auto；picker 确认后再循环可到 Auto；新会话重新跳过；会话在 Auto 时指示器正确且可循环离开）、`verify-permission-prefs.mjs`（选 Auto 不写偏好；旧偏好 `auto` 不 seed；卸载迁移到 `danger-full-access` 不被学习；从 Auto 经 picker 切走仍被学习）、`verify-permission-modes.mjs`、`verify-approval-panel-options.tsx` / `verify-approval-visibility.tsx`（`displayReason` zh/en 选择与回落）。
+- 聚焦脚本（先 `pnpm build`）：`scripts/verify-permission-prefs.mjs`（选 Auto 不写偏好；旧偏好 `auto` 不 seed；卸载迁移到 `danger-full-access` 不被学习；进行中的外部 `/permission` 切换期间迁移不被学习；从 Auto 经外部命令切走被学习；catalog-changed 后名册刷新；traceable 服务下快照缓存命中；已登记 `run-ci-group` 的 `channel-ui`）、`verify-permission-modes.mjs`（夹具把通用 `auto` 改名 `balanced`）、`verify-launchpad-onboarding-chat.tsx`（J4 picker 确认/取消）。`verify-permission-roster.mjs` 与 `verify-shift-tab-mode.mjs` 的既有无 auto 用例仍通过；Shift+Tab 的 auto 规则由 permission-prefs 的 cycleMode 用例覆盖。
 - `toolErrorText` / 子代理：在现有 transcript 回归里加 `AUTO_REVIEW_DENIED` 带/不带 `reason` 两例。
 - 改了 `Chat.tsx` overlay 与 picker → 跑 CI 回归；`pnpm verify:build`（boundary、contract、terminal-size-source）。
 - 手动：装有 dsh 0.2.0-rc.2 的环境 `dsh plugin --profile web add` 开启 auto-review，inline 与 fullscreen、窄终端下演练 picker 确认/取消、Shift+Tab、启停插件时 roster 即时变化、一次被审查拒绝的工具调用（主会话审批面板 + 子代理工具卡）。

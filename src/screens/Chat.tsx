@@ -691,11 +691,13 @@ export function Chat({
       permissionOverlayFocusRef.current = null
     }
   }, [overlay])
-  // The preset registry can change while the picker is open (the
-  // experimental `auto` preset registers or leaves live). Reopen on the live
-  // roster, keeping the focused preset; a confirmation whose preset left
-  // drops back to the list. The channel memoizes the snapshot, so an
-  // unchanged roster is the same object and the resync stops there.
+  // The preset registry and the session's current preset can change while
+  // the picker is open (the experimental `auto` preset registers or leaves
+  // live; another surface switches the preset; a session adopt moves to a
+  // fresh log). Reopen on the live snapshot, keeping the focused preset; a
+  // confirmation whose preset left drops back to the list. The channel
+  // memoizes the snapshot, so an unchanged roster, current identity and
+  // `autoConfirmed` flag are the same object and the resync stops there.
   const permissionResyncRef = React.useRef<{ overlay: unknown; live: PermissionPresetSnapshot } | null>(null)
   React.useEffect(() => {
     if (overlay.kind !== 'permission') {
@@ -712,7 +714,18 @@ export function Chat({
     if (seen?.overlay === overlay && seen.live === live) return
     permissionResyncRef.current = { overlay, live }
     const values = (snapshot: PermissionPresetSnapshot) => snapshot.options.map(option => option.value).join('\n')
-    if (values(live) === values(overlay.snapshot)) return
+    // A roster value change is the obvious case; the current identity and the
+    // session-scoped `autoConfirmed` flag can also move without changing the
+    // option values (another surface switches the preset, a session adopt
+    // lands, the auto preset leaves after a confirmation). Refresh on either,
+    // so `needsAutoConfirm` never reads a stale flag from another session.
+    if (
+      values(live) === values(overlay.snapshot)
+      && live.availability === overlay.snapshot.availability
+      && live.current?.value === overlay.snapshot.current?.value
+      && live.current?.kind === overlay.snapshot.current?.kind
+      && live.autoConfirmed === overlay.snapshot.autoConfirmed
+    ) return
     if (live.availability === 'unavailable' || live.options.length === 0) {
       dispatchOverlay({ type: 'close-if', kind: 'permission' })
       return

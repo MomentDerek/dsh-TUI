@@ -648,6 +648,33 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
   await chat.unmount()
 }
 
+{
+  // 选择器打开期间当前权限被别处切换：live 的 current 变了、选项值没变，
+  // 也要重开快照，否则 checkmark（以及 autoConfirmed 的确认判定）会停在旧值。
+  const chat = await mountChat({ launchpadOnBoot: true }, {
+    permissionPresets(this: { permissionCurrent: string }) {
+      return {
+        availability: 'runtime',
+        options: [
+          { value: 'default', name: 'default' },
+          { value: 'strict', name: 'strict' },
+          { value: 'auto', name: 'auto' },
+        ],
+        current: { value: this.permissionCurrent, name: this.permissionCurrent, kind: 'preset' },
+      }
+    },
+  })
+  await settled(() => chat.screen().includes('说点什么'))
+  for (let index = 0; index < 4; index += 1) await chat.send('\u001b[B') // 第四段 = 权限
+  await chat.send('\r')
+  check('J5 选择器打开', await settled(() => chat.screen().includes('EXP')), chat.screen())
+  chat.channel.permissionCurrent = 'strict'
+  await chat.send('\u001b[B') // 触发一次渲染，让 resync effect 读 live
+  check('J5 外部切换 current 时选择器的 checkmark 跟着刷新',
+    await settled(() => /strict[^\n]*✓/.test(chat.screen())), chat.screen())
+  await chat.unmount()
+}
+
 // ── E. 记账：skipped 不写、done 才写 ──────────────────────────────────────
 {
   const prefsDir = join(fakeHome, '.dsh-tui')

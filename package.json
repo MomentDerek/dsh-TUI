@@ -188,6 +188,7 @@
     "verify:approval-source-badge": "node --import tsx/esm scripts/verify-approval-source-badge.tsx",
     "verify:permission-roster": "node scripts/verify-permission-roster.mjs",
     "verify:permission-modes": "node scripts/verify-permission-modes.mjs",
+    "verify:permission-prefs": "node scripts/verify-permission-prefs.mjs",
     "verify:plan-exit-restore": "node scripts/verify-plan-exit-restore.mjs",
     "verify:shift-tab-mode": "node scripts/verify-shift-tab-mode.mjs",
     "verify:live-session": "node --import tsx/esm scripts/verify-live-session.ts",
