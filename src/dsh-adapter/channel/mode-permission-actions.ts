@@ -86,15 +86,18 @@ function derivePermissionModeIndex(
   return index >= 0 ? index : 0
 }
 
-/** The durable identity held before the latest `permission/preset` event. */
+/** The durable identity held before the latest `permission/preset` event.
+ *  Non-string presets are skipped exactly as {@link foldPermissionPreset}
+ *  skips them, so both folds agree on what the session sat on. */
 function previousPermissionPreset(events: readonly SessionEvent[]): string | undefined {
   let previous: string | undefined
   let latest: string | undefined
   for (const event of events) {
     if ((event as { type: string }).type !== 'permission/preset') continue
-    previous = latest
     const preset = (event.data as unknown as { preset?: unknown }).preset
-    latest = typeof preset === 'string' ? preset : undefined
+    if (typeof preset !== 'string') continue
+    previous = latest
+    latest = preset
   }
   return previous
 }
@@ -102,7 +105,7 @@ function previousPermissionPreset(events: readonly SessionEvent[]): string | und
 /** Whether this session's log ever selected the experimental `auto` preset
  *  (picker confirmation, typed command, or a resumed Auto session). Only then
  *  may Shift+Tab land on it: a key press cannot await the risk confirmation. */
-function autoPresetConfirmed(events: readonly SessionEvent[]): boolean {
+export function autoPresetConfirmed(events: readonly SessionEvent[]): boolean {
   return events.some(event =>
     (event as { type: string }).type === 'permission/preset'
     && (event.data as unknown as { preset?: unknown }).preset === PERMISSION_PRESET_AUTO)
@@ -175,10 +178,23 @@ export function createPermissionModeActions(
    *  when it unloads, and that migration — even one racing a pending switch
    *  to another target — must not become the next session's default. */
   const userPermissionTargets: string[] = []
+  /** Per session, the identity a switch away from `auto` landed on without
+   *  being learned (the plugin-unload migration). It stays unlearnable on
+   *  the implicit paths — a plan entry's pre-plan seat and the plan exit's
+   *  restore — until an explicit switch is learned on that session. */
+  const unlearnedIdentity = new WeakMap<object, string>()
   /** `input` is the raw `/permission` argument; its first token names the
-   *  target preset. */
+   *  target preset, resolved case-insensitively against the mounted roster
+   *  so it compares equal to the value the log records. */
   const trackUserPermissionSwitch = async <T>(input: string, run: () => Promise<T>): Promise<T> => {
-    const target = input.trim().split(/\s+/)[0] ?? ''
+    const typed = input.trim().split(/\s+/)[0] ?? ''
+    let options: readonly { value: string }[] = []
+    try {
+      options = roster.readSnapshot(binding.agent)?.options ?? []
+    } catch {
+      options = []
+    }
+    const target = options.find(option => option.value.toLowerCase() === typed.toLowerCase())?.value ?? typed
     userPermissionTargets.push(target)
     try {
       return await run()
@@ -245,7 +261,8 @@ export function createPermissionModeActions(
       // plan atoms (read-only/ask) until the exit restores it. Keep the
       // preference on the identity the user actually sat on, and let the
       // event observer below ignore the replacement while it is in flight.
-      persistPermissionPref(foldPermissionPreset(snapshotLiveSessionEvents(session)))
+      const seat = foldPermissionPreset(snapshotLiveSessionEvents(session))
+      if (seat !== unlearnedIdentity.get(session)) persistPermissionPref(seat)
       planEntryInFlight = true
     }
     if (planChange && spec.plan === false) {
@@ -257,12 +274,14 @@ export function createPermissionModeActions(
     try {
       if (spec.permission !== undefined) {
         if (!(await permission.applyPermissionIdentity(spec.permission))) return
+        unlearnedIdentity.delete(session)
         persistPermissionPref(spec.permission)
       } else if (!(await permission.canonicalizeForMode(spec, session))) {
         return
       } else if (spec.plan !== true) {
         // A static mode the user cycled to owns its canonical preset
         // identity (the plan spec's canonical form is transient instead).
+        unlearnedIdentity.delete(session)
         persistPermissionPref(permission.canonicalPermissionForMode(spec, session))
       }
       if (!owner.current() || !binding.isCurrent(capture) || session !== agent.session) return
@@ -315,16 +334,18 @@ export function createPermissionModeActions(
       // switched to while plan is active (the exit restore re-seats the
       // pre-plan one, and that restore event lands here again). Leaving
       // `auto` is learned only when it lands on a target this TUI is driving
-      // (see trackUserPermissionSwitch); explicit mode switches persist on
-      // their own.
+      // (see trackUserPermissionSwitch), and an unlearned landing stays
+      // unlearned when a plan exit re-seats it; explicit mode switches
+      // persist on their own.
       const events = snapshotLiveSessionEvents(subject)
       const current = foldPermissionPreset(events)
-      if (
-        !planEntryInFlight
-        && !foldPlanActive(events)
-        && (previousPermissionPreset(events) !== PERMISSION_PRESET_AUTO
-          || (current !== undefined && userPermissionTargets.includes(current)))
-      ) {
+      const userDriven = current !== undefined && userPermissionTargets.includes(current)
+      if (planEntryInFlight || foldPlanActive(events)) {
+        // Plan transition shapes: never learned.
+      } else if (previousPermissionPreset(events) === PERMISSION_PRESET_AUTO && !userDriven) {
+        if (current !== undefined) unlearnedIdentity.set(subject, current)
+      } else if (userDriven || current !== unlearnedIdentity.get(subject)) {
+        unlearnedIdentity.delete(subject)
         persistPermissionPref(current)
       }
     }

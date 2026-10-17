@@ -133,7 +133,8 @@ try {
     )
     assert.equal(
       toolErrorText({ data: { message: result(api, 'r', deniedDetail, true), error: denied } }),
-      `${t('tool-error-auto-review-denied')} — ${deniedDetail}`,
+      t('tool-error-auto-review-denied'),
+      'a reason-less denial never appends its English detail',
     )
     assert.equal(
       toolErrorText({ data: { message: result(api, 'r', 'detail', true), error: { name: 'ToolError', code: 'DENIED', reason: 'why' } } }),

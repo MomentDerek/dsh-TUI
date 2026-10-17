@@ -476,6 +476,23 @@ const presetEvents = (events, from = 0) => events.slice(from)
   await pending
   await settle()
   check('auto: an unload migration during a pending switch elsewhere is not learned', readPermissionPref() === 'safe', readPermissionPref())
+  // The typed target is matched against the roster, not compared verbatim.
+  env.agent.session.append('permission/preset', { preset: 'auto' })
+  await settle()
+  const typed = channel.runPermissionPreset('Workspace-Write')
+  env.agent.session.append('permission/preset', { preset: 'workspace-write' })
+  await typed
+  await settle()
+  check('auto: a switch typed in another case is learned', readPermissionPref() === 'workspace-write', readPermissionPref())
+  // The unload migration stays unlearned when a plan round-trip re-seats it.
+  env.agent.session.append('permission/preset', { preset: 'auto' })
+  env.agent.session.append('permission/preset', { preset: 'danger-full-access' })
+  env.agent.session.append('plan/mode', { active: true })
+  env.agent.session.append('permission/preset', { preset: 'read-only' })
+  env.agent.session.append('plan/mode', { active: false })
+  env.agent.session.append('permission/preset', { preset: 'danger-full-access' })
+  await settle()
+  check('auto: a plan exit re-seating the unload migration is not learned', readPermissionPref() === 'workspace-write', readPermissionPref())
 }
 
 {

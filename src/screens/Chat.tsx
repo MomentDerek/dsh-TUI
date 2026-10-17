@@ -261,8 +261,7 @@ function cleanCommandError(error: unknown): string {
 /** Picking the experimental `auto` preset from the picker asks first, unless
  *  the session already sits on it. A typed `/permission auto` does not. */
 function needsAutoConfirm(snapshot: PermissionPresetSnapshot, value: string | undefined): boolean {
-  return value === PERMISSION_PRESET_AUTO
-    && !(snapshot.current?.kind === 'preset' && snapshot.current.value === PERMISSION_PRESET_AUTO)
+  return value === PERMISSION_PRESET_AUTO && snapshot.autoConfirmed !== true
 }
 
 /** The current identity's display name, localized like the picker rows. */
@@ -277,6 +276,7 @@ function clonePermissionPresetSnapshot(snapshot: PermissionPresetSnapshot): Perm
     availability: snapshot.availability,
     options: snapshot.options.map(option => ({ ...option })),
     ...(snapshot.current === undefined ? {} : { current: { ...snapshot.current } }),
+    ...(snapshot.autoConfirmed === true ? { autoConfirmed: true } : {}),
   }
 }
 
@@ -694,15 +694,23 @@ export function Chat({
   // The preset registry can change while the picker is open (the
   // experimental `auto` preset registers or leaves live). Reopen on the live
   // roster, keeping the focused preset; a confirmation whose preset left
-  // drops back to the list.
+  // drops back to the list. The channel memoizes the snapshot, so an
+  // unchanged roster is the same object and the resync stops there.
+  const permissionResyncRef = React.useRef<{ overlay: unknown; live: PermissionPresetSnapshot } | null>(null)
   React.useEffect(() => {
-    if (overlay.kind !== 'permission') return
+    if (overlay.kind !== 'permission') {
+      permissionResyncRef.current = null
+      return
+    }
     let live: PermissionPresetSnapshot
     try {
       live = channel.permissionPresets()
     } catch {
       return
     }
+    const seen = permissionResyncRef.current
+    if (seen?.overlay === overlay && seen.live === live) return
+    permissionResyncRef.current = { overlay, live }
     const values = (snapshot: PermissionPresetSnapshot) => snapshot.options.map(option => option.value).join('\n')
     if (values(live) === values(overlay.snapshot)) return
     if (live.availability === 'unavailable' || live.options.length === 0) {
@@ -5756,6 +5764,16 @@ export function Chat({
                 currentValue={overlay.snapshot.current?.value}
                 cwd={channel.cwd}
                 confirming={overlay.confirm === true}
+                onConfirm={() => {
+                  if (approvalSnapshot !== null || questionSnapshot !== null || dialogSnapshot !== null) return
+                  permissionOverlayFocusRef.current = null
+                  dispatchOverlay({ type: 'close' })
+                  void runPermissionCommand(` ${PERMISSION_PRESET_AUTO}`)
+                }}
+                onCancelConfirm={() => {
+                  if (approvalSnapshot !== null || questionSnapshot !== null || dialogSnapshot !== null) return
+                  dispatchOverlay({ type: 'open', overlay: { ...overlay, confirm: false } })
+                }}
                 onPick={(index) => {
                   if (approvalSnapshot !== null || questionSnapshot !== null || dialogSnapshot !== null) return
                   const option = overlay.snapshot.options[index]

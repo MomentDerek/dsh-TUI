@@ -239,8 +239,8 @@ export function toolErrorText(event: SessionEvent<'tool/result'>): string {
 
 /** One structured tool failure (`tool/result.error`) as display text: its
  *  `name: code` identity plus the result detail. An auto-review denial reads
- *  as a localized "denied, not executed" plus the reviewer's `reason` (its
- *  English detail only restates the denial); other failures' `reason`
+ *  as a localized "denied, not executed" plus the reviewer's `reason`, never
+ *  its English detail (that only restates the denial); other failures' `reason`
  *  repeats their detail and stays out. Shared by the transcript and the
  *  subagent cards. */
 export function toolFailureText(failure: unknown, detail: string): string {
@@ -248,7 +248,7 @@ export function toolFailureText(failure: unknown, detail: string): string {
   if (record.code === 'AUTO_REVIEW_DENIED') {
     const identity = t('tool-error-auto-review-denied')
     const reason = typeof record.reason === 'string' ? record.reason.trim() : ''
-    return reason !== '' ? `${identity} — ${reason}` : detail !== '' ? `${identity} — ${detail}` : identity
+    return reason !== '' ? `${identity} — ${reason}` : identity
   }
   const identity = typeof record.name === 'string' && typeof record.code === 'string'
     ? `${record.name}: ${record.code}`

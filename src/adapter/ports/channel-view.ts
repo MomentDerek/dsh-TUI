@@ -987,6 +987,9 @@ export interface PermissionPresetSnapshot {
   readonly availability: PermissionPresetAvailability
   readonly options: readonly PermissionPresetOption[]
   readonly current?: PermissionPresetCurrent
+  /** The session already selected the experimental `auto` preset, so its
+   *  session-scoped risk confirmation is spent (the Shift+Tab rule). */
+  readonly autoConfirmed?: boolean
 }
 
 export type PermissionPresetAvailability = 'runtime' | 'legacy' | 'unavailable'

@@ -231,6 +231,9 @@ export class ApprovalStore implements PermissionPanelSource {
    * have flipped — re-checks below this guard are skipped.
    */
   private externalCheckedAtEvents = -1
+  /** UI language the parked asks' reasons were resolved in (see
+   *  {@link refreshReasonLang}). */
+  private reasonLang = getLang()
   private notifyQueued = false
   /**
    * CallIds whose approval ask already settled (decided or cancelled).
@@ -270,6 +273,7 @@ export class ApprovalStore implements PermissionPanelSource {
    * @returns The cached snapshot; the reference is stable between mutations.
    */
   getSnapshot(): ApprovalSnapshot | null {
+    this.refreshReasonLang()
     this.refreshActiveExternal()
     return this.snapshotCache
   }
@@ -301,6 +305,7 @@ export class ApprovalStore implements PermissionPanelSource {
   pendingAgentDetail(
     agentId: string,
   ): Pick<ApprovalSnapshot, 'toolName'> & Partial<Pick<ApprovalSnapshot, 'reason' | 'command'>> | undefined {
+    this.refreshReasonLang()
     for (const ask of [...(this.active === undefined ? [] : [this.active]), ...this.queue]) {
       if (ask.snapshot.agentId !== agentId) continue
       const { toolName, reason, command } = ask.snapshot
@@ -322,6 +327,21 @@ export class ApprovalStore implements PermissionPanelSource {
       this.notifyQueued = false
       this.emit()
     })
+  }
+
+  /** Re-resolve every parked ask's localized reason after a `/lang` switch;
+   *  Chat re-renders on the switch, so the read below lands on the new
+   *  language without a store subscription. */
+  private refreshReasonLang(): void {
+    const lang = getLang()
+    if (lang === this.reasonLang) return
+    this.reasonLang = lang
+    for (const pending of [...(this.active === undefined ? [] : [this.active]), ...this.queue]) {
+      const reason = reasonOf(pending.request)
+      if (reason === undefined) delete pending.snapshot.reason
+      else pending.snapshot.reason = reason
+    }
+    this.rebuildSnapshot()
   }
 
   /** Rebuild the cached snapshot after any mutation of active. */

@@ -718,6 +718,8 @@ const dict = {
   'permission-auto-confirm-cost': { zh: '每次工具调用都会额外发起一次模型审查请求', en: 'Every tool call costs one extra model review request' },
   'permission-auto-confirm-risk': { zh: '审查放行的调用（含你已明确授权的中风险操作）直接执行；被拒的调用（含高风险）转为审批由你决定，子代理中直接拒绝；审查失败即不执行', en: 'Calls the review allows (including medium-risk ones you explicitly authorized) run without asking; denied calls, high-risk included, come to you as an approval, or are denied outright in subagents; a failed review never runs' },
   'permission-auto-confirm-actions': { zh: '**Enter** 启用 · Esc 返回', en: '**Enter** to enable · Esc to go back' },
+  'permission-auto-confirm-enable': { zh: '启用', en: 'Enable' },
+  'permission-auto-confirm-back': { zh: '返回', en: 'Go back' },
   'permission-auto-unavailable': { zh: '自动授权审查已不可用', en: 'Auto review is no longer available' },
   'tool-error-auto-review-denied': { zh: '自动授权审查拒绝，未执行', en: 'Auto review denied; not executed' },
   'plan-picker-title': { zh: '计划模式', en: 'Plan mode' },

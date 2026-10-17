@@ -24,7 +24,7 @@
  * runtime starts keep their order around the core's host subscriptions.
  */
 import type { Context } from '@deepseek-ai/cordis'
-import { t } from '../../i18n.js'
+import { getLang, t } from '../../i18n.js'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
@@ -33,6 +33,7 @@ import type { AgentSession } from '../../agent/session.js'
 import { channelCapabilities } from '../../channel/capabilities.js'
 import { isCommandCompletionToken, LOCAL_COMMANDS } from '../../commands.js'
 import { touchSession } from '../../sessionHistory.js'
+import { snapshotLiveSessionEvents } from '../compat/liveSession.js'
 import { DEFAULT_SESSION_MODES, resolveSessionModes } from '../../sessionModes.js'
 import { installedMeetsVersion } from '../contract.js'
 import { createDshSession } from '../backend/session.js'
@@ -59,9 +60,10 @@ import { mentionAttachments } from './mentions.js'
 import { createModelSelection } from './model-selection.js'
 import { createModelActions } from './model-actions.js'
 import { createModelSwitchAction } from './model-switch.js'
-import { createPermissionModeActions } from './mode-permission-actions.js'
+import { autoPresetConfirmed, createPermissionModeActions } from './mode-permission-actions.js'
 import { createPermissionModeRoster } from './mode-roster.js'
 import { legacyPermissionPresetSnapshot, permissionPresetSnapshotFromService, unavailablePermissionPresetSnapshot } from './permissions.js'
+import type { PermissionPresetSnapshot } from './types.js'
 import { createReportActions } from './reports.js'
 import { createRewindPromptAction } from './session-actions.js'
 import { createSessionAdoption } from './session-adoption.js'
@@ -277,6 +279,21 @@ export function attachDshExtensions(
     notify,
   })
   state.buildSessionTree = createSessionTreeReader(ctx, binding, () => state.cwd, (...args) => notify(...args), owner)
+  // The runtime snapshot is re-read on every Chat render while /permission is
+  // open, so it is memoized: the registry roster moves only with a catalog or
+  // command change (revision below), the current identity only with the log
+  // (the event snapshot and its length — a log without per-append snapshots
+  // hands back one mutable array), the localized names with the UI
+  // language, and either swap of service or session.
+  let permissionCatalogRevision = 0
+  let permissionSnapshotCache: {
+    service: unknown
+    events: readonly SessionEvent[]
+    eventCount: number
+    revision: number
+    lang: string
+    snapshot: PermissionPresetSnapshot
+  } | undefined
   state.permissionPresets = () => {
     let service: unknown
     try {
@@ -285,7 +302,22 @@ export function attachDshExtensions(
       return unavailablePermissionPresetSnapshot()
     }
     if (service === undefined) return legacyPermissionPresetSnapshot(state.mode.sandbox)
-    return permissionPresetSnapshotFromService(service, binding.agent.session)
+    const session = binding.agent.session
+    const events = snapshotLiveSessionEvents(session)
+    const lang = getLang()
+    const cached = permissionSnapshotCache
+    if (
+      cached?.service === service && cached.events === events && cached.eventCount === events.length
+      && cached.revision === permissionCatalogRevision && cached.lang === lang
+    ) {
+      return cached.snapshot
+    }
+    const read = permissionPresetSnapshotFromService(service, session)
+    const snapshot = read.availability === 'runtime' && autoPresetConfirmed(events)
+      ? Object.freeze({ ...read, autoConfirmed: true })
+      : read
+    permissionSnapshotCache = { service, events, eventCount: events.length, revision: permissionCatalogRevision, lang, snapshot }
+    return snapshot
   }
   // Immutable per-append snapshot (dsh-session caches the frozen array);
   // reads follow session swaps (/resume /rewind /new) automatically.
@@ -770,12 +802,16 @@ export function attachDshExtensions(
     start: {
       before() {
         agentView.start()
-        owner.own(ctx.on('commands/change', () => { if (owner.current()) modeActions.refreshMode() }))
+        owner.own(ctx.on('commands/change', () => {
+          permissionCatalogRevision++
+          if (owner.current()) modeActions.refreshMode()
+        }))
         // Payload-free registry invalidation (e.g. the experimental `auto`
         // preset registering or leaving). Not in this package's declared
         // event map, hence the casts. The roster may change membership
         // without moving the mode index, so always re-render.
         owner.own(ctx.on('permission-presets/catalog-changed' as never, (() => {
+          permissionCatalogRevision++
           if (!owner.current()) return
           modeActions.refreshMode()
           state.emit()

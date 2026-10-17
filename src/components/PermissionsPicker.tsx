@@ -25,6 +25,8 @@ export function PermissionsPicker({
   cwd,
   confirming = false,
   onPick,
+  onConfirm,
+  onCancelConfirm,
 }: {
   options: readonly PermissionPresetOption[]
   focusIndex: number
@@ -35,8 +37,12 @@ export function PermissionsPicker({
   /** Mouse pick (fullscreen): clicked row's absolute index (Chat applies
    *  the same code path as the keyboard Enter). */
   onPick?: (index: number) => void
+  /** Mouse confirm / back on the risk confirmation (fullscreen); the
+   *  keyboard path stays Enter / Esc in Chat. */
+  onConfirm?: () => void
+  onCancelConfirm?: () => void
 }): React.ReactNode {
-  if (confirming) return <AutoReviewConfirm />
+  if (confirming) return <AutoReviewConfirm onConfirm={onConfirm} onCancel={onCancelConfirm} />
   return (
     <Pane color="permission">
       <Box flexDirection="column">
@@ -75,7 +81,13 @@ const AUTO_CONFIRM_POINTS = [
   'permission-auto-confirm-risk',
 ] as const
 
-function AutoReviewConfirm(): React.ReactNode {
+function AutoReviewConfirm({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm?: () => void
+  onCancel?: () => void
+}): React.ReactNode {
   return (
     <Pane color="permission">
       <Box flexDirection="column">
@@ -93,6 +105,19 @@ function AutoReviewConfirm(): React.ReactNode {
             </Box>
           </Box>
         ))}
+        {onConfirm !== undefined && onCancel !== undefined && (
+          <Box marginTop={1}>
+            <Select
+              options={[
+                { value: 'enable', label: t('permission-auto-confirm-enable') },
+                { value: 'back', label: t('permission-auto-confirm-back') },
+              ]}
+              focusIndex={0}
+              selectedValue={undefined}
+              onPick={index => (index === 0 ? onConfirm() : onCancel())}
+            />
+          </Box>
+        )}
       </Box>
       <Text dimColor italic>
         <HintLine text={t('permission-auto-confirm-actions')} />
