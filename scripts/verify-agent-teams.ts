@@ -242,7 +242,7 @@ assert.equal(teamToolResultView('team_task_get', '{}', '{"unexpected":true}'), u
   assert.ok(owned?.type === 'tool.call' && owned.presentation !== undefined && 'title' in owned.presentation && owned.presentation.title === 'own')
 }
 {
-  // The team refuses a teammate before any member or subagent/start exists:
+  // The team refuses a teammate before it writes the member:
   // only the call and its error are on the log, and the error shows once.
   const spawnArgs = JSON.stringify({ name: 'reviewer', description: 'Review the diff', prompt: 'review' })
   const spawnCall = { type: 'tool/call', seq: 40, time: 1, data: { callId: 'spawn-1', name: 'spawn_teammate', arguments: spawnArgs, turn: 1, step: 1 } }
@@ -268,6 +268,13 @@ assert.equal(teamToolResultView('team_task_get', '{}', '{"unexpected":true}'), u
     const fresh = createDshTranslator(deps)
     accepted.apply([spawnCall, spawnResult(false)].flatMap(event => fresh.translateEvent(event as never)), replaying)
     assert.deepEqual(accepted.state.rows.filter(row => row.kind === 'tool'), [], 'an accepted spawn leaves the teammate to the subagent row')
+    // A spawn that fails after writing its member (start failure, interrupt):
+    // the failed member carries the error on the roster, so no card.
+    const member = (seq: number, phase: string) => ({ type: 'team/member', seq, time: 1, data: { version: 2, teamId: 'lead', member: { id: 'm1', name: 'reviewer', description: 'Review the diff', provider: 'p', phase } } })
+    const written = createProjectorHarness()
+    const late = createDshTranslator(deps)
+    written.apply([spawnCall, member(41, 'provisioning'), member(42, 'failed'), { ...spawnResult(true), seq: 43 }].flatMap(event => late.translateEvent(event as never)), replaying)
+    assert.deepEqual(written.state.rows.filter(row => row.kind === 'tool'), [], `a spawn failing after its member is written stays on the roster (${replaying ? 'replay' : 'live'})`)
   }
 }
-console.log('PASS team tool cards (spawn_teammate → subagent row, a refused spawn → one error card live and on replay, one-line call/result summaries, legacy names and unknown shapes stay raw)')
+console.log('PASS team tool cards (spawn_teammate → subagent row, a refused spawn → one error card live and on replay, none once its member is written, one-line call/result summaries, legacy names and unknown shapes stay raw)')

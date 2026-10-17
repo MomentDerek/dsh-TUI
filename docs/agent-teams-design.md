@@ -43,7 +43,7 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 - **开启**：用户把 `@deepseek-ai/dsh-experimental-agent-team-profile` 加进 TUI profile。第一阶段曾在 `registerBundledPresets` 里按 profile 行禁用 preset 的旧版委派行；这一做法已由「开关机制」的按 assembly 取舍取代。不改 `cordis.patch.yml`，也不新增依赖。
 - **投影**：`src/dsh-adapter/session-projection-store.ts` 是「单 key + 本地收窄 + 绑定时 seed + 只留当前会话」的小工厂；`team-roster.ts` 是它的第一个使用者，teammate 会话经 `parentSession` 读 Lead 的值。经 channel 的 `team` getter 暴露，UI 只依赖端口类型 `TeamView`。
 - **消息气泡**：translate 按身份剔除前缀块，映射到中立来源 `team-message`（带 `sender`）；投影器产出 `label: 'team-message'` 的 user 行，不计入回退目标和最近提问；`TeamMessageBubble` 渲染。识别由 `team-tools.ts` 的 `teamMessageOf` 完成，只认 0.2.1 relay（`verify-agent-teams.ts`）。teammate 自己的页面（子代理 transcript 的历史页与实时尾巴）不另做团队叶子，见上节「渲染的归属」（`verify-dsh-child-transcript.ts` T11）。
-- **工具卡片**：`spawn_teammate` 并入子代理行；上游在写入成员、发出 `subagent/start` 之前就拒绝的创建（重名、名字非法、成员数上限）没有子代理行承载，翻译器在错误结果到达时补出它本来的普通卡片（成功时不补）；其余工具在上游没有 presenter 时由 `team-tools.ts` 给出单行卡片。三个与旧版控件同名的工具，调用按参数区分（团队用 `target`，旧版用 `agent_id`），结果按记录形态区分。
+- **工具卡片**：`spawn_teammate` 并入子代理行；上游在写入 `team/member` 之前就拒绝的创建（重名、名字非法、成员数上限、非 Lead 调用、服务正在销毁、写入前取消）没有名单行承载，翻译器在错误结果到达时补出它本来的普通卡片（成功时不补）；成员写入之后的失败（启动失败、用户中断、provisioning 冲突）由名单上 `phase: 'failed'` 的成员连同 `error` 承载，不补卡片。翻译器按 spawn 参数里的 `name` 匹配随后的 `team/member`，同一步并行发出两个同名 spawn 时分不清是哪一个（只先清掉第一个）；其余工具在上游没有 presenter 时由 `team-tools.ts` 给出单行卡片。三个与旧版控件同名的工具，调用按参数区分（团队用 `target`，旧版用 `agent_id`），结果按记录形态区分。
 
 ## 第二阶段
 
@@ -56,7 +56,7 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 团队模式在会话里随开随关；关掉以后委派能力完整退回旧版，界面退出团队模式。
 
 - **作用域：profile 级，持久。** 开关就是团队 bundle 的启停，复用上游 `pluginManager.setBundleEnabled` + `hmr`，不另造开关状态，也不碰 loader entry；`/plugin`、`dsh plugin` 与 Web 插件管理看到的是同一个状态。会话级开关 TUI 单方面做不到：每个根 Agent 都是隐式 Lead，装工具只看 membership；在 assembly 过滤只能藏起团队独有的工具，同名工具被 Agent 作用域遮蔽，旧版回不来。列为上游需求（本节末）。
-- **`/team [status] | on | off`**（`src/dsh-adapter/team-mode.ts`）：on/off 用 `createPluginManageFlow` 对团队 bundle 发 enable/disable，与 `/plugin` 同一条流程、同一个确认浮层与结果报告（`restart-required` 时提示重启）；enable 照常问 trust；bundle 已选中时 on 不进流程（不对已在运行的代码再问 trust、不写空改动），只报告已开启，服务没在运行时附上待重启提示。status 报告 bundle 是否选中、`agentTeams` 服务是否在、二者不一致时哪一边待重启，以及本会话 teammate 数与运行数。包没装时 on 不进 enable 流程（否则是通用的「找不到目标」加全部可寻址名），直接提示 `/plugin install …@<版本>`（版本取正在运行的 DSH 版本：本包入口用宿主报告的版本，插件模式读 `installedKernelVersion()`；只有它是团队支持线（`UPSTREAM_VALIDATED_VERSION`、`0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2`）时才用，读不到版本时用 `UPSTREAM_VALIDATED_VERSION`，其他已知版本不给安装命令、改为提示先升级 DSH；装完即开启）和 `dsh plugin` 命令；不替用户自动安装，安装仍走 `/plugin install` 自己的确认。没有 `pluginManager`（独立入口的轻量 profile、旧宿主）时给出 `dsh plugin` 命令。
+- **`/team [status] | on | off`**（`src/dsh-adapter/team-mode.ts`）：on/off 用 `createPluginManageFlow` 对团队 bundle 发 enable/disable，与 `/plugin` 同一条流程、同一个确认浮层与结果报告（`restart-required` 时提示重启）；enable 照常问 trust；bundle 已选中时 on 不进流程（不对已在运行的代码再问 trust、不写空改动），只报告已开启，服务没在运行时附上待重启提示。status 报告 bundle 是否选中、`agentTeams` 服务是否在、二者不一致时哪一边待重启，以及本会话 teammate 数与运行数。包没装时 on 不进 enable 流程（否则是通用的「找不到目标」加全部可寻址名），直接提示 `/plugin install …@<版本>`（版本取正在运行的 DSH 版本：本包入口用宿主报告的版本，插件模式读 `installedKernelVersion()`；只有它是团队支持线（`UPSTREAM_VALIDATED_VERSION`、`0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2`）时才用，读不到版本时用 `UPSTREAM_VALIDATED_VERSION`，其他已知版本（更旧或更新）不给安装命令、改为提示先把 DSH 换到支持线之一；装完即开启）和 `dsh plugin` 命令；不替用户自动安装，安装仍走 `/plugin install` 自己的确认。没有 `pluginManager`（独立入口的轻量 profile、旧宿主）时给出 `dsh plugin` 命令。
 - **委派工具按 assembly 取舍**（缺口 1）：`registerBundledPresets` 不再改 preset，旧版行一律保留；`system-prompt/assemble`（与 `filterMinimalPresetTools` 同一处，先于它）里 `filterTeamReplacedTools`：有 `spawn_teammate` 就去掉 `subagent`、`subagent_fork`，没有就原样不动。四个同名控制工具交给作用域遮蔽（已实测）。
   - 判定看工具是否真的在，所以开关当下的存活会话、之后的新会话、服务激活失败、团队行在 `group: true` 组里或启动后才挂上、profile 自己声明的 preset，都自动正确。
   - 工具变更通知跟过滤一致：agent-loop 用 `assembly.tools`（已过 `system-prompt/assemble`）对已记录的请求头 diff 出 `tool-addition` / `tool-removal`（读过 `dsh-agent-loop` 源码）。
@@ -88,7 +88,7 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在
 ## 已知限制
 
 - 开关是 profile 级的，不能按会话开关；没有 profile 插件服务或 `hmr` 的启动要 `dsh plugin` 加重启。
-- 安装命令必须钉到版本线：团队包对 DSH 的 peer 是精确版本，npm 的 `latest`（`0.1.5-alpha.2`，团队投影没有 `wire` 视图，`channel.team` 读不到）和 `next` 都不在这条线上。团队包与 DSH 同步发版，提示里的版本取正在运行的 DSH 版本，但只限团队支持线（`UPSTREAM_VALIDATED_VERSION`、`0.2.1-alpha.5`、`0.2.0-rc.1` 与 `0.2.0-rc.2`；alpha.5 与 0.2.1-rc.2、rc.1 与 0.2.0-rc.2 的团队服务、工具与 bundle 包都只差版本号）。读不到版本时（宿主报告 `unknown` 时改读已装版本）用 `UPSTREAM_VALIDATED_VERSION`；其他已知版本没有能装进来的团队 bundle，提示先升级 DSH，不给装不上的命令，所以 0.2.0 宿主上给出的是同版本的 `@0.2.0-rc.N`；README 的示例命令随主适配线一起改。
+- 安装命令必须钉到版本线：团队包对 DSH 的 peer 是精确版本，npm 的 `latest`（`0.1.5-alpha.2`，团队投影没有 `wire` 视图，`channel.team` 读不到）和 `next` 都不在这条线上。团队包与 DSH 同步发版，提示里的版本取正在运行的 DSH 版本，但只限团队支持线（`UPSTREAM_VALIDATED_VERSION`、`0.2.1-alpha.5`、`0.2.0-rc.1` 与 `0.2.0-rc.2`；alpha.5 与 0.2.1-rc.2、rc.1 与 0.2.0-rc.2 的团队服务、工具与 bundle 包都只差版本号）。读不到版本时（宿主报告 `unknown` 时改读已装版本）用 `UPSTREAM_VALIDATED_VERSION`；其他已知版本（更旧或更新）没有能装进来的团队 bundle，提示先把 DSH 换到支持线之一（不说「升级」：更新的版本要换回去），不给装不上的命令，所以 0.2.0 宿主上给出的是同版本的 `@0.2.0-rc.N`；README 的示例命令随主适配线一起改。
 - teammate 页里的团队消息由通用 agent-message 流显示，正文带着服务的 `Team message … from <name>:` 前缀，发送方显示为会话关系而不是成员名。
 - 仪表盘的团队模式不区分「Lead 视角」与「teammate 视角」：第一阶段 teammate 会话不作为 channel 会话打开，所以只有 Lead 会看到它；「进入 teammate 会话」时要一起处理。
 - 任务板显示全部非删除任务，不分页；任务很多时靠仪表盘的滚动。

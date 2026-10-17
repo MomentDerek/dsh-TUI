@@ -257,7 +257,7 @@ teammate）。开关就是在 profile 里启停这个 bundle，重启后保持�
 DSH `0.2.1-alpha.5`、`0.2.0-rc.1` 或 `0.2.0-rc.2` 就装同版本的 `…-profile`）：团队包与 DSH 同步发版、对 DSH 的 peer
 是精确版本，不带版本和 `next` 都装不上。`/team on` 在包没装时给出的命令按已装 DSH 的
 版本填写（限上述版本线，读不到版本时给 `0.2.1-rc.2`）；其他 DSH 版本装不上团队 bundle，
-会提示先升级 DSH。
+会提示先把 DSH 换到上述版本线之一。
 
 请求里有 `spawn_teammate` 时，dsh-TUI 从中去掉 `subagent` / `subagent_fork`，团队的
 `send_message` / `list_agents` / `interrupt_agent` / `wait_agent` 顶替同名的旧版控件：

@@ -243,9 +243,9 @@ try {
     // The entry passes the running host's version; it wins over this package's own resolution.
     const hosted = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui', kernelVersion: '0.2.0-rc.2' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
     assert.match(hosted, /\/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.0-rc\.2 /)
-    // A kernel no team bundle installs into is told to upgrade, not handed a bundle it cannot load.
+    // A kernel no team bundle installs into is told to switch lines, not handed a bundle it cannot load.
     const older = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui', kernelVersion: '0.1.5-alpha.2' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
-    assert.match(older, /The running DSH 0\.1\.5-alpha\.2 has no team bundle this app can read: upgrade DSH/)
+    assert.match(older, /The running DSH 0\.1\.5-alpha\.2 has no team bundle this app can read: switch DSH to one of/)
     assert.doesNotMatch(older, /plugin install/, 'no install command for a kernel it cannot serve')
     const unmanaged = createTeamCommandEntry(rig({ manager: false }).ctx as never, { profileName: 'dsh-tui' })
     assert.match((await linesOf(unmanaged('off', sink({ total: 0, active: 0 }, [])))).join('\n'), /no profile plugin service/)

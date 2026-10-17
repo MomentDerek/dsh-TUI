@@ -39,7 +39,7 @@ const TEAM_LINES: ReadonlySet<string> = new Set([UPSTREAM_VALIDATED_VERSION, '0.
  * both name other lines).
  * @param kernel - The running DSH version; unknown falls back to the validated line.
  * @returns `<bundle>@<version>`, or undefined on a known kernel that is not a
- *   team line: no bundle installs there, DSH needs an upgrade first.
+ *   team line: no bundle installs there, DSH has to move to a team line first.
  */
 export function teamBundleSpec(kernel: string | undefined): string | undefined {
   if (kernel === undefined) return `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`

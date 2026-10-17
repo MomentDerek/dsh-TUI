@@ -228,11 +228,34 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
    * Open calls by callId until their result: what the result's presenter,
    * images and task feeds need. `card: false` = question-presented (the
    * projector projects the record from the result text). Subagent calls are
-   * not tracked: nothing about their result is projected, except a failed
-   * `spawn_teammate` (`failed`: the plain call it renders as then). Bounded
-   * like the projector's own card index: deleted on result, cleared on reset.
+   * not tracked: nothing about their result is projected. Bounded like the
+   * projector's own card index: deleted on result, cleared on reset.
    */
-  const openCalls = new Map<string, { readonly name: string; readonly args: string; readonly card: boolean; readonly failed?: AgentEventOf<'tool.call'> }>()
+  const openCalls = new Map<string, { readonly name: string; readonly args: string; readonly card: boolean }>()
+  /**
+   * `spawn_teammate` calls that have not written their member yet. The team
+   * refuses a teammate (name taken or invalid, member limit, not the Lead,
+   * service disposing, cancelled) before it appends `team/member`: no roster
+   * row carries that error, so a failed result brings back the plain card.
+   * Once the member is written its failure shows on the roster, and the call
+   * leaves this map. Bounded like `openCalls`.
+   */
+  const unwrittenSpawns = new Map<string, Omit<AgentEventOf<'tool.call'>, 'presentation'>>()
+
+  /** A `team/member` write settles the pending spawn of that name. Two
+   *  parallel spawns of one name cannot be told apart; the first one goes. */
+  const onTeamMember = (data: unknown): void => {
+    const name = (data as { member?: { name?: unknown } } | undefined)?.member?.name
+    if (typeof name !== 'string') return
+    for (const [callId, call] of unwrittenSpawns) {
+      let args: unknown
+      try { args = JSON.parse(call.argsJson) } catch { continue }
+      if ((args as { name?: unknown } | null)?.name === name) {
+        unwrittenSpawns.delete(callId)
+        return
+      }
+    }
+  }
 
   /** Ask the producing tool how its call should render (diff/terminal/…).
    *  Unknown tool, unparseable args, or a throwing presenter all degrade to
@@ -324,6 +347,8 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
     const callId = data.message.source.callId
     const call = openCalls.get(callId)
     openCalls.delete(callId)
+    const spawn = unwrittenSpawns.get(callId)
+    unwrittenSpawns.delete(callId)
     const payload = toolResultPayload(data.message)
     const isError = data.error !== undefined || payload.isError
     // Text/presentation/images are derived only for results something
@@ -340,12 +365,12 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
       time: event.time,
       content: payload.content,
       text,
-      ...(isError && call !== undefined ? { errorText: toolErrorText(event) } : {}),
+      ...(isError && (call !== undefined || spawn !== undefined) ? { errorText: toolErrorText(event) } : {}),
       ...(card === undefined ? {} : { images: transcriptImagesOf(data.message.content, deps.attachments) }),
       ...(data.meta === undefined ? {} : { meta: data.meta }),
       ...(card === undefined || isError ? {} : { presentation: presentResultView(card.name, card.args, data) as ToolResultPresentation | undefined }),
     }
-    if (call?.failed !== undefined) return isError ? [call.failed, result] : [result]
+    if (spawn !== undefined && isError) return [{ ...spawn, presentation: presentCallView(spawn.name, spawn.argsJson) as ToolCallPresentation | undefined }, result]
     if (card === undefined || isError) return [result]
     const events: AgentEvent[] = [result]
     // A job_output read doubles as the job card's output feed (the
@@ -415,12 +440,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
         }
         // The delegation tools render as the live subagent card.
         if (isSubagentToolName(data.name)) {
-          // The team refuses a teammate (name taken or invalid, member limit)
-          // before any member or subagent/start exists: no row would carry
-          // that error, so a failed result brings back the plain card.
-          if (data.name === TEAM_SPAWN_TOOL) {
-            openCalls.set(callId, { name: data.name, args: data.arguments, card: false, failed: { ...base, presentation: presentCallView(data.name, data.arguments) as ToolCallPresentation | undefined } })
-          }
+          if (data.name === TEAM_SPAWN_TOOL) unwrittenSpawns.set(callId, base)
           return [{ ...base, presentation: SUBAGENT }]
         }
         openCalls.set(callId, { name: data.name, args: data.arguments, card: true })
@@ -467,6 +487,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
         break
     }
     const data = (event as { data?: unknown }).data
+    if (type === 'team/member') onTeamMember(data)
     switch (type) {
       case 'assistant/chunk': {
         // Pre-0.1.5 live streams and raw pre-V3 logs carry per-token chunks
@@ -560,6 +581,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
     lastStreamRevision = -1
     promptSeen = false
     openCalls.clear()
+    unwrittenSpawns.clear()
   }
 
   return { translateEvent, translateFrame, translateReplay, reset, presentCallView, presentResultView }

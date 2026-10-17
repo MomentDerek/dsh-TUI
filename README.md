@@ -318,7 +318,7 @@ uses the primary line `0.2.1-rc.2`; on DSH `0.2.1-alpha.5`, `0.2.0-rc.1` or
 their DSH peers exactly, so neither the untagged install nor `next` works.
 When the package is missing, `/team on` prints the command with your
 DSH version filled in on those lines (`0.2.1-rc.2` when the version cannot
-be read); on any other DSH version it asks you to upgrade DSH first, since
+be read); on any other DSH version it asks you to switch DSH to one of those lines first, since
 no team bundle installs there.
 
 While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /

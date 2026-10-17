@@ -1804,8 +1804,8 @@ const dict = {
     en: 'The team bundle is not installed. Install it here with /plugin install {{bundle}} (it is switched on once installed), or in a terminal with dsh plugin --profile {{profile}} add {{bundle}}',
   },
   'team-cmd-kernel-unsupported': {
-    zh: '运行中的 DSH {{version}} 没有本应用能读取的团队 bundle：先把 DSH 升级到 {{lines}} 之一，再安装同版本的团队 bundle。',
-    en: 'The running DSH {{version}} has no team bundle this app can read: upgrade DSH to one of {{lines}} first, then install the team bundle of that same version.',
+    zh: '运行中的 DSH {{version}} 没有本应用能读取的团队 bundle：先把 DSH 换成 {{lines}} 之一，再安装同版本的团队 bundle。',
+    en: 'The running DSH {{version}} has no team bundle this app can read: switch DSH to one of {{lines}} first, then install the team bundle of that same version.',
   },
   'team-cmd-off-not-installed': { zh: '团队 bundle 未安装，团队本就是关闭的，无需改动。', en: 'The team bundle is not installed, so the team is already off; nothing to change.' },
   'team-cmd-service': { zh: '团队服务：{{state}}', en: 'Team service: {{state}}' },
