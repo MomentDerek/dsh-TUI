@@ -30,6 +30,9 @@ export interface SubagentDashboardProps {
   /** Agent Teams: present → team mode (members joined with their subagent
    *  rows, a read-only task board, the failure banner). */
   team?: TeamView
+  /** The session on screen: inside a teammate the subagent rows are its own
+   *  children, so the roster is not joined with them. */
+  sessionId?: string
   /** `panel` 挂在侧栏宿主里（去外层 padding、键盘走 usePanelInput 分发器）；
    *  default（缺省）与整屏形态逐字节一致。 */
   variant?: 'default' | 'panel'
@@ -72,13 +75,16 @@ interface DashboardEntry {
 }
 
 /** A teammate the host has not announced as a subagent yet. */
-function TeamRosterOnlyRow({ row, focused, panelMode }: { row: TeamMemberRow; focused: boolean; panelMode: boolean }): React.ReactNode {
+function TeamRosterOnlyRow({ row, focused, panelMode, self }: { row: TeamMemberRow; focused: boolean; panelMode: boolean; self: boolean }): React.ReactNode {
   const { glyph, color } = teamStatusGlyph(row.status, isMinimalUiMode())
   return (
     <Box flexDirection="row" paddingLeft={1} marginBottom={panelMode ? 0 : 1}>
       <Box flexShrink={0} marginRight={1}><Text color={color}>{glyph}</Text></Box>
       <Box flexGrow={1} flexShrink={1} overflow="hidden">
-        <Text bold color={focused ? 'accent' : undefined} wrap="truncate-end">{row.member.name}</Text>
+        <Text wrap="truncate-end">
+          <Text bold color={focused ? 'accent' : undefined}>{row.member.name}</Text>
+          {self && <Text dimColor>{' · ' + t('team-self-mark')}</Text>}
+        </Text>
       </Box>
       <Box flexShrink={0} marginLeft={1}>
         <Text color={focused ? 'accent' : color} dimColor={row.status === 'provisioning'}>{t(`team-status-${row.status}`)}</Text>
@@ -128,6 +134,7 @@ function TeamTaskBoard({ tasks }: { tasks: readonly TeamTask[] }): React.ReactNo
 export function SubagentDashboard({
   subagents,
   team,
+  sessionId,
   peers,
   onClose,
   onSelect,
@@ -148,7 +155,8 @@ export function SubagentDashboard({
   const nestedRows = subagents.filter(isNestedSpawn)
   const flatRows = subagents.filter(row => !isNestedSpawn(row))
   const ordered = nestedRows.length === 0 ? subagents : [...flatRows, ...nestedRows]
-  const model = team === undefined ? undefined : teamDashboardModel(team, subagents)
+  const model = team === undefined ? undefined : teamDashboardModel(team, subagents, sessionId)
+  const others = new Set(model?.others)
   const nested = nestedRows.length
   const rowEntry = (subagent: SubagentState): DashboardEntry =>
     ({ key: subagent.agentId, subagent, nested: nested > 0 && isNestedSpawn(subagent) })
@@ -156,7 +164,7 @@ export function SubagentDashboard({
     ? ordered.map(rowEntry)
     : [
       ...model.teammates.map(row => ({ key: row.member.id, teamRow: row, nested: false, ...row.subagent === undefined ? {} : { subagent: row.subagent } })),
-      ...ordered.filter(row => model.others.includes(row)).map(rowEntry),
+      ...ordered.filter(row => others.has(row)).map(rowEntry),
     ]
   const othersStart = model === undefined ? -1 : model.teammates.length
 
@@ -258,6 +266,12 @@ export function SubagentDashboard({
               <Text dimColor>{' ' + t('team-status-running') + teamSep}</Text>
               <Text color="accent">{memberCount('idle')}</Text>
               <Text dimColor>{' ' + t('team-status-idle') + teamSep}</Text>
+              {memberCount('active') > 0 && (
+                <>
+                  <Text color="accent">{memberCount('active')}</Text>
+                  <Text dimColor>{' ' + t('team-status-active') + teamSep}</Text>
+                </>
+              )}
               {memberCount('failed') > 0 && (
                 <>
                   <Text color="error">{memberCount('failed')}</Text>
@@ -301,6 +315,12 @@ export function SubagentDashboard({
 
       <Box flexDirection="column" maxHeight={panelMode ? Math.max(6, rows - 4) : Math.max(10, rows - 10)} marginTop={panelMode ? 0 : 1}>
         <ScrollBox ref={scrollRef} flexDirection="column" flexGrow={1}>
+          {model !== undefined && (
+            <>
+              <Text dimColor>{t('team-members-title')}</Text>
+              <Text dimColor wrap="truncate-end">{'  ◆ ' + t(model.viewedFromLead ? 'team-lead-row' : 'team-lead-row-peer')}</Text>
+            </>
+          )}
           {model === undefined && subagents.length === 0 ? (
             <Box flexDirection="column" alignItems="center" marginTop={Math.max(2, Math.floor((rows - 16) / 3))}>
               <Text dimColor>{'○'}</Text>
@@ -310,18 +330,12 @@ export function SubagentDashboard({
           ) : (
             entries.map(({ key, subagent, teamRow, nested: nestedMark }, index) => (
               <Box key={key} flexDirection="column">
-                {model !== undefined && index === 0 && (
-                  <>
-                    <Text dimColor>{t('team-members-title')}</Text>
-                    <Text dimColor wrap="truncate-end">{'  ◆ ' + t('team-lead-row')}</Text>
-                  </>
-                )}
                 {index === othersStart && <Text dimColor>{t('team-others-title')}</Text>}
                 {nestedMark && (
                   <Text dimColor>{'  ↳ ' + t('subagent-nested-mark')}</Text>
                 )}
                 {subagent === undefined ? (
-                  teamRow !== undefined && <TeamRosterOnlyRow row={teamRow} focused={index === focusIndex} panelMode={panelMode} />
+                  teamRow !== undefined && <TeamRosterOnlyRow row={teamRow} focused={index === focusIndex} panelMode={panelMode} self={teamRow.member.id === sessionId} />
                 ) : (
                   <SubagentCard
                     subagent={subagent}
@@ -358,12 +372,6 @@ export function SubagentDashboard({
                 )}
               </Box>
             ))
-          )}
-          {model !== undefined && entries.length === 0 && (
-            <>
-              <Text dimColor>{t('team-members-title')}</Text>
-              <Text dimColor wrap="truncate-end">{'  ◆ ' + t('team-lead-row')}</Text>
-            </>
           )}
           {team !== undefined && <TeamTaskBoard tasks={team.tasks} />}
         </ScrollBox>

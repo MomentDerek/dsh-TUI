@@ -108,6 +108,12 @@ console.log('PASS team root (Lead itself, teammate → parentSession, fork stays
   assert.equal(store.teamOf(MATE)?.leadSessionId, LEAD, 'inside a teammate the channel reads the Lead team')
   assert.equal(store.teamOf(LEAD), undefined, 'only the seeded session reads it')
   assert.equal(store.teamOf('claude-session'), undefined, 'a session that never seeds (another backend) reads no stale team')
+  // A plain child of the Lead watches the same parent but is on no team.
+  store.seed({ id: 'plain-child', header: { version: 4, id: 'plain-child', parentSession: LEAD, origin: 'subagent', delegationDepth: 1 } })
+  assert.equal(store.watchedId, LEAD)
+  assert.equal(store.teamOf('plain-child'), undefined, 'a non-teammate child of the Lead reads no team')
+  store.seed(leadSession)
+  assert.equal(store.teamOf(LEAD)?.leadSessionId, LEAD, 'the Lead reads its own team')
 }
 console.log('PASS team store (late registry seed, teammate → Lead, identity, isolation, baseline clear, disposal, read by bound id)')
 

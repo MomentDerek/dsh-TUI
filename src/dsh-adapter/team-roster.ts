@@ -2,7 +2,7 @@
  * Read side of DSH's experimental Agent Teams: the Lead session's `agentTeam`
  * projection (roster + non-deleted task board), folded for the session on
  * screen. Inside a teammate it reads the Lead's value, found through the
- * teammate header's `parentSession`.
+ * teammate header's `parentSession` (another child of the Lead reads none).
  *
  * The wire value is narrowed locally (`@deepseek-ai/dsh-experimental-agent-team`
  * is never imported); a composition without the team service never publishes
@@ -109,6 +109,19 @@ export function teamRootOf(session: unknown, agents: AgentsLike | undefined): Wa
 }
 
 /**
+ * The watched team as seen from `sessionId`: the Lead's own, or a listed
+ * teammate's. Any other child of the Lead (a plain subagent, a workflow
+ * spawn) is watched at the same parent but belongs to no team.
+ * @param team - The watched session's team.
+ * @param sessionId - The bound session.
+ * @returns the team, or `undefined` when the session is not on it.
+ */
+export function teamFor(team: TeamView | undefined, sessionId: string): TeamView | undefined {
+  if (team === undefined || team.leadSessionId === sessionId) return team
+  return team.members.some(member => member.role === 'teammate' && member.id === sessionId) ? team : undefined
+}
+
+/**
  * Create the composition root's team store and wire it to the host.
  * @param ctx - Host context of the composition root.
  * @returns the store the channel reads from.
@@ -136,6 +149,6 @@ export function createTeamRosterStore(ctx: Context): TeamRosterStore {
     if (name === 'agentTeams') store.reseed()
   }) as never)
   return Object.assign(store, {
-    teamOf: (sessionId: string) => (store.boundId === sessionId ? store.read() : undefined),
+    teamOf: (sessionId: string) => (store.boundId === sessionId ? teamFor(store.read(), sessionId) : undefined),
   })
 }

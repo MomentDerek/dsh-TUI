@@ -1055,10 +1055,11 @@ export function Chat({
   const teamMembers = (): { total: number; active: number } => {
     const team = channel.team
     if (team === undefined) return { total: 0, active: 0 }
-    const { teammates } = teamDashboardModel(team, [...channel.subagents])
+    const { teammates } = teamDashboardModel(team, [...channel.subagents], channel.sessionId)
     return {
       total: teammates.length,
-      active: teammates.filter(row => row.status === 'running' || row.status === 'provisioning').length,
+      // Inside a teammate a sibling's run is not visible: every active one counts.
+      active: teammates.filter(row => row.status === 'running' || row.status === 'provisioning' || row.status === 'active').length,
     }
   }
   /** 开始一次生命周期动作；`false` 表示这段输入不是那三种形式（或本启动没有服务）。 */
@@ -1488,7 +1489,7 @@ export function Chat({
   // The user starts a new message → the auto recap has served its purpose
   // (catching them up) and bows out. A newer user row is the signal; the
   // assistant's own streamed rows (and a teammate's message) don't count.
-  const lastUserRowId = channel.rows.filter(row => row.kind === 'user' && row.label === undefined).at(-1)?.id ?? -1
+  const lastUserRowId = channel.rows.filter(row => row.kind === 'user' && row.label !== 'team-message').at(-1)?.id ?? -1
   React.useEffect(() => {
     if (
       recap !== null &&
@@ -6425,6 +6426,7 @@ export function Chat({
       <SubagentDashboard
         subagents={[...channel.subagents]}
         team={channel.team}
+        sessionId={channel.sessionId}
         onSelect={(id) => {
           setSubagentDashboardOpen(false)
           setSubagentDetailId(id)

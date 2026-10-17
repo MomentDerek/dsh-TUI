@@ -306,8 +306,8 @@ and the team record stays in the session for the next `/team on`.
 `/plugin enable|disable` on the bundle does the same.
 
 Pin the version to exactly your installed DSH version (the command above
-uses the primary line `0.2.1-alpha.5`; on DSH `0.2.0-rc.2` install
-`…-profile@0.2.0-rc.2`). The team packages ship in lockstep with DSH and pin
+uses the primary line `0.2.1-alpha.5`; on DSH `0.2.0-rc.1` or `0.2.0-rc.2`
+install `…-profile@` that same version). The team packages ship in lockstep with DSH and pin
 their DSH peers exactly, so neither the untagged install nor `next` works.
 When the package is missing, `/team on` prints the command with your
 DSH version filled in if it is one of those two lines, and `0.2.1-alpha.5`

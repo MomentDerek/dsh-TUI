@@ -27,6 +27,7 @@ export function teamStatusGlyph(status: TeamMemberStatus, minimalUi: boolean): {
   switch (status) {
     case 'running': return minimalUi ? { glyph: '·' } : { glyph: '🟡', color: 'warning' }
     case 'idle': return minimalUi ? { glyph: '○' } : { glyph: '🔵', color: 'accent' }
+    case 'active': return minimalUi ? { glyph: '◇' } : { glyph: '🟣', color: 'accent' }
     case 'provisioning': return minimalUi ? { glyph: '…' } : { glyph: '⚪', color: 'subtle' }
     case 'failed': return minimalUi ? { glyph: '×' } : { glyph: '🔴', color: 'error' }
   }

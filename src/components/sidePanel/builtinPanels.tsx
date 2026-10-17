@@ -210,6 +210,7 @@ function AgentsPanelAdapter({ focused, visible }: PanelProps): React.ReactNode {
     <SubagentDashboard
       subagents={subagents}
       team={channel.team}
+      sessionId={channel.sessionId}
       variant="panel"
       focused={focused}
       visible={visible}

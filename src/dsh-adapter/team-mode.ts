@@ -24,10 +24,11 @@ import { TEAM_BUNDLE } from './team-roster.js'
 
 /**
  * The DSH lines whose team bundle this adapter reads: the validated line and
- * the 0.2.0 compat line (compat/agent-team-0.2.0.ts). Other lines' team
+ * the 0.2.0 compat line (compat/agent-team-0.2.0.ts; rc.1 ships the same
+ * team code as rc.2). Other lines' team
  * projection may lack the `wire` view `channel.team` needs.
  */
-const TEAM_LINES: ReadonlySet<string> = new Set([UPSTREAM_VALIDATED_VERSION, '0.2.0-rc.2'])
+const TEAM_LINES: ReadonlySet<string> = new Set([UPSTREAM_VALIDATED_VERSION, '0.2.0-rc.1', '0.2.0-rc.2'])
 
 /**
  * The install spec the hints name. The team packages ship in lockstep with

@@ -90,6 +90,14 @@ const subagents: SubagentState[] = [
   check('status: no row reads idle', teamMemberStatus(active, undefined) === 'idle')
   check('status: starting reads running', teamMemberStatus(active, row('x', { status: 'starting' })) === 'running')
   check('status: a failed phase wins over a running row', teamMemberStatus(team.members[4]!, row('x', { status: 'running' })) === 'failed')
+  // Inside a teammate its rows are its own children: never joined, no run known.
+  const peer = teamDashboardModel(team, [row('mate-run', { status: 'running' }), row('child-1')], 'mate-done')
+  check('teammate view: not from the Lead', !peer.viewedFromLead && model.viewedFromLead)
+  check('teammate view: active members read active, durable phases kept',
+    peer.teammates.map(r => r.status).join() === 'active,active,provisioning,failed', peer.teammates.map(r => r.status).join())
+  check('teammate view: no row is joined to a member', peer.teammates.every(r => r.subagent === undefined))
+  check('teammate view: its own rows stay other subagents', peer.others.map(r => r.agentId).join() === 'mate-run,child-1')
+  check('status: an unknown run of an active member reads active', teamMemberStatus(active, row('x', { status: 'running' }), false) === 'active')
   check('tasks: progress counts completed', JSON.stringify(teamTaskProgress(team.tasks)) === '{"completed":1,"total":3}')
 }
 
@@ -163,6 +171,18 @@ try {
     await press('\u001B[B')
     f.stdin.write('\r')
     check('keys: focus reaches the other subagents', await settled(() => selected.join() === 'mate-run,workflow-1'), selected.join())
+    f.unmount()
+  }
+
+  {
+    // The same team seen from the reviewer's own session.
+    const f = await mount(100, 40, { team, sessionId: 'mate-done', subagents: [row('child-1', { description: 'own child' })] }, 'Tasks')
+    const screen = f.lines.join('\n')
+    check('teammate view: the Lead line names no session', screen.includes('◆ lead') && !screen.includes('lead · this session'))
+    check('teammate view: active count in the header', /2 active/.test(screen), f.lines.slice(0, 4).join('|'))
+    check('teammate view: this session is marked on its own row', f.lines.some(line => line.includes('reviewer · this session') && line.includes('active')))
+    check('teammate view: a sibling reads active, not idle', f.lines.some(line => line.includes('builder') && line.includes('active')))
+    check('teammate view: its own child is another subagent', screen.includes('Other subagents') && screen.includes('Subagent: own child'))
     f.unmount()
   }
 

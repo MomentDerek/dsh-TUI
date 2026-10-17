@@ -184,6 +184,7 @@ try {
   // ── /team ──────────────────────────────────────────────────────────────
   // The bundle ships in lockstep with DSH: the hint names the running kernel's version on a team line.
   assert.equal(teamBundleSpec('0.2.0-rc.2'), `${TEAM_BUNDLE}@0.2.0-rc.2`)
+  assert.equal(teamBundleSpec('0.2.0-rc.1'), `${TEAM_BUNDLE}@0.2.0-rc.1`, 'rc.1 ships the same team code as rc.2')
   assert.equal(teamBundleSpec(undefined), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'an unknown kernel falls back to the validated line')
   assert.equal(teamBundleSpec('0.1.5-alpha.2'), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'a line without a readable team bundle falls back to the validated line')
   assert.deepEqual(parseTeamArgs(''), { kind: 'status' })

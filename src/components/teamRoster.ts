@@ -8,8 +8,10 @@
 import type { TeamMember, TeamTask, TeamView } from '../adapter/ports/channel-view.js'
 import type { SubagentState } from '../dsh-adapter/subagents.js'
 
-/** A member's state as shown: durable `phase` first, then the run. */
-export type TeamMemberStatus = 'provisioning' | 'running' | 'idle' | 'failed'
+/** A member's state as shown: durable `phase` first, then the run. `active`
+ *  is an active member whose run this session cannot see (a teammate's own
+ *  subagent rows never hold its siblings). */
+export type TeamMemberStatus = 'provisioning' | 'running' | 'idle' | 'active' | 'failed'
 
 /** One teammate, with its subagent row once the host has announced it. */
 export interface TeamMemberRow {
@@ -20,6 +22,8 @@ export interface TeamMemberRow {
 
 export interface TeamDashboardModel {
   readonly lead?: TeamMember
+  /** Whether the session on screen is the Lead (its subagent rows are the teammates). */
+  readonly viewedFromLead: boolean
   readonly teammates: readonly TeamMemberRow[]
   /** Subagent rows that are not team members (workflow / ralph spawns). */
   readonly others: readonly SubagentState[]
@@ -32,11 +36,13 @@ export interface TeamDashboardModel {
  * so a completed — or failed, or absent — run reads as idle, never done.
  * @param member - Roster row.
  * @param subagent - The member's subagent row, if any.
+ * @param runKnown - Whether the subagent rows are the Lead's (default).
  * @returns the state to render.
  */
-export function teamMemberStatus(member: TeamMember, subagent: SubagentState | undefined): TeamMemberStatus {
+export function teamMemberStatus(member: TeamMember, subagent: SubagentState | undefined, runKnown = true): TeamMemberStatus {
   if (member.phase === 'failed') return 'failed'
   if (member.phase === 'provisioning') return 'provisioning'
+  if (!runKnown) return 'active'
   return subagent?.status === 'running' || subagent?.status === 'starting' ? 'running' : 'idle'
 }
 
@@ -44,22 +50,26 @@ export function teamMemberStatus(member: TeamMember, subagent: SubagentState | u
  * Join the roster with the subagent rows.
  * @param team - The session's team.
  * @param subagents - The session's subagent rows.
+ * @param sessionId - The session on screen; inside a teammate its rows are
+ *   its own children, never joined with the roster.
  * @returns the Lead, teammates in roster order, and the remaining rows.
  */
-export function teamDashboardModel(team: TeamView, subagents: readonly SubagentState[]): TeamDashboardModel {
+export function teamDashboardModel(team: TeamView, subagents: readonly SubagentState[], sessionId?: string): TeamDashboardModel {
+  const viewedFromLead = sessionId === undefined || sessionId === team.leadSessionId
   const byId = new Map<string, SubagentState>()
-  for (const row of subagents) byId.set(row.agentId, row)
+  if (viewedFromLead) for (const row of subagents) byId.set(row.agentId, row)
   const teammates: TeamMemberRow[] = []
   const memberIds = new Set<string>()
   for (const member of team.members) {
     if (member.role !== 'teammate') continue
-    memberIds.add(member.id)
     const subagent = byId.get(member.id)
-    teammates.push({ member, status: teamMemberStatus(member, subagent), ...subagent === undefined ? {} : { subagent } })
+    if (subagent !== undefined) memberIds.add(member.id)
+    teammates.push({ member, status: teamMemberStatus(member, subagent, viewedFromLead), ...subagent === undefined ? {} : { subagent } })
   }
   const lead = team.members.find(member => member.role === 'lead')
   return {
     ...lead === undefined ? {} : { lead },
+    viewedFromLead,
     teammates,
     others: subagents.filter(row => !memberIds.has(row.agentId)),
   }

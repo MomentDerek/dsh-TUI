@@ -2448,7 +2448,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // lifecycle flow (team-mode.ts).
     onTeamCommand: createTeamCommandEntry(ctx, {
       profileName: profile ?? resolveDshProfileName(),
-      kernelVersion: entrySlot?.kernelVersion,
+      // The host reports `unknown` when it has no version: read the installed one.
+      kernelVersion: entrySlot?.kernelVersion === 'unknown' ? undefined : entrySlot?.kernelVersion,
     }),
     kernelPinned: backendPinned,
     // Only a `dsh --profile <name>` launch has a profile installation for
