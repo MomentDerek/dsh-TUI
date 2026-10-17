@@ -27,7 +27,7 @@ import type { ToolCallView, ToolResultView, ToolsRegistryLike } from '../channel
 import { isCompactionCheckpointSource, toolResultPayload } from '../compat/messages.js'
 import { transcriptImagesOf } from '../transcript-images.js'
 import { teamMessageOf, teamToolCallView, teamToolResultView } from '../team-tools.js'
-import { asCurrentTeamMessage } from '../compat/agent-team-0.2.0.js'
+import { teamMailboxAsRelay, withoutTeammateReminder } from '../compat/agent-team-0.2.0.js'
 
 export interface DshTranslatorDeps {
   /** The host-plane tools registry (dsh-tools); absent in bare embedders,
@@ -222,6 +222,8 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
   /** Frame revisions are monotone within one attached Agent lifecycle; a
    *  re-delivered or out-of-order frame is dropped here. */
   let lastStreamRevision = -1
+  /** Whether this session's first human prompt has been translated. */
+  let promptSeen = false
   /**
    * Open calls by callId until their result: what the result's presenter,
    * images and task feeds need. `card: false` = question-presented (the
@@ -268,8 +270,8 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
   }
 
   const translateUserMessage = (event: SessionEvent<'user/message'>): readonly AgentEvent[] => {
-    // compat(dsh 0.2.0, log): Agent Teams 0.2.0 messages read in their 0.2.1 form.
-    const data = asCurrentTeamMessage(event.data)
+    // compat(dsh 0.2.0, log): a 0.2.0 mailbox delivery reads as the relay it became.
+    const data = teamMailboxAsRelay(event.data)
     const base = { id: data.id, anchor: String(event.seq), seq: event.seq, time: event.time, blocks: data.content }
     // Both legacy and V4 checkpoints render as a folded summary rather than
     // disappearing with the other injected context.
@@ -301,12 +303,16 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
     // Injected context (plugin/skill source) is model-facing only; it has no
     // transcript-facing text.
     if (data.source.kind !== 'user') return [{ type: 'user.message', ...base, source: 'injected', text: '' }]
+    // compat(dsh 0.2.0, log): a 0.2.0 teammate's first prompt drops its identity block.
+    const content = promptSeen ? data.content : withoutTeammateReminder(data).content
+    promptSeen = true
     return [{
       type: 'user.message',
       ...base,
+      blocks: content,
       source: 'user',
-      text: firstTextOf(data.content),
-      images: transcriptImagesOf(data.content, deps.attachments),
+      text: firstTextOf(content),
+      images: transcriptImagesOf(content, deps.attachments),
     }]
   }
 
@@ -529,6 +535,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
    */
   const translateReplay = (events: readonly SessionEvent[]): readonly AgentEvent[] => {
     lastStreamRevision = -1
+    promptSeen = false
     const out: AgentEvent[] = []
     for (const event of prepareReplayEvents(events)) {
       for (const translated of translateEvent(event)) out.push(translated)
@@ -539,6 +546,7 @@ export function createDshTranslator(deps: DshTranslatorDeps) {
   /** Forget the frame fence and every open call (paired with a projector reset). */
   const reset = (): void => {
     lastStreamRevision = -1
+    promptSeen = false
     openCalls.clear()
   }
 

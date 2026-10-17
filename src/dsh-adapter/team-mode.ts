@@ -23,15 +23,22 @@ import { cell } from './plugins-info.js'
 import { TEAM_BUNDLE } from './team-roster.js'
 
 /**
+ * The DSH lines whose team bundle this adapter reads: the validated line and
+ * the 0.2.0 compat line (compat/agent-team-0.2.0.ts). Other lines' team
+ * projection may lack the `wire` view `channel.team` needs.
+ */
+const TEAM_LINES: ReadonlySet<string> = new Set([UPSTREAM_VALIDATED_VERSION, '0.2.0-rc.2'])
+
+/**
  * The install spec the hints name. The team packages ship in lockstep with
  * DSH and pin their DSH peers exactly, so only the bundle of the running
  * kernel's own version installs into this host (npm `latest` and `next`
  * both name other lines).
- * @param kernel - The installed DSH version; unknown falls back to the validated line.
+ * @param kernel - The running DSH version; unknown or not a team line falls back to the validated line.
  * @returns `<bundle>@<version>`.
  */
 export function teamBundleSpec(kernel: string | undefined): string {
-  return `${TEAM_BUNDLE}@${kernel ?? UPSTREAM_VALIDATED_VERSION}`
+  return `${TEAM_BUNDLE}@${kernel !== undefined && TEAM_LINES.has(kernel) ? kernel : UPSTREAM_VALIDATED_VERSION}`
 }
 
 /** The team's own delegation tool; its presence is what "team on" means to a request. */
@@ -88,23 +95,27 @@ export type TeamCommandOutcome =
 /**
  * Wire `/team` to the running composition.
  * @param ctx - Host context of the composition root.
- * @param options - The profile a manual route names.
+ * @param options - The profile a manual route names, and the running host's
+ *   DSH version (this package's entry; otherwise the installed one is read).
  * @returns the command entry the screen calls.
  */
 export function createTeamCommandEntry(
   ctx: Context,
-  options: { readonly profileName?: string | undefined } = {},
+  options: { readonly profileName?: string | undefined; readonly kernelVersion?: string | undefined } = {},
 ): (args: string, sink: TeamCommandSink) => TeamCommandOutcome {
   const profile = (): string => options.profileName ?? resolveDshProfileName() ?? 'dsh-tui'
+  // The version does not change in a process: read it once, on the first hint.
+  let spec: string | undefined
+  const bundle = (): string => spec ??= teamBundleSpec(options.kernelVersion ?? installedKernelVersion())
   return (args, sink) => {
     const parsed = parseTeamArgs(args)
     if (parsed.kind === 'unknown') {
       return { kind: 'lines', lines: Promise.resolve([t('team-cmd-usage', { sub: cell(parsed.sub) })]) }
     }
     const manager = pluginManagerOf(ctx)
-    if (parsed.kind === 'status') return { kind: 'lines', lines: teamStatusLines(ctx, sink, profile()) }
+    if (parsed.kind === 'status') return { kind: 'lines', lines: teamStatusLines(ctx, sink, profile(), bundle) }
     if (manager === undefined) {
-      return { kind: 'lines', lines: Promise.resolve([t('team-cmd-no-manager', { profile: cell(profile()), bundle: teamBundleSpec(installedKernelVersion()) })]) }
+      return { kind: 'lines', lines: Promise.resolve([t('team-cmd-no-manager', { profile: cell(profile()), bundle: bundle() })]) }
     }
     const flow = createPluginManageFlow({
       manager,
@@ -141,7 +152,7 @@ export function createTeamCommandEntry(
           if (installed && !enabled) return flow.begin()
           if (sink.binding() === bindingAtStart) {
             sink.onLines(!installed
-              ? [t('team-cmd-not-installed', { profile: cell(profile()), bundle: teamBundleSpec(installedKernelVersion()) })]
+              ? [t('team-cmd-not-installed', { profile: cell(profile()), bundle: bundle() })]
               : [t('team-cmd-already-on'), ...ctx.get('agentTeams', false) === undefined ? [t('team-cmd-pending-on')] : []])
           }
           return { kind: 'done' }
@@ -155,13 +166,13 @@ export function createTeamCommandEntry(
  * `/team` and `/team status`: whether the profile selects the bundle, whether
  * the team service is running in this process, and the bound session's team.
  */
-async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: string): Promise<readonly string[]> {
+async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: string, spec: () => string): Promise<readonly string[]> {
   const manager = pluginManagerOf(ctx)
   const service = ctx.get('agentTeams', false) !== undefined
   const lines: string[] = []
   if (manager === undefined) {
     lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
-    lines.push(t('team-cmd-no-manager', { profile: cell(profile), bundle: teamBundleSpec(installedKernelVersion()) }))
+    lines.push(t('team-cmd-no-manager', { profile: cell(profile), bundle: spec() }))
   } else {
     let selected: boolean | undefined
     let installed = false
@@ -175,7 +186,7 @@ async function teamStatusLines(ctx: Context, sink: TeamCommandSink, profile: str
     if (selected !== undefined || installed) {
       lines.push(t('team-cmd-bundle', { state: t(selected === true ? 'team-cmd-on' : 'team-cmd-off') }))
     } else if (lines.length === 0) {
-      lines.push(t('team-cmd-not-installed', { profile: cell(profile), bundle: teamBundleSpec(installedKernelVersion()) }))
+      lines.push(t('team-cmd-not-installed', { profile: cell(profile), bundle: spec() }))
     }
     lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
     // The profile says on but nothing runs (a startup-only profile, or the

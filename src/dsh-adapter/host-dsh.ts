@@ -266,6 +266,8 @@ export interface HostRoot {
    * would exit before the funnel restored the terminal.
    */
   readonly uninstallFailLoud: () => void
+  /** The host's DSH runtime version (`unknown` when it reports none). */
+  readonly kernelVersion: string
 }
 
 export interface PrepareHostRootOptions {
@@ -401,6 +403,7 @@ export async function prepareHostRoot(host: HostDsh, options: PrepareHostRootOpt
     ctx,
     selectKernel,
     uninstallFailLoud: () => { uninstallFailLoud() },
+    kernelVersion: hostVersion(host),
     async compose(warn, stopping = () => false) {
       if (!kernelSelected) throw new Error('dsh-tui: select the host kernel before composing its profile')
       if (profileContext !== undefined) {

@@ -11,7 +11,8 @@
 import assert from 'node:assert/strict'
 import { createDshTranslator } from '../src/dsh-adapter/backend/translate.js'
 import { createSubagentProjection } from '../src/dsh-adapter/channel/subagent-projection.js'
-import { asCurrentTeamMessage } from '../src/dsh-adapter/compat/agent-team-0.2.0.js'
+import { foldAgentViewEvents } from '../src/dsh-adapter/agent-view.js'
+import { teamMailboxAsRelay, withoutTeammateReminder } from '../src/dsh-adapter/compat/agent-team-0.2.0.js'
 import { teamToolResultView } from '../src/dsh-adapter/team-tools.js'
 
 const LEAD = 'lead-1'
@@ -41,13 +42,16 @@ const current = delivery(relaySource, [{ type: 'text', text: 'Team message from 
 
 // ── the normalization itself ───────────────────────────────────────────────
 {
-  assert.deepEqual(asCurrentTeamMessage(legacy.data), current.data)
+  assert.deepEqual(teamMailboxAsRelay(legacy.data), current.data)
   // Framing that does not match this message's identity stays content.
   const reframed = [{ type: 'text', text: 'Team message other from reviewer:' }, body]
-  assert.deepEqual(asCurrentTeamMessage({ source: mailboxSource, content: reframed }).content, [{ type: 'text', text: 'Team message from reviewer:' }, ...reframed])
+  assert.deepEqual(teamMailboxAsRelay({ source: mailboxSource, content: reframed }).content, [{ type: 'text', text: 'Team message from reviewer:' }, ...reframed])
   // Anything else comes back as the same object.
+  for (const data of [{ source: { kind: 'user' }, content: [body] }, current.data]) {
+    assert.equal(teamMailboxAsRelay(data), data)
+  }
   for (const data of [{ source: { kind: 'user' }, content: [body] }, current.data, { source: { kind: 'user' }, content: [{ type: 'text', text: reminder.replace('Your Team Lead', 'My Team Lead') }, body] }]) {
-    assert.equal(asCurrentTeamMessage(data), data)
+    assert.equal(withoutTeammateReminder(data), data)
   }
   console.log('PASS mailbox delivery → relay (exact framing replaced, other framing kept, other messages untouched)')
 }
@@ -85,8 +89,22 @@ const current = delivery(relaySource, [{ type: 'text', text: 'Team message from 
   }
   // The block alone (nothing after it) is somebody's text, kept.
   const alone = first([{ type: 'text', text: reminder }])
-  assert.equal(asCurrentTeamMessage(alone.data), alone.data)
-  console.log('PASS teammate first prompt drops the 0.2.0 identity block (live + replay; exact template only)')
+  assert.equal(withoutTeammateReminder(alone.data), alone.data)
+  // Only a session's first prompt: a later message with the same blocks is
+  // somebody's text, on the same translator and after a replay alike.
+  const bubbleText = (events: readonly { type: string }[]) => events.flatMap(event => event.type === 'user.message' ? [(event as { text: string }).text] : [])
+  const repeated = first([{ type: 'text', text: reminder }, prompt])
+  const live = createDshTranslator(deps)
+  assert.deepEqual(bubbleText([...live.translateEvent(repeated as never), ...live.translateEvent(repeated as never)]), [prompt.text, reminder.trim()])
+  const resumed = createDshTranslator(deps)
+  assert.deepEqual(bubbleText([...resumed.translateReplay([repeated] as never), ...resumed.translateEvent(repeated as never)]), [prompt.text, reminder.trim()])
+  // A replay starts the count again.
+  assert.deepEqual(bubbleText(resumed.translateReplay([repeated] as never)), [prompt.text])
+  // agent-view: the first prompt and the summary name the task.
+  const view = foldAgentViewEvents([repeated] as never, 0, { hasTurns: false, firstPrompt: '', summary: '', summaryKind: 'none', title: '', updatedAt: 0, lastTurnFailed: false })
+  assert.equal(view.firstPrompt, prompt.text)
+  assert.equal(view.summary, prompt.text)
+  console.log('PASS teammate first prompt drops the 0.2.0 identity block (live + replay + agent-view; first prompt and exact template only)')
 }
 
 // ── subagent projection: the agent-message feed ────────────────────────────

@@ -182,7 +182,7 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
     log: logRestartEvent,
   })
   // Only a host root gets a composition (DSH without one was delegated above).
-  const slot = root === undefined ? undefined : createEntrySlot(kernel === 'dsh')
+  const slot = root === undefined ? undefined : createEntrySlot(kernel === 'dsh', root.kernelVersion)
   // Plugins use root capabilities while they activate: hold the TUI's guard
   // back until composition arms it (./host-access.ts).
   const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)

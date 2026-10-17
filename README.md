@@ -310,7 +310,8 @@ uses the primary line `0.2.1-alpha.5`; on DSH `0.2.0-rc.2` install
 `…-profile@0.2.0-rc.2`). The team packages ship in lockstep with DSH and pin
 their DSH peers exactly, so neither the untagged install nor `next` works.
 When the package is missing, `/team on` prints the command with your
-installed DSH version filled in.
+DSH version filled in if it is one of those two lines, and `0.2.1-alpha.5`
+otherwise.
 
 While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /
 `subagent_fork` from it, and the team's `send_message` / `list_agents` /

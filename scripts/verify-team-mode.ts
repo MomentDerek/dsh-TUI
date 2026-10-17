@@ -182,9 +182,10 @@ try {
   }
 
   // ── /team ──────────────────────────────────────────────────────────────
-  // The bundle ships in lockstep with DSH: the hint names the running kernel's version.
+  // The bundle ships in lockstep with DSH: the hint names the running kernel's version on a team line.
   assert.equal(teamBundleSpec('0.2.0-rc.2'), `${TEAM_BUNDLE}@0.2.0-rc.2`)
   assert.equal(teamBundleSpec(undefined), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'an unknown kernel falls back to the validated line')
+  assert.equal(teamBundleSpec('0.1.5-alpha.2'), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'a line without a readable team bundle falls back to the validated line')
   assert.deepEqual(parseTeamArgs(''), { kind: 'status' })
   assert.deepEqual(parseTeamArgs(' status '), { kind: 'status' })
   assert.deepEqual(parseTeamArgs('on'), { kind: 'on' })
@@ -234,6 +235,9 @@ try {
     const missing = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
     const NOT_INSTALLED = /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5 .*dsh plugin --profile dsh-tui add @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5/
     assert.match(missing, NOT_INSTALLED)
+    // The entry passes the running host's version; it wins over this package's own resolution.
+    const hosted = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui', kernelVersion: '0.2.0-rc.2' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
+    assert.match(hosted, /\/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.0-rc\.2 /)
     const unmanaged = createTeamCommandEntry(rig({ manager: false }).ctx as never, { profileName: 'dsh-tui' })
     assert.match((await linesOf(unmanaged('off', sink({ total: 0, active: 0 }, [])))).join('\n'), /no profile plugin service/)
     assert.match((await linesOf(entry('toggle', sink({ total: 0, active: 0 }, [])))).join('\n'), /Usage: \/team/)
