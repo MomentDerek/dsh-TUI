@@ -239,7 +239,7 @@ DSH 的实验性 Agent Teams 让会话的主 agent（Lead）创建有名字的 t
 profile（一次即可）：
 
 ```sh
-dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-alpha.5
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-rc.2
 ```
 
 之后用 `/team on` / `/team off` 开关（单独 `/team` 报告 bundle、服务与本会话的
@@ -248,10 +248,10 @@ teammate）。开关就是在 profile 里启停这个 bundle，重启后保持�
 会先确认：它们不会被停止，而是以普通子代理身份跑完当前回合；团队记录留在会话里，
 下次 `/team on` 时恢复。对这个 bundle 用 `/plugin enable|disable` 效果相同。
 
-版本必须钉住，与你已装的 DSH 版本完全一致（上面以主适配线 `0.2.1-alpha.5` 为例；
+版本必须钉住，与你已装的 DSH 版本完全一致（上面以主适配线 `0.2.1-rc.2` 为例；
 DSH `0.2.0-rc.1` 或 `0.2.0-rc.2` 就装同版本的 `…-profile`）：团队包与 DSH 同步发版、对 DSH 的 peer
 是精确版本，不带版本和 `next` 都装不上。`/team on` 在包没装时给出的命令按已装 DSH 的
-版本填写（限上述版本线，其他版本给 `0.2.1-alpha.5`）。
+版本填写（限上述版本线，其他版本给 `0.2.1-rc.2`）。
 
 请求里有 `spawn_teammate` 时，dsh-TUI 从中去掉 `subagent` / `subagent_fork`，团队的
 `send_message` / `list_agents` / `interrupt_agent` / `wait_agent` 顶替同名的旧版控件：

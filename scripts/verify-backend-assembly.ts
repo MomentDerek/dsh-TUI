@@ -772,7 +772,7 @@ function selectsFinalKernel(source: string): boolean {
   const mode = source.indexOf(HOST_MODE_CALL)
   return assemblesBeforeLine(source, ENTRY_KERNEL_LINE)
     && mode > route && source.indexOf('const config = Config(') > mode
-    && source.indexOf("createEntrySlot(kernel === 'dsh')") > mode
+    && source.indexOf("createEntrySlot(kernel === 'dsh',") > mode
     && source.indexOf('entryKernel: kernel') > mode
     && !source.includes("dsh: kernelBeforeHost === 'dsh'")
 }

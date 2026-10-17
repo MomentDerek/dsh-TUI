@@ -293,7 +293,7 @@ coordinate on a shared task board. It is off by default. Install the
 upstream bundle into the TUI profile once:
 
 ```sh
-dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-alpha.5
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-rc.2
 ```
 
 Then switch it with `/team on` / `/team off` (`/team` alone reports the
@@ -306,11 +306,11 @@ and the team record stays in the session for the next `/team on`.
 `/plugin enable|disable` on the bundle does the same.
 
 Pin the version to exactly your installed DSH version (the command above
-uses the primary line `0.2.1-alpha.5`; on DSH `0.2.0-rc.1` or `0.2.0-rc.2`
+uses the primary line `0.2.1-rc.2`; on DSH `0.2.0-rc.1` or `0.2.0-rc.2`
 install `…-profile@` that same version). The team packages ship in lockstep with DSH and pin
 their DSH peers exactly, so neither the untagged install nor `next` works.
 When the package is missing, `/team on` prints the command with your
-DSH version filled in if it is one of those two lines, and `0.2.1-alpha.5`
+DSH version filled in if it is one of those two lines, and `0.2.1-rc.2`
 otherwise.
 
 While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /

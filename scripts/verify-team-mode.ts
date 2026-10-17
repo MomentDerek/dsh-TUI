@@ -22,14 +22,17 @@ const dataDir = mkdtempSync(join(tmpdir(), 'verify-team-mode-data-'))
 process.env.HOME = dataDir
 process.env.USERPROFILE = dataDir
 
-const [teamMode, roster, manage] = await Promise.all([
+const [teamMode, roster, manage, { UPSTREAM_VALIDATED_VERSION }] = await Promise.all([
   import('../src/dsh-adapter/team-mode.js'),
   import('../src/dsh-adapter/team-roster.js'),
   import('../src/dsh-adapter/plugin-manage.js'),
+  import('../src/dsh-adapter/contract.js'),
 ])
 const { createTeamCommandEntry, filterTeamReplacedTools, parseTeamArgs, teamBundleSpec } = teamMode
 const { createTeamRosterStore, TEAM_BUNDLE, TEAM_PROJECTION_KEY } = roster
 const { createPluginManageEntry } = manage
+/** The validated line's bundle spec, escaped for a RegExp. */
+const VALIDATED_SPEC = `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 type PluginManagerView = import('../src/dsh-adapter/plugin-manager.js').PluginManagerView
 type BundleInfo = Awaited<ReturnType<PluginManagerView['listBundles']>>[number]
 type PluginManageStep = import('../src/dsh-adapter/plugin-manage.js').PluginManageStep
@@ -185,8 +188,8 @@ try {
   // The bundle ships in lockstep with DSH: the hint names the running kernel's version on a team line.
   assert.equal(teamBundleSpec('0.2.0-rc.2'), `${TEAM_BUNDLE}@0.2.0-rc.2`)
   assert.equal(teamBundleSpec('0.2.0-rc.1'), `${TEAM_BUNDLE}@0.2.0-rc.1`, 'rc.1 ships the same team code as rc.2')
-  assert.equal(teamBundleSpec(undefined), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'an unknown kernel falls back to the validated line')
-  assert.equal(teamBundleSpec('0.1.5-alpha.2'), `${TEAM_BUNDLE}@0.2.1-alpha.5`, 'a line without a readable team bundle falls back to the validated line')
+  assert.equal(teamBundleSpec(undefined), `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`, 'an unknown kernel falls back to the validated line')
+  assert.equal(teamBundleSpec('0.1.5-alpha.2'), `${TEAM_BUNDLE}@${UPSTREAM_VALIDATED_VERSION}`, 'a line without a readable team bundle falls back to the validated line')
   assert.deepEqual(parseTeamArgs(''), { kind: 'status' })
   assert.deepEqual(parseTeamArgs(' status '), { kind: 'status' })
   assert.deepEqual(parseTeamArgs('on'), { kind: 'on' })
@@ -194,7 +197,7 @@ try {
   assert.deepEqual(parseTeamArgs('toggle'), { kind: 'unknown', sub: 'toggle' })
 
   const teamBundle = (enabled: boolean): BundleInfo => ({
-    name: TEAM_BUNDLE, version: '0.2.1-alpha.5', enabled, installed: true, optional: false, removable: true, rows: [], overrides: [],
+    name: TEAM_BUNDLE, version: UPSTREAM_VALIDATED_VERSION, enabled, installed: true, optional: false, removable: true, rows: [], overrides: [],
   }) as BundleInfo
   function rig(options: { bundles?: BundleInfo[]; service?: boolean; manager?: boolean } = {}) {
     const calls: string[] = []
@@ -234,7 +237,7 @@ try {
     assert.match(pending, /profile has the team on but the service is not running/)
     assert.match(pending, /No teammates in this session/)
     const missing = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
-    const NOT_INSTALLED = /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5 .*dsh plugin --profile dsh-tui add @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5/
+    const NOT_INSTALLED = new RegExp(`not installed\\. Install it here with /plugin install ${VALIDATED_SPEC} .*dsh plugin --profile dsh-tui add ${VALIDATED_SPEC}`)
     assert.match(missing, NOT_INSTALLED)
     // The entry passes the running host's version; it wins over this package's own resolution.
     const hosted = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui', kernelVersion: '0.2.0-rc.2' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
@@ -279,7 +282,7 @@ try {
     if (outcome.kind !== 'flow') throw new Error('expected a flow')
     assert.equal((await outcome.flow.begin()).kind, 'done')
     assert.equal(lines.length, 1, lines.join(' | '))
-    assert.match(lines[0]!, /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5/)
+    assert.match(lines[0]!, new RegExp(`not installed\\. Install it here with /plugin install ${VALIDATED_SPEC}`))
     assert.doesNotMatch(lines[0]!, /No such target|dsh-base/, 'no list of every addressable name')
     assert.deepEqual(calls, [])
   }
