@@ -403,6 +403,64 @@ function guardRootCapabilities(root: Context): void {
   } catch {
     // Fall through when a minimal embedder omits reflection internals.
   }
+
+  admitRootProjectionRegistrations(root)
+}
+
+const projectionRegistryRoots = new WeakSet<object>()
+const guardedProjectionRegistries = new WeakSet<object>()
+
+/**
+ * `sessionProjections.register` hangs its disposer on the receiver's context
+ * (the registry's documented ownership: the calling fiber). DSH's agent-team
+ * service reaches it through `ctx.root`, which lands that effect on the root
+ * fiber and the guard above refuses it. Re-issue such a call through the
+ * activation's own context so the registration rides the caller's fiber, as
+ * `ctx.sessionProjections.register` would; the root stays closed.
+ */
+function admitRootProjectionRegistrations(root: Context): void {
+  if (projectionRegistryRoots.has(root as object)) return
+  projectionRegistryRoots.add(root as object)
+  const wrap = (): void => withHostRootCapability(() => {
+    let registry: object
+    try {
+      const service = (root as unknown as { sessionProjections?: unknown }).sessionProjections
+      if (typeof service !== 'object' || service === null) return
+      registry = concreteService(service)
+    } catch {
+      return
+    }
+    if (guardedProjectionRegistries.has(registry)) return
+    const original = Reflect.get(registry, 'register')
+    if (typeof original !== 'function') return
+    guardedProjectionRegistries.add(registry)
+    // Configurable: Cordis's traceable proxy rebinds methods, which a frozen
+    // property would forbid. Replacing it only restores the refused path.
+    Object.defineProperty(registry, 'register', {
+      configurable: true,
+      writable: false,
+      value: function (this: unknown, ...args: unknown[]) {
+        // Through `ctx.root` the receiver is a root-derived context on the
+        // root fiber: that is the effect the guard would refuse.
+        if (callContextOf(this)?.fiber !== rootFibers.get(root as object) || !currentActivationIsPlugin(root)) {
+          return Reflect.apply(original, this, args)
+        }
+        const token = activationStorage.getStore() as ActivationToken
+        assertLiveContext(token.context, 'sessionProjections.register')
+        const caller = token.context.get('sessionProjections' as never)
+        return Reflect.apply(original, caller, args)
+      },
+    })
+  })
+  wrap()
+  try {
+    // The registry may mount after the guard (the profile composes later).
+    withHostRootCapability(() => root.on('internal/service' as never, ((name: unknown) => {
+      if (name === 'sessionProjections') wrap()
+    }) as never, { global: true }))
+  } catch {
+    // A minimal embedder without the event helper keeps the plain guard.
+  }
 }
 
 function guardFiberMethod(target: object, method: string, root: Context, capability: string): void {

@@ -565,6 +565,50 @@ await root.fiber.dispose()
   check('host code still uses the root after the guard is installed', tryRoot(entryRoot) === 'allowed')
   await entryRoot.fiber.dispose()
 }
+
+// DSH's agent-team service registers its projection through
+// `ctx.root.sessionProjections`. Behind the installed guard that call rides
+// the calling plugin's fiber (unloading it drops the key), while the root's
+// own effect stays refused. Real registry, mounted after the guard.
+{
+  const { armRootCapabilityGuard, compositionRoot, concreteService, deferRootCapabilityGuard } = await import('../src/dsh-adapter/host-access.js')
+  const { SessionProjectionRegistry } = await import('@deepseek-ai/dsh-session-projection')
+  const teamRoot = new Context()
+  const release = deferRootCapabilityGuard(teamRoot)
+  compositionRoot(teamRoot)
+  armRootCapabilityGuard(teamRoot)
+  await teamRoot.plugin({ name: 'tui-row', apply(ctx: Context) { compositionRoot(ctx) } })
+  release()
+  await teamRoot.plugin(SessionProjectionRegistry)
+  const definition = { key: 'agentTeamProbe', stateSchema: {}, init: () => 0, apply: (state: number) => state, stateVersion: 0 }
+  const registry = concreteService((teamRoot as unknown as { sessionProjections: object }).sessionProjections) as { registrations: Map<string, unknown> }
+  const outcome: Record<string, string> = {}
+  const teamFiber = teamRoot.plugin({
+    name: 'agent-team',
+    apply(ctx: Context) {
+      try {
+        // No outer effect: only the caller's fiber can drop the key on unload.
+        ;(ctx.root as unknown as { sessionProjections: { register(def: unknown): () => void } }).sessionProjections.register(definition)
+        outcome.register = 'allowed'
+      } catch (error) {
+        outcome.register = error instanceof Error ? error.message : String(error)
+      }
+      try {
+        ctx.root.effect(() => () => {})
+        outcome.rootEffect = 'allowed'
+      } catch (error) {
+        outcome.rootEffect = error instanceof Error && error.message.includes('unavailable from a plugin activation') ? 'denied' : String(error)
+      }
+    },
+  })
+  await teamFiber
+  check('root projection registration from a plugin is admitted', outcome.register === 'allowed', JSON.stringify(outcome))
+  check('admitted projection registration is live', registry.registrations.has('agentTeamProbe'))
+  check('root.effect itself stays refused to the plugin', outcome.rootEffect === 'denied', JSON.stringify(outcome))
+  await teamFiber.dispose()
+  check('unloading the plugin drops its projection key', !registry.registrations.has('agentTeamProbe'))
+  await teamRoot.fiber.dispose()
+}
 if (failures > 0) {
   console.error(`plugin lifecycle battery FAILED (${failures}/${checks})`)
   process.exit(1)
