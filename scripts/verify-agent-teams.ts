@@ -256,9 +256,13 @@ assert.equal(teamToolResultView('team_task_get', '{}', '{"unexpected":true}'), u
     },
   })
   for (const replaying of [false, true]) {
+    // Exercise the real replay seed path (prepareReplayEvents + the
+    // translator's replay-mode reset), not just the projector's replay flag.
+    const translateAll = (translator: ReturnType<typeof createDshTranslator>, events: unknown[]) =>
+      replaying ? translator.translateReplay(events as never) : events.flatMap(event => translator.translateEvent(event as never))
     const translator = createDshTranslator(deps)
     const harness = createProjectorHarness()
-    harness.apply([spawnCall, spawnResult(true)].flatMap(event => translator.translateEvent(event as never)), replaying)
+    harness.apply(translateAll(translator, [spawnCall, spawnResult(true)]), replaying)
     const cards = harness.state.rows.filter(row => row.kind === 'tool')
     assert.equal(cards.length, 1, `a refused spawn shows one card (${replaying ? 'replay' : 'live'})`)
     assert.equal(cards[0]!.tool?.name, 'spawn_teammate')
@@ -266,14 +270,14 @@ assert.equal(teamToolResultView('team_task_get', '{}', '{"unexpected":true}'), u
     assert.match(cards[0]!.tool?.errorText ?? '', /already used in this Team/, 'the upstream reason is on the card')
     const accepted = createProjectorHarness()
     const fresh = createDshTranslator(deps)
-    accepted.apply([spawnCall, spawnResult(false)].flatMap(event => fresh.translateEvent(event as never)), replaying)
+    accepted.apply(translateAll(fresh, [spawnCall, spawnResult(false)]), replaying)
     assert.deepEqual(accepted.state.rows.filter(row => row.kind === 'tool'), [], 'an accepted spawn leaves the teammate to the subagent row')
     // A spawn that fails after writing its member (start failure, interrupt):
     // the failed member carries the error on the roster, so no card.
     const member = (seq: number, phase: string) => ({ type: 'team/member', seq, time: 1, data: { version: 2, teamId: 'lead', member: { id: 'm1', name: 'reviewer', description: 'Review the diff', provider: 'p', phase } } })
     const written = createProjectorHarness()
     const late = createDshTranslator(deps)
-    written.apply([spawnCall, member(41, 'provisioning'), member(42, 'failed'), { ...spawnResult(true), seq: 43 }].flatMap(event => late.translateEvent(event as never)), replaying)
+    written.apply(translateAll(late, [spawnCall, member(41, 'provisioning'), member(42, 'failed'), { ...spawnResult(true), seq: 43 }]), replaying)
     assert.deepEqual(written.state.rows.filter(row => row.kind === 'tool'), [], `a spawn failing after its member is written stays on the roster (${replaying ? 'replay' : 'live'})`)
   }
 }
