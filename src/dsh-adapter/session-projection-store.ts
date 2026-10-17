@@ -56,6 +56,9 @@ export interface SessionProjectionStore<T> {
   noteReadFailure(error: unknown): void
 }
 
+/** A raw value no snapshot can return: the next update always narrows. */
+const UNREAD: unique symbol = Symbol('unread')
+
 function sessionIdOf(session: unknown): string {
   return String((session as { id: unknown }).id)
 }
@@ -107,7 +110,12 @@ export function createSessionProjectionStore<T>(options: SessionProjectionStoreO
       emit()
     },
     reseed() {
-      if (bound !== undefined) store.seed(bound)
+      if (bound === undefined) return
+      // The narrow may read host state the value reference does not track
+      // (the team's service presence), so an unchanged value, an absent one
+      // included, is re-narrowed.
+      raw = UNREAD
+      store.seed(bound)
     },
     get boundId() {
       return bound === undefined ? undefined : sessionIdOf(bound)

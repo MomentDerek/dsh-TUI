@@ -92,6 +92,32 @@ try {
     assert.equal(store.read()?.members[1]?.name, 'builder', 'switched on again: the Lead team comes back')
     assert.equal(emits, 3)
     console.log('PASS team store clears and comes back on plugin-manager/changed')
+
+    // The service can leave while the projection definition is still
+    // registered, the host then handing back the same cached value: the
+    // narrow (which checks the service) must still run on a reseed.
+    let service = true
+    let notify: (() => void) | undefined
+    const sameRef = createTeamRosterStore({
+      ...ctx,
+      get: (name: string) => (name === 'agentTeams' ? (service ? {} : undefined) : name === 'agents' ? { list: () => [] } : undefined),
+      inject(_deps: unknown, callback: (ctx: unknown) => void) {
+        callback({ sessionProjections: { onChanged: () => () => undefined, snapshot: () => ({ values: { [TEAM_PROJECTION_KEY]: team } }) }, effect: () => undefined })
+      },
+      on(name: string, listener: () => void) {
+        if (name === 'plugin-manager/changed') notify = listener
+        return () => undefined
+      },
+    } as never)
+    sameRef.seed({ id: LEAD })
+    assert.equal(sameRef.read()?.members.length, 2)
+    service = false
+    notify!()
+    assert.equal(sameRef.read(), undefined, 'the service gone with the definition still registered: the view clears')
+    service = true
+    notify!()
+    assert.equal(sameRef.read()?.members.length, 2, 'and comes back on the same cached value')
+    console.log('PASS team store re-narrows an unchanged projection value on plugin-manager/changed')
   }
 
   // ── /team ──────────────────────────────────────────────────────────────
