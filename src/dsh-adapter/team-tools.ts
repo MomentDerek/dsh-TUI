@@ -61,7 +61,7 @@ function callTitle(name: string, args: Args): string | undefined {
     case 'team_task_create':
       return str(args.subject)
     case 'team_task_list':
-      return ['status', 'owner', 'ready'].flatMap(key => (args[key] === undefined ? [] : [`${key}=${String(args[key])}`])).join(' ')
+      return ['status', 'owner', 'ready'].flatMap(key => (args[key] === undefined ? [] : [`${key}=${String(args[key])}`])).join(' ') || undefined
     case 'team_task_get':
       return str(args.task_id)
     case 'team_task_update': {

@@ -145,7 +145,8 @@ export function SubagentDashboard({
   visible = true,
 }: SubagentDashboardProps): React.ReactNode {
   const panelMode = variant === 'panel'
-  const [focusIndex, setFocusIndex] = React.useState(0)
+  // Focus follows the row's key: team mode reorders the rows, and the roster can shrink.
+  const [focus, setFocus] = React.useState<{ readonly index: number; readonly key?: string }>({ index: 0 })
   const scrollRef = React.useRef<ScrollBoxHandle | null>(null)
   const { rows, columns } = useTerminalSize()
 
@@ -167,6 +168,18 @@ export function SubagentDashboard({
       ...ordered.filter(row => others.has(row)).map(rowEntry),
     ]
   const othersStart = model === undefined ? -1 : model.teammates.length
+  const focusOf = (state: { readonly index: number; readonly key?: string }): number => {
+    const found = state.key === undefined ? -1 : entries.findIndex(entry => entry.key === state.key)
+    return found >= 0 ? found : Math.min(state.index, Math.max(0, entries.length - 1))
+  }
+  const focusIndex = focusOf(focus)
+  const moveFocus = (delta: number): void => {
+    setFocus((prev) => {
+      const index = Math.max(0, Math.min(entries.length - 1, focusOf(prev) + delta))
+      const key = entries[index]?.key
+      return key === undefined ? { index } : { index, key }
+    })
+  }
 
   useInput((input, key, event) => {
     if (panelMode) return
@@ -178,14 +191,14 @@ export function SubagentDashboard({
     
     if (key.upArrow) {
       event.stopImmediatePropagation()
-      setFocusIndex(i => Math.max(0, i - 1))
+      moveFocus(-1)
       scrollRef.current?.scrollBy(-3)
       return
     }
     
     if (key.downArrow) {
       event.stopImmediatePropagation()
-      setFocusIndex(i => Math.min(entries.length - 1, i + 1))
+      moveFocus(1)
       scrollRef.current?.scrollBy(3)
       return
     }
@@ -214,13 +227,13 @@ export function SubagentDashboard({
     if (key.escape === true || (key.ctrl === true && input === 'c')) return false
 
     if (key.upArrow === true) {
-      setFocusIndex(i => Math.max(0, i - 1))
+      moveFocus(-1)
       scrollRef.current?.scrollBy(-3)
       return true
     }
 
     if (key.downArrow === true) {
-      setFocusIndex(i => Math.min(entries.length - 1, i + 1))
+      moveFocus(1)
       scrollRef.current?.scrollBy(3)
       return true
     }

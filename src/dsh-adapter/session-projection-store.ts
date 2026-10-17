@@ -29,13 +29,15 @@ export interface SessionProjectionStoreOptions<T> {
   narrow(value: unknown, sessionId: string): T | undefined
   /** Map the bound session to the session it reads (default: itself). */
   watch?(session: unknown): WatchedSession
-  /** Read-failure sink, reported once (the composition root's logger). */
+  /** Read-failure sink, reported once per attached registry (the composition root's logger). */
   warn?(message: string): void
 }
 
 export interface SessionProjectionStore<T> {
   /** Remember the host registry; a late registry seeds the bound session. */
   attachRegistry(registry: ProjectionRegistryLike): void
+  /** Forget a registry that left; nothing is read from it again and the value clears. */
+  detachRegistry(registry: ProjectionRegistryLike): void
   /** Bind the session on screen and read its watched value once. */
   seed(session: unknown): void
   /** Record one value from the change feed. */
@@ -77,7 +79,16 @@ export function createSessionProjectionStore<T>(options: SessionProjectionStoreO
   const store: SessionProjectionStore<T> = {
     attachRegistry(next) {
       registry = next
+      warned = false
       if (bound !== undefined) store.seed(bound)
+    },
+    detachRegistry(left) {
+      if (registry !== left) return
+      registry = undefined
+      raw = undefined
+      if (value === undefined) return
+      value = undefined
+      emit()
     },
     seed(session) {
       if (session === null || session === undefined) return
@@ -164,6 +175,9 @@ export function attachSessionProjection(ctx: Context, key: string, store: Sessio
       store.noteReadFailure(error)
     }
     // On the injected fiber: a re-provided registry re-runs this callback.
-    projectionCtx.effect(() => () => { offFeed?.() }, `dsh-tui ${key} projection feed`)
+    projectionCtx.effect(() => () => {
+      offFeed?.()
+      store.detachRegistry(registry)
+    }, `dsh-tui ${key} projection feed`)
   }) as never)
 }

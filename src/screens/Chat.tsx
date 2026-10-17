@@ -128,7 +128,7 @@ import type { SdkInstaller, SdkInstallSurface } from '../agent/backend.js'
 import type { PluginInstallFlow, PluginInstallSink, PluginInstallStep } from '../dsh-adapter/plugin-install.js'
 import type { PluginManageFlow, PluginManageSink, PluginManageStep } from '../dsh-adapter/plugin-manage.js'
 import type { TeamCommandOutcome, TeamCommandSink } from '../dsh-adapter/team-mode.js'
-import { teamDashboardModel } from '../components/teamRoster.js'
+import { teamMemberCounts } from '../components/teamRoster.js'
 import { usePluginWriteFlow } from './chat/usePluginWriteFlow.js'
 import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
@@ -1054,13 +1054,7 @@ export function Chat({
   /** 绑定会话的 teammate 数与其中运行中／准备中的数（关闭团队前的确认用）。 */
   const teamMembers = (): { total: number; active: number } => {
     const team = channel.team
-    if (team === undefined) return { total: 0, active: 0 }
-    const { teammates } = teamDashboardModel(team, [...channel.subagents], channel.sessionId)
-    return {
-      total: teammates.length,
-      // Inside a teammate a sibling's run is not visible: every active one counts.
-      active: teammates.filter(row => row.status === 'running' || row.status === 'provisioning' || row.status === 'active').length,
-    }
+    return team === undefined ? { total: 0, active: 0 } : teamMemberCounts(team, [...channel.subagents], channel.sessionId)
   }
   /** 开始一次生命周期动作；`false` 表示这段输入不是那三种形式（或本启动没有服务）。 */
   const startPluginManage = (rawArgs: string): boolean => {

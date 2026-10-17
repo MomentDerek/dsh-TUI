@@ -92,6 +92,46 @@ console.log('PASS team root (Lead itself, teammate → parentSession, fork stays
   assert.equal(feed, undefined, 'the feed listener goes with the injected fiber')
 }
 {
+  // A registry that leaves is never read again; its value clears, and the
+  // read-failure warning re-arms for the next registry.
+  let reads = 0
+  let fail = false
+  const registry: ProjectionRegistryLike = {
+    onChanged: () => () => undefined,
+    snapshot() {
+      reads++
+      if (fail) throw new Error('disposed')
+      return { values: { [TEAM_PROJECTION_KEY]: team } }
+    },
+  }
+  let effect: (() => void) | undefined
+  const ctx = {
+    inject(_deps: unknown, callback: (ctx: unknown) => void) {
+      callback({ sessionProjections: registry, effect: (fn: () => () => void) => { effect = fn() } })
+    },
+  }
+  const warnings: string[] = []
+  const store = createSessionProjectionStore({ key: TEAM_PROJECTION_KEY, narrow: asTeamView, warn: message => { warnings.push(message) } })
+  store.seed(leadSession)
+  attachSessionProjection(ctx as never, TEAM_PROJECTION_KEY, store as never)
+  assert.equal(store.read()?.leadSessionId, LEAD)
+  fail = true
+  store.reseed()
+  store.reseed()
+  assert.equal(warnings.length, 1, 'one registry warns once')
+  effect!()
+  assert.equal(store.read(), undefined, 'a registry that left clears the value')
+  const left = reads
+  store.reseed()
+  assert.equal(reads, left, 'a registry that left is not read again')
+  assert.equal(store.read(), undefined, 'a reseed without a registry keeps nothing stale')
+  attachSessionProjection(ctx as never, TEAM_PROJECTION_KEY, store as never)
+  assert.equal(warnings.length, 2, 'a new registry re-arms the warning')
+  fail = false
+  store.reseed()
+  assert.equal(store.read()?.leadSessionId, LEAD, 'a registry that comes back seeds again')
+}
+{
   // The composition-root store: the channel reads it by the bound session id.
   const registry: ProjectionRegistryLike = {
     onChanged: () => () => undefined,
@@ -115,7 +155,7 @@ console.log('PASS team root (Lead itself, teammate → parentSession, fork stays
   store.seed(leadSession)
   assert.equal(store.teamOf(LEAD)?.leadSessionId, LEAD, 'the Lead reads its own team')
 }
-console.log('PASS team store (late registry seed, teammate → Lead, identity, isolation, baseline clear, disposal, read by bound id)')
+console.log('PASS team store (late registry seed, teammate → Lead, identity, isolation, baseline clear, disposal, registry leaving, read by bound id)')
 
 // ── team messages ────────────────────────────────────────────────────────
 const deps = { tools: () => undefined, scope: () => ({}), attachments: () => undefined }
@@ -175,6 +215,7 @@ assert.equal(teamToolCallView('interrupt_agent', JSON.stringify({ agent_id: 'x' 
 assert.equal(teamToolCallView('list_agents', '{}'), undefined, 'a list call cannot tell team from legacy')
 assert.equal(teamToolCallView('team_task_update', JSON.stringify({ task_id: 'task-1', expected_revision: 1, action: 'reassign', owner: 'reviewer' }))?.title, 'task-1 reassign → reviewer')
 assert.equal(teamToolCallView('team_task_list', JSON.stringify({ status: 'pending', ready: true }))?.title, 'status=pending ready=true')
+assert.equal(teamToolCallView('team_task_list', '{}'), undefined, 'an unfiltered list keeps the plain card, never a blank title')
 assert.equal(teamToolCallView('bash', '{}'), undefined)
 const sendArgs = JSON.stringify({ target: 'lead', message: 'reviewer report: diff ok' })
 assert.deepEqual(teamToolResultView('send_message', sendArgs, '{"sent":true}'),

@@ -75,6 +75,24 @@ export function teamDashboardModel(team: TeamView, subagents: readonly SubagentS
   }
 }
 
+/**
+ * Teammates on the roster, and those that may be running or provisioning.
+ * Inside a teammate a sibling's run is not visible, so every active one
+ * counts, except the teammate on screen itself.
+ * @param team - The session's team.
+ * @param subagents - The session's subagent rows.
+ * @param sessionId - The session on screen.
+ * @returns the two counts.
+ */
+export function teamMemberCounts(team: TeamView, subagents: readonly SubagentState[], sessionId?: string): { readonly total: number; readonly active: number } {
+  const { teammates } = teamDashboardModel(team, subagents, sessionId)
+  return {
+    total: teammates.length,
+    active: teammates.filter(row => row.member.id !== sessionId
+      && (row.status === 'running' || row.status === 'provisioning' || row.status === 'active')).length,
+  }
+}
+
 /** Completed / total of the task board. */
 export function teamTaskProgress(tasks: readonly TeamTask[]): { readonly completed: number; readonly total: number } {
   return { completed: tasks.filter(task => task.status === 'completed').length, total: tasks.length }

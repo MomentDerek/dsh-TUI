@@ -34,7 +34,7 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, termTest, dash
 const { settled, viewportLines } = termTest
 const { render } = ui
 const { SubagentDashboard } = dashboard
-const { teamDashboardModel, teamMemberStatus, teamTaskProgress } = roster
+const { teamDashboardModel, teamMemberCounts, teamMemberStatus, teamTaskProgress } = roster
 type SubagentState = import('../src/dsh-adapter/subagents.js').SubagentState
 type TeamView = import('../src/adapter/ports/channel-view.js').TeamView
 
@@ -98,11 +98,15 @@ const subagents: SubagentState[] = [
   check('teammate view: no row is joined to a member', peer.teammates.every(r => r.subagent === undefined))
   check('teammate view: its own rows stay other subagents', peer.others.map(r => r.agentId).join() === 'mate-run,child-1')
   check('status: an unknown run of an active member reads active', teamMemberStatus(active, row('x', { status: 'running' }), false) === 'active')
+  check('counts: from the Lead, running and provisioning members are active',
+    JSON.stringify(teamMemberCounts(team, subagents, LEAD)) === '{"total":4,"active":2}', JSON.stringify(teamMemberCounts(team, subagents, LEAD)))
+  check('counts: inside a teammate, siblings count but the teammate itself does not',
+    JSON.stringify(teamMemberCounts(team, [], 'mate-done')) === '{"total":4,"active":2}', JSON.stringify(teamMemberCounts(team, [], 'mate-done')))
   check('tasks: progress counts completed', JSON.stringify(teamTaskProgress(team.tasks)) === '{"completed":1,"total":3}')
 }
 
 // ── rendering ────────────────────────────────────────────────────────────
-interface Frame { lines: string[]; stdin: PassThrough; unmount(): void; read(): string[] }
+interface Frame { lines: string[]; stdin: PassThrough; unmount(): void; read(): string[]; rerender(props: Record<string, unknown>): void }
 
 async function mount(cols: number, rows: number, props: Record<string, unknown>, anchor: string): Promise<Frame> {
   const term = new XTerm({ cols, rows, scrollback: 0, allowProposedApi: true })
@@ -129,7 +133,8 @@ async function mount(cols: number, rows: number, props: Record<string, unknown>,
   )
   const read = () => viewportLines(term, rows).map((line: string) => line.trimEnd())
   await settled(() => read().some((line: string) => line.includes(anchor)))
-  return { lines: read(), stdin, unmount: () => instance.unmount(), read }
+  const rerender = (next: Record<string, unknown>): void => { instance.rerender(<SubagentDashboard subagents={subagents} {...next} />) }
+  return { lines: read(), stdin, unmount: () => instance.unmount(), read, rerender }
 }
 
 try {
@@ -171,6 +176,27 @@ try {
     await press('\u001B[B')
     f.stdin.write('\r')
     check('keys: focus reaches the other subagents', await settled(() => selected.join() === 'mate-run,workflow-1'), selected.join())
+    f.unmount()
+  }
+
+  {
+    // Focus follows the row, not its index: the team view reorders the rows,
+    // and a shrinking roster clamps the focus back onto a row.
+    const selected: string[] = []
+    const props = { onSelect: (id: string) => selected.push(id), onClose: () => {} }
+    const f = await mount(100, 40, props, 'workflow step')
+    for (let i = 0; i < 3; i++) {
+      f.stdin.write('\u001B[B')
+      await termTest.sleep(30) // 固定窗:pacing 焦点移动重渲染
+    }
+    f.rerender({ ...props, team })
+    await settled(() => f.read().some(line => line.includes('Tasks')))
+    f.stdin.write('\r')
+    check('keys: focus stays on its agent when the team view reorders the rows', await settled(() => selected.join() === 'workflow-1'), selected.join())
+    f.rerender({ ...props, subagents: [row('solo', { description: 'solo row' })] })
+    await settled(() => f.read().some(line => line.includes('solo row')))
+    f.stdin.write('\r')
+    check('keys: a shrinking roster clamps the focus onto a row', await settled(() => selected.join() === 'workflow-1,solo'), selected.join())
     f.unmount()
   }
 
