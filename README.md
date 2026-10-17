@@ -293,7 +293,7 @@ coordinate on a shared task board. It is off by default. Install the
 upstream bundle into the TUI profile once:
 
 ```sh
-dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.0-rc.2
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-alpha.5
 ```
 
 Then switch it with `/team on` / `/team off` (`/team` alone reports the
@@ -305,9 +305,9 @@ asks first; they are not stopped but finish their turn as plain subagents,
 and the team record stays in the session for the next `/team on`.
 `/plugin enable|disable` on the bundle does the same.
 
-Pin the version: it must match the supported DSH line (`0.2.0-rc.2`). The
-untagged install resolves to an older bundle, and `0.2.1` changes how team
-messages are delivered, which this release does not render yet.
+Pin the version: it must match the supported DSH line (`0.2.1-alpha.5`). The
+team packages pin their DSH peers exactly, and neither the untagged install
+nor `next` resolves to that line.
 
 While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /
 `subagent_fork` from it, and the team's `send_message` / `list_agents` /
@@ -315,10 +315,10 @@ While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /
 same names, so `spawn_teammate` is the delegation tool; with the team off
 the legacy tools are back. Subagents that are not team members (workflow,
 ralph) keep `subagent`. A teammate shows up as a subagent row, a message between
-members as a `✉ <sender>` bubble in the receiving session (for a teammate, on
-its subagent detail's Transcript page), and the other team
-tools as one-line cards (`send_message` with its target and
-`accepted` / `queued`). The agents dashboard (Ctrl+A) and the agents side
+members as a `✉ <sender>` bubble in the receiving session (a teammate's
+received messages show on its subagent detail as agent messages), and the
+other team tools as one-line cards (`send_message` with its target and
+`sent`). The agents dashboard (Ctrl+A) and the agents side
 panel switch to a team view: each teammate under its member name with
 `running` / `idle` / `provisioning` / `failed` (a teammate whose turn ended
 is idle — a message wakes it — not done), the Lead line, the remaining

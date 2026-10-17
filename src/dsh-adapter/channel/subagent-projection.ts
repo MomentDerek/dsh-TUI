@@ -7,6 +7,11 @@ import type { SubagentTranscriptPage, SubagentTranscriptWindow } from '../../age
 import type { AgentIdentity, AgentMessageControl, AgentMessageSubmitInput, AgentMessageSubmitResult, AgentMessageView } from '../../adapter/ports/channel-view.js'
 import type { ChannelState, ChatRow, SubagentControl, SubagentRow } from './types.js'
 import { isSubagentToolName } from './projection-helpers.js'
+import { teamMailboxRelayOf } from '../team-tools.js'
+
+/** A durable relay source, the Agent Teams 0.2.0 mailbox form included. */
+const relaySourceOf = (source: unknown): { readonly senderSessionId: string } | undefined =>
+  agentRelaySourceOf(source) ?? teamMailboxRelayOf(source)
 
 /**
  * Bound the retained description text. Evicting an older term does not cancel
@@ -301,7 +306,7 @@ function createSessionSubagentProjection(
   const noteChildRelay = (childId: string, event: unknown): void => {
     const data = (event as { readonly data?: { readonly id?: unknown; readonly source?: unknown; readonly content?: unknown } }).data
     if (data === undefined || typeof data.id !== 'string' || data.id === '') return
-    const relay = agentRelaySourceOf(data.source)
+    const relay = relaySourceOf(data.source)
     if (relay === undefined) return
     foldAgentMessage(agentMessages, {
       messageId: data.id,
@@ -420,7 +425,7 @@ function createSessionSubagentProjection(
       // names the sending session. Plain user text, injected context and
       // settlement notices are not relays; they stay invisible here, just as
       // the translator keeps them out of bubbles.
-      const relay = agentRelaySourceOf(data.source)
+      const relay = relaySourceOf(data.source)
       if (relay !== undefined && typeof data.id === 'string' && data.id !== '') {
         foldAgentMessage(agentMessages, {
           messageId: data.id,

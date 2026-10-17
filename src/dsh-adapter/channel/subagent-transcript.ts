@@ -278,8 +278,8 @@ export async function readChildTranscriptPage(
     const events = length === 0 ? [] : (await handle.read(start, length, signal === undefined ? undefined : { signal })).events
     guard()
 
-    // 4. one throwaway translator per call; only leaf events (and Agent Teams
-    //    messages this child received) survive, each forced onto the child lane so the shared fold consumes them exactly
+    // 4. one throwaway translator per call; only leaf events survive, each
+    //    forced onto the child lane so the shared fold consumes them exactly
     //    like Claude's replayClaudeSubagentLane output. Nothing here runs the
     //    channel projector, so no todo/job/goal side effects can fire.
     const translator = deps.createTranslator()
@@ -298,8 +298,6 @@ export async function readChildTranscriptPage(
           lane.push({ ...orphanResult(translated, event as SessionEvent<'tool/result'>), parentCallId: agentId })
         } else if (translated.type === 'assistant.message' || translated.type === 'tool.call' || translated.type === 'tool.result') {
           lane.push({ ...translated, parentCallId: agentId })
-        } else if (translated.type === 'user.message' && translated.source === 'team-message' && translated.text !== '') {
-          lane.push(translated)
         }
       }
     }

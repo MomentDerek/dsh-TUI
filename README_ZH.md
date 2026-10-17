@@ -239,7 +239,7 @@ DSH 的实验性 Agent Teams 让会话的主 agent（Lead）创建有名字的 t
 profile（一次即可）：
 
 ```sh
-dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.0-rc.2
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.1-alpha.5
 ```
 
 之后用 `/team on` / `/team off` 开关（单独 `/team` 报告 bundle、服务与本会话的
@@ -248,15 +248,15 @@ teammate）。开关就是在 profile 里启停这个 bundle，重启后保持�
 会先确认：它们不会被停止，而是以普通子代理身份跑完当前回合；团队记录留在会话里，
 下次 `/team on` 时恢复。对这个 bundle 用 `/plugin enable|disable` 效果相同。
 
-版本必须钉住，与支持的 DSH 版本线（`0.2.0-rc.2`）一致：不带版本会装到较旧的 bundle，
-`0.2.1` 又改了团队消息的投递方式，本版本尚不能显示。
+版本必须钉住，与支持的 DSH 版本线（`0.2.1-alpha.5`）一致：团队包对 DSH 的 peer
+是精确版本，不带版本和 `next` 都装不到这条线上。
 
 请求里有 `spawn_teammate` 时，dsh-TUI 从中去掉 `subagent` / `subagent_fork`，团队的
 `send_message` / `list_agents` / `interrupt_agent` / `wait_agent` 顶替同名的旧版控件：
 委派工具只剩 `spawn_teammate`；团队关闭后旧版工具回来。不是团队成员的子代理（workflow、
 ralph）保留 `subagent`。teammate 显示为子代理行，
-成员间的消息在接收方会话里显示为 `✉ <发送者>` 气泡（teammate 收到的在其子代理详情的 Transcript 页），其余团队工具显示为单行卡片
-（`send_message` 带目标与 `accepted` / `queued`）。agents 仪表盘（Ctrl+A）与 agents 侧栏
+成员间的消息在接收方会话里显示为 `✉ <发送者>` 气泡（teammate 收到的消息在其子代理详情里显示为
+agent 消息），其余团队工具显示为单行卡片（`send_message` 带目标与 `sent`）。agents 仪表盘（Ctrl+A）与 agents 侧栏
 进入团队视图：teammate 以成员名显示，状态为运行中 / 空闲 / 准备中 / 失败（回合结束的
 teammate 是空闲而不是完成，发消息即可唤醒）；另有 Lead 行、其余子代理、只读任务板
 （状态、负责人、阻塞、写入范围警告），团队记录被拒时显示错误横幅。

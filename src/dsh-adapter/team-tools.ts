@@ -11,12 +11,13 @@
  * no presenters: a team call is told apart by its `target` argument (the
  * legacy ones take `agent_id`), a team result by its record shape.
  *
- * {@link teamMessageOf} reads a delivered team message, for the transcript
- * translator and the live subagent store alike.
+ * {@link teamMessageOf} reads a delivered team message for the transcript
+ * translator.
  *
  * @module
  */
 
+import { agentRelaySourceOf } from '../agent/messages.js'
 import type { ToolCallView, ToolResultView } from './channel/types.js'
 
 type Args = Record<string, unknown>
@@ -104,7 +105,10 @@ function taskLine(task: Args): string | undefined {
 function resultLine(name: string, value: unknown): string | undefined {
   switch (name) {
     case 'send_message':
-      return isRecord(value) && (value.status === 'accepted' || value.status === 'queued') ? value.status : undefined
+      // 0.2.1 answers `{ sent: true }`; 0.2.0 logs carry the mailbox status.
+      if (!isRecord(value)) return undefined
+      if (value.sent === true) return 'sent'
+      return value.status === 'accepted' || value.status === 'queued' ? value.status : undefined
     case 'list_agents': {
       if (!Array.isArray(value)) return undefined
       const members = value.flatMap(member => (isRecord(member) && str(member.target) !== undefined && str(member.status) !== undefined
@@ -156,18 +160,49 @@ export function teamToolResultView(name: string, rawArgs: string, text: string):
   }
 }
 
+/** 0.2.1 relay framing: one whole leading block, `Team message from <name>:`. */
+const RELAY_FRAMING = /^Team message from ([^\n]+):$/
+
 /**
- * An Agent Teams message delivered to a session (`user/message` with a
- * `team-message` source). The content leads with the service's own
- * `Team message <id> from <name>:` framing block, which the sender label
- * replaces: dropped by identity, so a changed framing stays visible.
+ * The 0.2.0 mailbox source as the relay it became in 0.2.1, so a team
+ * message in an older log folds into the same agent-message feed.
+ * @param source - a `user/message` source.
+ * @returns the sending session, or `undefined` for anything else.
+ */
+export function teamMailboxRelayOf(source: unknown): { readonly senderSessionId: string } | undefined {
+  const team = source as { kind?: unknown; senderId?: unknown } | null | undefined
+  return team?.kind === 'team-message' && typeof team.senderId === 'string' ? { senderSessionId: team.senderId } : undefined
+}
+
+/**
+ * An Agent Teams message delivered to a session (`user/message`). Two
+ * durable forms: the 0.2.0 mailbox source (`team-message`, framing
+ * `Team message <id> from <name>:`), still read from older logs, and the
+ * 0.2.1 relay (`agent-message` / `relay`, framing `Team message from <name>:`).
+ * A relay is any agent's message (the legacy `send_message` writes one too),
+ * so only the team's framing block marks it as a team message. The sender
+ * label replaces that block: dropped by identity, so a changed framing stays
+ * visible (or, for a relay, is no team message at all). Both forms also
+ * reach the agent-message feed ({@link teamMailboxRelayOf}), which owns them
+ * on a teammate's own pages; this reading is for the receiving transcript.
  */
 export function teamMessageOf<B extends { readonly type: string }>(source: unknown, content: readonly B[]): { sender: string; blocks: readonly B[]; text: string } | undefined {
-  const team = source as { kind?: unknown; messageId?: unknown; senderName?: unknown } | null | undefined
-  if (team?.kind !== 'team-message' || typeof team.senderName !== 'string') return undefined
-  const framing = `Team message ${String(team.messageId)} from ${team.senderName}:`
   const first = content[0] as { type: string; text?: unknown } | undefined
-  const blocks = first?.type === 'text' && first.text === framing ? content.slice(1) : content
+  let sender: string
+  let blocks: readonly B[]
+  const team = source as { kind?: unknown; messageId?: unknown; senderName?: unknown } | null | undefined
+  if (team?.kind === 'team-message' && typeof team.senderName === 'string') {
+    sender = team.senderName
+    const framing = `Team message ${String(team.messageId)} from ${team.senderName}:`
+    blocks = first?.type === 'text' && first.text === framing ? content.slice(1) : content
+  } else {
+    const framing = agentRelaySourceOf(source) !== undefined && first?.type === 'text' && typeof first.text === 'string'
+      ? RELAY_FRAMING.exec(first.text)
+      : null
+    if (framing === null) return undefined
+    sender = framing[1]!
+    blocks = content.slice(1)
+  }
   const text = blocks
     .flatMap(block => {
       const value = (block as { text?: unknown }).text
@@ -175,5 +210,5 @@ export function teamMessageOf<B extends { readonly type: string }>(source: unkno
     })
     .join('\n')
     .trim()
-  return { sender: team.senderName, blocks, text }
+  return { sender, blocks, text }
 }

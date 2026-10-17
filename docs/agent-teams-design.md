@@ -1,6 +1,6 @@
 # DSH Agent Teams 支持设计（#1241）
 
-DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包，`0.2.0-rc.2`）在 TUI 里的适配方案与已确认的事实。只消费上游公开行为：不 import 团队包，投影值本地收窄，开启由上游 bundle 负责。
+DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包）在 TUI 里的适配方案与已确认的事实。跟随版本线 `0.2.1-alpha.5`；下面「已实测」两节是在 `0.2.0-rc.2` 上实测的，0.2.1 的差异见「0.2.1 版本线」。只消费上游公开行为：不 import 团队包，投影值本地收窄，开启由上游 bundle 负责。
 
 ## 已实测的事实
 
@@ -9,11 +9,24 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包，`0.
 - **每个根会话都是隐式 Lead。** 服务挂上后，任何根 Agent 的 `tryMembership` 都返回 `{ role: 'lead', name: 'lead' }`，`agentTeam` 投影在没有任何团队事件时就是 `{ members: [lead], tasks: [] }`。因此「存在团队」= 至少一个 teammate、或有任务、或有 `failure`，而不是成员非空。
 - **团队工具装在每个根 Agent 上，与 preset 无关。** `tool-agent-team` 在 `agent/created` 时按成员身份装到 Agent 自己的 `ctx`，所以团队模式是 profile 级的。Agent 作用域会遮蔽祖先层同名工具，所以团队的 `send_message` 等会盖住旧版控件；但 `subagent` / `subagent_fork` 名字不同，会和 `spawn_teammate` 并存。上述遮蔽结论只实测了「根层全局 vs Agent 作用域」，没有实测「preset 常驻作用域 vs Agent 作用域」。
 - **teammate 就是 continuable 子代理。** `subagent/start` 的 `id` = 成员 `id` = teammate 的 sessionId；事件本身不带描述，teammate 会话的 `subagent/descriptor.label` 是 `spawn_teammate` 的 `description`。teammate 会话头是 `origin: 'subagent'`、`parentSession: <Lead>`、`delegationDepth: 1`。
-- **团队消息的形态。** 落在目标会话中，是一条 `user/message`，`source = { kind: 'team-message', teamId, messageId, senderId, senderName }`；`content[0]` 恰为 `Team message <messageId> from <senderName>:`，后面跟发送者的原始内容块。实录的方向是 teammate→Lead；Lead→teammate 走宿主专用的 Steer 路径，未实录，按同一 `TeamMessageSource` 类型假定形态相同。Lead 另外会收到 `subagent-settled` 通知（已有的注入上下文，不显示）。
+- **团队消息的形态（0.2.0，0.2.1 起见下节）。** 落在目标会话中，是一条 `user/message`，`source = { kind: 'team-message', teamId, messageId, senderId, senderName }`；`content[0]` 恰为 `Team message <messageId> from <senderName>:`，后面跟发送者的原始内容块。实录的方向是 teammate→Lead；Lead→teammate 走宿主专用的 Steer 路径，未实录，按同一 `TeamMessageSource` 类型假定形态相同。Lead 另外会收到 `subagent-settled` 通知（已有的注入上下文，不显示）。
 - **团队服务经 `ctx.root` 注册投影。** `TeamService` 调 `ctx.root.sessionProjections.register`，在 dsh-tui 宿主的 root 守卫下会被拒（`root.effect is unavailable from a plugin activation`），团队服务与工具都不激活。`host-access.ts` 把这一调用改经调用方自己的上下文发出，注册随调用方 fiber 卸载，root 本身仍然关闭（`verify-plugin-lifecycle.ts` 覆盖）。上面的实测没有经过这道守卫。
 - **状态语义不同。** teammate 回合结束时 `subagent/end stopReason: completed`，但名单里 `phase` 仍是 `active`，上游合成的状态是 `inactive`（发消息即可唤醒）。
 
-### 运行时启停（实测）
+### 0.2.1 版本线（读包源码，未在真实进程中实测）
+
+对照 `0.2.0-rc.2` 与 `0.2.1-alpha.5` 发布包的差异：
+
+- **团队消息改走通用 relay。** 不再有团队邮箱：`send_message` 直接把消息 steer 进目标（Lead 用 `root.steer`，teammate 走宿主子代理 prompt），`user/message` 的来源是 `{ kind: 'agent-message', form: 'relay', senderSessionId }`，`content[0]` 恰为 `Team message from <name>:`。`team/message/queued` / `delivered` 只在旧日志里出现，`maxPendingMessagesPerMember` 已移除。
+- **relay 不是团队专属。** 0.2.1 的旧版 `send_message`（`subagents.sendMessage`）也写 relay 来源，所以只有整块等于团队前缀的首块才把 relay 认作团队消息（`teamMessageOf`）；发送者名取自前缀。没有拿名单核对 `senderSessionId`：翻译器手里没有名单。
+- **`send_message` 结果** 是 `{ sent: true }`（不再有 `messageId` / `status`）；旧版控件的结果是 `{ messageId }`，按记录形态仍能区分。
+- **teammate 身份** 改由 `team:identity` 系统提示上下文提供，首条消息不再带 `<system-reminder>You are teammate …` 前缀块。
+- **`interrupt_agent` 可关**：工具包新增 `interrupt` 配置（默认开）。
+- 团队投影（`agentTeam`）与任务、成员记录的形态不变。
+
+渲染的归属（每个界面只有一个渲染者，两种形态同一套）：上游 main 已经把 relay 折进通用的 agent-message 流（`subagent-projection.ts` 的 `agentMessages`，子代理页的 `agent-message` 叶子与 messages 页），但不进主 transcript。团队消息因此分两处显示：接收方主 transcript 里是 `✉ <发送者>` 气泡（`teamMessageOf`）；teammate 自己的页面交给 agent-message 流。0.2.0 的邮箱来源按它在 0.2.1 里变成的 relay 折进同一个流（`teamMailboxRelayOf`：发送方取 `senderId`），旧日志与新版本走同一条路径。
+
+### 运行时启停（实测，0.2.0-rc.2）
 
 以下在 `dsh --profile dsh-tui` 进程内实测，`0.2.0-rc.2`，真实模型。工具集来自 `/debug-prompt` 快照。
 
@@ -29,21 +42,21 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包，`0.
 
 - **开启**：用户把 `@deepseek-ai/dsh-experimental-agent-team-profile` 加进 TUI profile。第一阶段曾在 `registerBundledPresets` 里按 profile 行禁用 preset 的旧版委派行；这一做法已由「开关机制」的按 assembly 取舍取代。不改 `cordis.patch.yml`，也不新增依赖。
 - **投影**：`src/dsh-adapter/session-projection-store.ts` 是「单 key + 本地收窄 + 绑定时 seed + 只留当前会话」的小工厂；`team-roster.ts` 是它的第一个使用者，teammate 会话经 `parentSession` 读 Lead 的值。经 channel 的 `team` getter 暴露，UI 只依赖端口类型 `TeamView`。
-- **消息气泡**：translate 按身份剔除前缀块，映射到中立来源 `team-message`（带 `sender`）；投影器产出 `label: 'team-message'` 的 user 行，不计入回退目标和最近提问；`TeamMessageBubble` 渲染。teammate 收到的消息落在它自己的会话里：子代理 transcript 读取（`subagent-transcript.ts`）只额外保留 `team-message` 来源的 user 事件，共享 fold 产出 `team-message` 叶子，Detail 与 Agent View 两处用同一气泡渲染（`verify-dsh-child-transcript.ts` T11–T12）。实时一侧：子代理 store 把它记为 `team-message` 输出行（带 `sender` 与消息 id，卡片尾行写成 `✉ <发送者>: …`），合并时与历史页按 id 去重；剥前缀由 `team-tools.ts` 的 `teamMessageOf` 统一完成（`verify-agent-teams.ts`）。
+- **消息气泡**：translate 按身份剔除前缀块，映射到中立来源 `team-message`（带 `sender`）；投影器产出 `label: 'team-message'` 的 user 行，不计入回退目标和最近提问；`TeamMessageBubble` 渲染。识别两种形态都由 `team-tools.ts` 的 `teamMessageOf` 完成（`verify-agent-teams.ts`）。teammate 自己的页面（子代理 transcript 的历史页与实时尾巴）不另做团队叶子，见上节「渲染的归属」（`verify-dsh-child-transcript.ts` T11、`verify-agent-team-channel.ts` B3b）。
 - **工具卡片**：`spawn_teammate` 并入子代理行；其余工具在上游没有 presenter 时由 `team-tools.ts` 给出单行卡片。三个与旧版控件同名的工具，调用按参数区分（团队用 `target`，旧版用 `agent_id`），结果按记录形态区分。
 
 ## 第二阶段
 
 - **统一 agent 视图（已完成）**：Ctrl+A 仪表盘与 agents 侧栏收到 `channel.team` 时进入团队模式（`SubagentDashboard` 的 `team` prop）。合并在纯模块 `src/components/teamRoster.ts`：子代理行的 `agentId` 就是 `subagent/start` 的 id，也就是成员 `id`，按它连接；不是成员的子代理行（workflow / ralph）列在「其他子代理」下，原样渲染。teammate 卡片沿用 `SubagentCard`，成员名代替 description，团队状态代替 continuable 标记。状态合成规则如下：`phase: 'failed'` 优先（附 `error`）；`provisioning` 显示准备中；`active` 时子代理行 running/starting 才算运行中，跑完、失败或还没有行都是空闲（发消息即可唤醒），不显示成已完成；上一轮失败时卡片下补一行错误（侧栏 badge 也算这一行）。只在名单里、还没有子代理行的成员显示为单行，能聚焦但不能进详情或 Agent View。任务板只读：状态、subject、`ownerName`（窄宽度省略）、阻塞（pending 且未 `ready`）、写入范围警告数。`failure` 显示为错误横幅。侧栏 badge 把 `phase: 'failed'` 的成员计入未读错误。`verify-team-dashboard.tsx` 覆盖合并、两种形态、窄宽度与宽字符成员名。
 - **状态栏摘要**：`team 2/3 running · tasks 3/7`，按宽度逐级降级。
-- **进入 teammate 会话**：先进只读详情，再「进入会话」（Lead 留在后台）。agent-view、session-tree 和心跳都按 `origin === 'subagent'` 排除了 teammate，需要为团队成员开例外。teammate 的首条消息以 `source: user` 落盘，内含 `<system-reminder>You are teammate …</system-reminder>` 前缀块，渲染时需要剥掉，否则会显示成人类气泡。
+- **进入 teammate 会话**：先进只读详情，再「进入会话」（Lead 留在后台）。agent-view、session-tree 和心跳都按 `origin === 'subagent'` 排除了 teammate，需要为团队成员开例外。0.2.0 的 teammate 首条消息以 `source: user` 落盘，内含 `<system-reminder>You are teammate …</system-reminder>` 前缀块，渲染旧日志时需要剥掉，否则会显示成人类气泡；0.2.1 起没有这个前缀块。
 
 ## 开关机制（已实现）
 
 团队模式在会话里随开随关；关掉以后委派能力完整退回旧版，界面退出团队模式。
 
 - **作用域：profile 级，持久。** 开关就是团队 bundle 的启停，复用上游 `pluginManager.setBundleEnabled` + `hmr`，不另造开关状态，也不碰 loader entry；`/plugin`、`dsh plugin` 与 Web 插件管理看到的是同一个状态。会话级开关 TUI 单方面做不到：每个根 Agent 都是隐式 Lead，装工具只看 membership；在 assembly 过滤只能藏起团队独有的工具，同名工具被 Agent 作用域遮蔽，旧版回不来。列为上游需求（本节末）。
-- **`/team [status] | on | off`**（`src/dsh-adapter/team-mode.ts`）：on/off 用 `createPluginManageFlow` 对团队 bundle 发 enable/disable，与 `/plugin` 同一条流程、同一个确认浮层与结果报告（`restart-required` 时提示重启）；enable 照常问 trust。status 报告 bundle 是否选中、`agentTeams` 服务是否在、二者不一致时哪一边待重启，以及本会话 teammate 数与运行数。包没装时 on 不进 enable 流程（否则是通用的「找不到目标」加全部可寻址名），直接提示 `/plugin install …@0.2.0-rc.2`（装完即开启）和 `dsh plugin` 命令；不替用户自动安装，安装仍走 `/plugin install` 自己的确认。没有 `pluginManager`（独立入口的轻量 profile、旧宿主）时给出 `dsh plugin` 命令。
+- **`/team [status] | on | off`**（`src/dsh-adapter/team-mode.ts`）：on/off 用 `createPluginManageFlow` 对团队 bundle 发 enable/disable，与 `/plugin` 同一条流程、同一个确认浮层与结果报告（`restart-required` 时提示重启）；enable 照常问 trust。status 报告 bundle 是否选中、`agentTeams` 服务是否在、二者不一致时哪一边待重启，以及本会话 teammate 数与运行数。包没装时 on 不进 enable 流程（否则是通用的「找不到目标」加全部可寻址名），直接提示 `/plugin install …@<版本线>`（版本取自 `UPSTREAM_VALIDATED_VERSION`，装完即开启）和 `dsh plugin` 命令；不替用户自动安装，安装仍走 `/plugin install` 自己的确认。没有 `pluginManager`（独立入口的轻量 profile、旧宿主）时给出 `dsh plugin` 命令。
 - **委派工具按 assembly 取舍**（缺口 1）：`registerBundledPresets` 不再改 preset，旧版行一律保留；`system-prompt/assemble`（与 `filterMinimalPresetTools` 同一处，先于它）里 `filterTeamReplacedTools`：有 `spawn_teammate` 就去掉 `subagent`、`subagent_fork`，没有就原样不动。四个同名控制工具交给作用域遮蔽（已实测）。
   - 判定看工具是否真的在，所以开关当下的存活会话、之后的新会话、服务激活失败、团队行在 `group: true` 组里或启动后才挂上、profile 自己声明的 preset，都自动正确。
   - 工具变更通知跟过滤一致：agent-loop 用 `assembly.tools`（已过 `system-prompt/assemble`）对已记录的请求头 diff 出 `tool-addition` / `tool-removal`（读过 `dsh-agent-loop` 源码）。
@@ -59,7 +72,8 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包，`0.
 ## 已知限制
 
 - 开关是 profile 级的，不能按会话开关；没有 profile 插件服务或 `hmr` 的启动要 `dsh plugin` 加重启。
-- 只支持 `0.2.0-rc.2`，安装命令必须钉版本：npm 的 `latest` 是 `0.1.5-alpha.2`（团队投影没有 `wire` 视图，`channel.team` 读不到）；`0.2.1-rc.1` 起团队消息改为 `source: { kind: 'agent-message', form: 'relay' }`、前缀改为 `Team message from <name>:`，`teamMessageOf` 不匹配，气泡不显示。跟进 0.2.1 时与版本线一起改。
+- 安装命令必须钉到版本线：团队包对 DSH 的 peer 是精确版本，npm 的 `latest`（`0.1.5-alpha.2`，团队投影没有 `wire` 视图，`channel.team` 读不到）和 `next` 都不在这条线上。提示里的版本取自 `UPSTREAM_VALIDATED_VERSION`，README 与本文随版本线一起改。
+- teammate 页里的团队消息由通用 agent-message 流显示，正文带着服务的 `Team message … from <name>:` 前缀，发送方显示为会话关系而不是成员名。
 - 仪表盘的团队模式不区分「Lead 视角」与「teammate 视角」：第一阶段 teammate 会话不作为 channel 会话打开，所以只有 Lead 会看到它；「进入 teammate 会话」时要一起处理。
 - 任务板显示全部非删除任务，不分页；任务很多时靠仪表盘的滚动。
 - 子代理详情里的发消息走 `ctx.subagents.prompt`（宿主控制面，teammate 也是 Lead 的 continuable 子代理），不经团队邮箱；团队模式下这条路径没有实测。

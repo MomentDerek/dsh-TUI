@@ -340,14 +340,9 @@ export interface SubagentOutputLine {
   at: number
   /** False while the line is still absorbing streaming deltas. */
   settled?: boolean
-  /** `team-message`: the sending member's name. */
-  sender?: string
-  /** `team-message`: the durable message id the history page carries too. */
-  id?: string
 }
 
-/** `team-message`: an Agent Teams message this child received. */
-export type SubagentOutputKind = 'text' | 'thinking' | 'tool' | 'error' | 'system' | 'team-message'
+export type SubagentOutputKind = 'text' | 'thinking' | 'tool' | 'error' | 'system'
 
 export interface SubagentToolCall {
   id?: string

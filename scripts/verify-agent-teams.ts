@@ -2,8 +2,9 @@
  * DSH Agent Teams read side (issue #1241, phase 1): the `agentTeam` roster
  * store, team-message bubbles and the team tool cards. Event and projection
  * shapes are the ones recorded from the real 0.2.0-rc.2 team service and
- * tools (Lead spawns `reviewer`, which messages the Lead back); no team
- * package is imported. Preset delegation rows are covered by
+ * tools (Lead spawns `reviewer`, which messages the Lead back); the 0.2.1
+ * relay form follows the 0.2.1-alpha.5 package source. No team package is
+ * imported. Preset delegation rows are covered by
  * verify-bundled-presets.mjs.
  *
  * Run: node --import tsx/esm scripts/verify-agent-teams.ts
@@ -16,7 +17,6 @@ import { attachSessionProjection, createSessionProjectionStore } from '../src/ds
 import { asTeamView, createTeamRosterStore, teamRootOf, TEAM_PROJECTION_KEY } from '../src/dsh-adapter/team-roster.js'
 import { teamToolCallView, teamToolResultView } from '../src/dsh-adapter/team-tools.js'
 import { SubagentActivityStore } from '../src/dsh-adapter/subagents.js'
-import { foldTranscriptLeaves, mergeLiveWindow, type TranscriptLeaf } from '../src/components/messages/subagentTranscript.js'
 import { createProjectorHarness } from './lib/projector-harness.js'
 
 const LEAD = 'lead-1'
@@ -150,30 +150,43 @@ for (const replaying of [false, true]) {
 }
 console.log('PASS team-message (live + replay → sender bubble, framing dropped by identity, not the last prompt; other injected stays hidden)')
 
-// ── a teammate's received message, live ─────────────────────────────────
+// ── 0.2.1 relay form ─────────────────────────────────────────────────────
 {
-  // The same delivery, landing in the teammate's own session.
+  // What 0.2.1-alpha.5 records: the sender only in the framing block, the
+  // generic agent-message relay as the source.
+  const relayed = {
+    type: 'user/message', seq: 31, time: 1792133615950,
+    data: {
+      role: 'user', id: 'relay-1',
+      content: [{ type: 'text', text: 'Team message from reviewer:' }, { type: 'text', text: 'reviewer report: diff ok' }],
+      source: { kind: 'agent-message', form: 'relay', senderSessionId: MATE },
+    },
+  }
+  for (const replaying of [false, true]) {
+    const translator = createDshTranslator(deps)
+    const events = replaying ? translator.translateReplay([relayed] as never) : translator.translateEvent(relayed as never)
+    const harness = createProjectorHarness()
+    harness.apply(events, replaying)
+    assert.deepEqual(harness.state.rows.filter(row => row.kind === 'user').map(row => ({ text: row.text, sender: row.sender, label: row.label })),
+      [{ text: 'reviewer report: diff ok', sender: 'reviewer', label: 'team-message' }], 'one bubble in the receiving transcript')
+  }
+  // A relay without the team framing (the legacy send_message) is no team message.
+  const legacy = { ...relayed, data: { ...relayed.data, content: [{ type: 'text', text: 'plain relay' }] } }
+  const harness = createProjectorHarness()
+  harness.apply(createDshTranslator(deps).translateEvent(legacy as never))
+  assert.deepEqual(harness.state.rows.filter(row => row.kind === 'user'), [])
+  // Framing on a non-relay source is the human's own text.
+  const typed = { ...relayed, data: { ...relayed.data, source: { kind: 'user' } } }
+  const own = createDshTranslator(deps).translateEvent(typed as never).find(event => event.type === 'user.message')
+  assert.ok(own?.type === 'user.message' && own.source === 'user')
+  // Inside the teammate the agent-message feed owns both forms: no line of their own.
   const store = new SubagentActivityStore()
   store.onSpawned(MATE)
-  store.onSessionEvent(MATE, { ...peer, data: { ...peer.data, source: { ...peer.data.source, senderName: 'lead' }, content: [{ type: 'text', text: `Team message ${messageId} from lead:` }, { type: 'text', text: 'check src/ too' }] } })
-  store.onSessionEvent(MATE, { type: 'user/message', seq: 22, time: 1, data: { role: 'user', id: 'u-2', content: [{ type: 'text', text: 'plain' }], source: { kind: 'user' } } })
-  const state = store.get(MATE)
-  assert.ok(state !== undefined)
-  assert.deepEqual(state.outputEvents.map(line => ({ kind: line.kind, sender: line.sender, id: line.id, text: line.text })),
-    [{ kind: 'team-message', sender: 'lead', id: peer.data.id, text: 'check src/ too' }], 'only the team message becomes a live line, framing dropped')
-  assert.deepEqual(state.output, ['✉ lead: check src/ too'], 'the plain tail names the sender')
-
-  // The history page holding the same message drops the live copy; a newer one stays live.
-  const history: TranscriptLeaf[] = []
-  foldTranscriptLeaves(createDshTranslator(deps).translateEvent({ ...peer, data: { ...peer.data, source: { ...peer.data.source, senderName: 'lead' } } } as never), history)
-  assert.deepEqual(mergeLiveWindow(history, state, true).map(row => row.kind), ['team-message'], 'the history copy wins by id')
-  store.onSessionEvent(MATE, { ...peer, seq: 23, data: { ...peer.data, id: 'later', source: { ...peer.data.source, senderName: 'lead' } } })
-  const merged = mergeLiveWindow(history, store.get(MATE)!, true)
-  assert.deepEqual(merged.map(row => row.kind), ['team-message', 'live'])
-  const live = merged[1]
-  assert.ok(live?.kind === 'live' && live.line.kind === 'team-message' && live.line.sender === 'lead')
+  store.onSessionEvent(MATE, { ...relayed, data: { ...relayed.data, content: [{ type: 'text', text: 'Team message from lead:' }, { type: 'text', text: 'check src/ too' }], source: { ...relayed.data.source, senderSessionId: LEAD } } })
+  store.onSessionEvent(MATE, peer)
+  assert.deepEqual(store.get(MATE)?.outputEvents, [], 'a team message adds no line to the child')
 }
-console.log('PASS live team message (teammate store line with sender + id, plain tail names the sender, history copy wins by id)')
+console.log('PASS relay team message (0.2.1: bubble from the framing name, legacy relay and typed framing are not team messages, both forms left to the agent-message feed inside the child)')
 
 // ── tool cards ───────────────────────────────────────────────────────────
 assert.equal(isSubagentToolName('spawn_teammate'), true, 'spawn_teammate renders as the subagent row')
@@ -188,6 +201,8 @@ assert.equal(teamToolCallView('bash', '{}'), undefined)
 const sendArgs = JSON.stringify({ target: 'lead', message: 'reviewer report: diff ok' })
 assert.deepEqual(teamToolResultView('send_message', sendArgs, `{"messageId":"${messageId}","status":"queued"}`),
   { card: 'generic', displayKey: 'tool-name-team-message', category: 'other', title: '→ lead · reviewer report: diff ok', content: [{ type: 'text', text: 'queued' }] })
+assert.deepEqual(teamToolResultView('send_message', sendArgs, '{"sent":true}')?.content, [{ type: 'text', text: 'sent' }], 'the 0.2.1 result')
+assert.equal(teamToolResultView('send_message', sendArgs, '{"messageId":"m"}'), undefined, 'the legacy control result stays raw')
 assert.equal(teamToolResultView('send_message', sendArgs, 'message delivered to agent x'), undefined, 'plain text results stay raw')
 assert.deepEqual(teamToolResultView('list_agents', '{}', '[{"target":"lead","role":"lead","status":"running","diagnostics":[]},{"target":"reviewer","role":"teammate","status":"inactive","diagnostics":[]}]')?.content,
   [{ type: 'text', text: 'lead running · reviewer inactive' }])

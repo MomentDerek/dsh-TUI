@@ -309,22 +309,6 @@ console.log('--- S3: bounded tail fallback ---')
       check('S3 消息流叶子仍在（tail 后）', await settled(() => frame.screen().includes('parent → child')), frame.lines().slice(0, 10).join('|'))
     },
   )
-  // Agent Teams：teammate 收到的团队消息在兜底尾巴里也是带发送者的气泡。
-  const teamTail = [
-    { kind: 'text', text: 'working on it', at: NOW - 200, settled: true },
-    { kind: 'team-message', text: 'check src/ too', sender: 'lead', id: 'tm-1', at: NOW - 100, settled: true },
-  ]
-  await withTerminal(
-    () => React.createElement(AgentTranscriptScene, {
-      subagent: makeSubagent({ status: 'completed', outputEvents: teamTail }),
-      source: { kind: 'agents-dashboard' },
-      onExit: () => {},
-    }),
-    async frame => {
-      check('S3 兜底尾巴：团队消息带 ✉ 发送者', await settled(() => frame.screen().includes('✉ lead · team message')), frame.lines().slice(0, 10).join('|'))
-      check('S3 兜底尾巴：正文在气泡下', frame.lines().some(line => line.trim() === 'check src/ too'), frame.lines().slice(0, 10).join('|'))
-    },
-  )
 }
 
 // ── S4: Esc layering + composer transport ─────────────────────────────────

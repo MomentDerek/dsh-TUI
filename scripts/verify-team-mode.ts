@@ -102,7 +102,7 @@ try {
   assert.deepEqual(parseTeamArgs('toggle'), { kind: 'unknown', sub: 'toggle' })
 
   const teamBundle = (enabled: boolean): BundleInfo => ({
-    name: TEAM_BUNDLE, version: '0.2.0-rc.2', enabled, installed: true, optional: false, removable: true, rows: [], overrides: [],
+    name: TEAM_BUNDLE, version: '0.2.1-alpha.5', enabled, installed: true, optional: false, removable: true, rows: [], overrides: [],
   }) as BundleInfo
   function rig(options: { bundles?: BundleInfo[]; service?: boolean; manager?: boolean } = {}) {
     const calls: string[] = []
@@ -142,7 +142,7 @@ try {
     assert.match(pending, /profile has the team on but the service is not running/)
     assert.match(pending, /No teammates in this session/)
     const missing = (await linesOf(createTeamCommandEntry(rig({ bundles: [], service: false }).ctx as never, { profileName: 'dsh-tui' })('', sink({ total: 0, active: 0 }, [])))).join('\n')
-    const NOT_INSTALLED = /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.0-rc\.2 .*dsh plugin --profile dsh-tui add @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.0-rc\.2/
+    const NOT_INSTALLED = /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5 .*dsh plugin --profile dsh-tui add @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5/
     assert.match(missing, NOT_INSTALLED)
     const unmanaged = createTeamCommandEntry(rig({ manager: false }).ctx as never, { profileName: 'dsh-tui' })
     assert.match((await linesOf(unmanaged('off', sink({ total: 0, active: 0 }, [])))).join('\n'), /no profile plugin service/)
@@ -171,7 +171,7 @@ try {
     if (outcome.kind !== 'flow') throw new Error('expected a flow')
     assert.equal((await outcome.flow.begin()).kind, 'done')
     assert.equal(lines.length, 1, lines.join(' | '))
-    assert.match(lines[0]!, /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.0-rc\.2/)
+    assert.match(lines[0]!, /not installed\. Install it here with \/plugin install @deepseek-ai\/dsh-experimental-agent-team-profile@0\.2\.1-alpha\.5/)
     assert.doesNotMatch(lines[0]!, /No such target|dsh-base/, 'no list of every addressable name')
     assert.deepEqual(calls, [])
   }

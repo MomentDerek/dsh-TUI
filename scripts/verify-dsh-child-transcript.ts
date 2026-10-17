@@ -221,30 +221,22 @@ const rosterService = (ids: readonly string[]) => ({
     JSON.stringify({ raw: leaves.map(l => l.key), uniqued: uniqued.map(l => l.key) }))
 }
 
-// An Agent Teams teammate's received message (docs/agent-teams-design.md)
-// survives with its sender; its plain user prompts and injected context do not.
+// An Agent Teams teammate's received messages, in both durable forms, stay
+// out of the lane: the agent-message feed places them on this child's pages
+// (docs/agent-teams-design.md), so a leaf of their own would show them twice.
 {
   const log = new Log()
-  log.user('um-1', '<system-reminder>You are teammate reviewer</system-reminder>')
   log.add('user/message', { id: 'tm-1', role: 'user', source: { kind: 'team-message', teamId: PARENT, messageId: 'm-1', senderId: PARENT, senderName: 'lead' }, content: [text('Team message m-1 from lead:'), text('check src/ too')] })
-  log.add('user/message', { id: 'inj-1', role: 'user', source: { kind: 'plugin', plugin: 'x' }, content: [text('injected')] })
+  log.add('user/message', { id: 'tm-2', role: 'user', source: { kind: 'agent-message', form: 'relay', senderSessionId: PARENT }, content: [text('Team message from lead:'), text('and docs/')] })
   log.assistant('am-1', [text('on it')])
   const memory = createMemoryPersistence()
   memory.sessions.set(CHILD, { header: { version: 4, id: CHILD, createdAt: 1, isSeeded: false }, events: log.events, inheritedEventCount: 0 })
   const { deps } = makeDeps({ subagents: () => rosterService([CHILD]), persistence: () => memory.source })
   const page = await readChildTranscriptPage(deps, CHILD)
   assert.ok(page !== null)
-  check('T11 a received team message joins the lane; other user messages stay out',
-    page.events.map(e => e.type).join(',') === 'user.message,assistant.message'
-    && (page.events[0] as { source?: string; sender?: string; text?: string }).sender === 'lead'
-    && (page.events[0] as { text?: string }).text === 'check src/ too',
+  check('T11 team messages (0.2.0 mailbox and 0.2.1 relay) are left to the agent-message feed',
+    page.events.map(e => e.type).join(',') === 'assistant.message',
     page.events.map(e => e.type))
-  const leaves: Leaf[] = []
-  shared.foldTranscriptLeaves(page.events, leaves)
-  check('T12 shared fold: the team message is a sender leaf before the reply',
-    leaves.map(leaf => leaf.kind).join(',') === 'team-message,text'
-    && leaves[0]!.kind === 'team-message' && leaves[0]!.sender === 'lead' && leaves[0]!.text === 'check src/ too',
-    leaves)
 }
 
 // ── Section O: ownership and fail-closed validation ────────────────────────
