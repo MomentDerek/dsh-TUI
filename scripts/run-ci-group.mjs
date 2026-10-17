@@ -212,6 +212,24 @@ const GROUPS = {
 // 流式行离开虚拟窗口时保留实测行高：不得因回落到 2 行估算而塌陷，
 // 不得改写 committed/painted 位置、接回跟随或移动 xterm 中的正文锚点。
     ["verify-post-shrink-anchor", ['node', '--import', 'tsx/esm', 'scripts/verify-post-shrink-anchor.tsx']],
+// 视口上方发生**真实**收缩（思考卡收起 / 工具卡结算）时，贴底的手动锚点
+// 必须靠滚动锚定保持原地：paint 不得与 committed 分歧、不得越界、xterm 中
+// 的正文锚点逐帧一致。verify-post-shrink-anchor 覆盖的是测量假象那条路径。
+    ["verify-scroll-fold-anchor", ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-fold-anchor.tsx']],
+// 同一折叠，但折叠卡**已被挂载**（窗口内、完全在视口上方）：渲染期那条回退到
+// 2 行估算的路径在这里不成立——估算误差是「折叠后行高 − 2」，且以正向差额
+// 落地、被只补偿收缩的单向修正丢弃，留下永久偏移（基线 740ce628 实测多滚
+// 5 行，读者视线落到折叠卡尾部）。保留估高并在提交时按 fresh Yoga 修正，逐帧校验原位。
+    ["verify-scroll-fold-anchor-mounted", ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-fold-anchor-mounted.tsx']],
+// 失效的高度缓存不得被当成真实收缩：Ctrl+O 重签所有行的签名，普通提示行
+// 的真实高度不变，只有 offsets[] 回退到 2 行估算。夹具让整表都留在挂载
+// 窗口内（topPad/bottomPad 0），锚定修正就是唯一能改动 committed 位置的
+// 路径——坏基线上它会把读者滚走 3 行，main（无本改动）保持不动。
+    ["verify-scroll-anchor-invalidation", ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-anchor-invalidation.tsx']],
+// 混合失效后重挂必须归还估高差；正向修正不得接回粘底或被旧窗口夹住，
+// header 仍拥有视口顶部时不得把 Home 用户滚离原位。
+    ["verify-scroll-anchor-remeasurement", ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-anchor-remeasurement.tsx']],
+    ['verify-scroll-anchor-remeasurement-narrow', ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-anchor-remeasurement.tsx'], { DSH_TEST_COLUMNS: '60' }],
 // 长会话冷/热窗口跳转、绘制边界发布与回底挂载预算（不能等滚轮救活）。
     ['verify-scroll-jumps', ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-jumps.tsx']],
     ['verify-scroll-jumps-narrow', ['node', '--import', 'tsx/esm', 'scripts/verify-scroll-jumps.tsx'], { DSH_TEST_COLUMNS: '60' }],
@@ -829,6 +847,7 @@ const GROUPS = {
     ['verify-guide', ['node', 'scripts/verify-guide.mjs']],
     ['verify-message-compat', ['node', 'scripts/verify-message-compat.mjs']],
     ['verify-settings-compat', ['node', '--import', 'tsx/esm', 'scripts/verify-settings-compat.mjs']],
+    ['verify-web-settings', ['node', '--import', 'tsx/esm', 'scripts/verify-web-settings.tsx']],
 // 设置读点的 ns 归属（issue #1124）：分区注册与写入用 Config owner 的 Loader id
 // （可为自定义 id），读点（channel.autoRecapOnOpen、Chat 的 lang 镜像、/reload 的
 // langOverriddenBySettings）必须用同一个 ns —— 写死 'dsh-tui' 会让非默认挂载
@@ -1191,6 +1210,7 @@ const GROUPS = {
 // /model 保留会话与自动标题资格；路由及其异步快照跟随停放中的 agent。
     ["verify-session-title-lineage", ['node', '--import', 'tsx/esm', 'scripts/verify-session-title-lineage.ts']],
     ["verify-model-route-lifetime", ['node', '--import', 'tsx/esm', 'scripts/verify-model-route-lifetime.ts']],
+    ['verify-model-completion-invalidate', ['node', 'scripts/verify-model-completion-invalidate.mjs']],
     ["verify-session-v3", ['node', '--import', 'tsx/esm', 'scripts/verify-session-v3.ts']],
     ["verify-session-tree-generations", ['node', '--import', 'tsx/esm', 'scripts/verify-session-tree-generations.ts']],
 // 裸 ● 空行回归：纯思考/纯工具步骤（无文本块）的 assistant/message
