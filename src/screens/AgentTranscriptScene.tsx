@@ -288,7 +288,9 @@ export function AgentTranscriptScene({ subagent, source, onExit, loadTranscript,
               {fallbackTail.length === 0 && messages.length === 0 && (
                 <Text dimColor>{t('subagent-no-output')}</Text>
               )}
-              {fallbackTail.map((line, index) => (
+              {fallbackTail.map((line, index) => line.kind === 'team-message' && line.sender !== undefined ? (
+                <TeamMessageBubble key={`tail-${index}`} sender={line.sender} text={line.text} marginTopOnTurn={index > 0} />
+              ) : (
                 <Text
                   key={`tail-${index}`}
                   wrap="wrap"

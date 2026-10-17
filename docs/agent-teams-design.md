@@ -29,7 +29,12 @@ DSH 的实验性 Agent Teams（`@deepseek-ai/dsh-experimental-*` 四个包，`0.
 ## 已知限制
 
 - bundle 的启用/停用在下次启动时生效：preset 只在注册时调整。
+- 只支持 `0.2.0-rc.2`，安装命令必须钉版本：npm 的 `latest` 是 `0.1.5-alpha.2`（团队投影没有 `wire` 视图，`channel.team` 读不到）；`0.2.1-rc.1` 起团队消息改为 `source: { kind: 'agent-message', form: 'relay' }`、前缀改为 `Team message from <name>:`，`teamMessageOf` 不匹配，气泡不显示。跟进 0.2.1 时与版本线一起改。
 - preset 按 profile 行判断，不看团队服务是否真正激活：服务激活失败时旧版 `subagent` 行已被禁用、`spawn_teammate` 又不存在，模型只剩 workflow。
+  同样只在 preset 注册时扫一次 loader：团队行写进 `group: true` 的组里、或启动后才挂上时会漏判，TUI preset 保留旧版委派行。
+- `team_task_list` 卡片只显示当前页，不提示上游的 `nextCursor`（超过 50 个任务时看起来像全部）。
+- `/export` 只导出人类输入：团队消息不在导出的 .md 里，由它引发的回复缺少因由。
+- `channel.team` 在 teammate 会话里按 header 的 `parentSession` 读 Lead：Lead 已不在 `agents.list()` 时读不到；Lead 名下的普通子代理也会读到团队。第一阶段没有界面读它，第二阶段「进入 teammate 会话」前要改为按成员名单判定。
 - profile 自己声明的 preset（`dsh-agent-preset` 行）TUI 不接管，其中的旧版控件仍然存在；Agent 作用域对 preset 作用域的遮蔽没有实测。
 - 旧的目录式 preset 名单（`ensurePackagedPresets`）不调整。
 - 上游限制：teammate 共用工作目录、团队只在单进程内、任务负责人不会自动释放。

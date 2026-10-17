@@ -92,6 +92,12 @@ const NOOP_TOGGLE_STREAM_VIEW = (_rowId: number): void => {}
 // until it catches up — settling mid-reveal must not snap (that is the
 // "non-streaming delivery becomes a smooth flow" contract).
 
+/** A row that opens a turn on the rail and the pinned header: a user row,
+ *  but not an Agent Teams peer message (never the human's prompt). */
+function isTurnRow(row: ChatRow): boolean {
+  return row.kind === 'user' && row.label !== 'team-message'
+}
+
 function assistantRevealText(row: ChatRow, enabled: boolean): string {
   const stripped = stripNarration(row.text)
   return revealTextOf(`a${row.id}`, stripped, {
@@ -1236,7 +1242,7 @@ export function MessageList({
       const measuredTops = new Map<number, number>()
       for (let i = 0; i < visibleRows.length; i++) {
         const row = visibleRows[i]!
-        if (row.kind !== 'user') continue
+        if (!isTurnRow(row)) continue
         measuredTops.set(row.id, base + offsets[i]! + (margins.get(row.id) === true ? 1 : 0))
       }
       // Walk ALL rows (not the fold window): the rail must cover the whole
@@ -1248,7 +1254,7 @@ export function MessageList({
       // click goes through the reveal path, not scrollTo).
       const turns: TimelineTurn[] = []
       for (const row of rows) {
-        if (row.kind !== 'user') continue
+        if (!isTurnRow(row)) continue
         let cached = previewCache.get(row.id)
         const imageCount = row.images?.length ?? 0
         if (cached === undefined || cached.len !== row.text.length || cached.imageCount !== imageCount || cached.lang !== lang) {

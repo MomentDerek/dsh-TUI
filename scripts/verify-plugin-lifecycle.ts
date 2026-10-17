@@ -569,17 +569,19 @@ await root.fiber.dispose()
 // DSH's agent-team service registers its projection through
 // `ctx.root.sessionProjections`. Behind the installed guard that call rides
 // the calling plugin's fiber (unloading it drops the key), while the root's
-// own effect stays refused. Real registry, mounted after the guard.
-{
+// own effect stays refused. Real registry, mounted before the guard (the
+// profile's base row, the usual order) and after it.
+for (const order of ['registry first', 'guard first'] as const) {
   const { armRootCapabilityGuard, compositionRoot, concreteService, deferRootCapabilityGuard } = await import('../src/dsh-adapter/host-access.js')
   const { SessionProjectionRegistry } = await import('@deepseek-ai/dsh-session-projection')
   const teamRoot = new Context()
   const release = deferRootCapabilityGuard(teamRoot)
   compositionRoot(teamRoot)
   armRootCapabilityGuard(teamRoot)
+  if (order === 'registry first') await teamRoot.plugin(SessionProjectionRegistry)
   await teamRoot.plugin({ name: 'tui-row', apply(ctx: Context) { compositionRoot(ctx) } })
   release()
-  await teamRoot.plugin(SessionProjectionRegistry)
+  if (order === 'guard first') await teamRoot.plugin(SessionProjectionRegistry)
   const definition = { key: 'agentTeamProbe', stateSchema: {}, init: () => 0, apply: (state: number) => state, stateVersion: 0 }
   const registry = concreteService((teamRoot as unknown as { sessionProjections: object }).sessionProjections) as { registrations: Map<string, unknown> }
   const outcome: Record<string, string> = {}
@@ -602,11 +604,11 @@ await root.fiber.dispose()
     },
   })
   await teamFiber
-  check('root projection registration from a plugin is admitted', outcome.register === 'allowed', JSON.stringify(outcome))
-  check('admitted projection registration is live', registry.registrations.has('agentTeamProbe'))
-  check('root.effect itself stays refused to the plugin', outcome.rootEffect === 'denied', JSON.stringify(outcome))
+  check(`${order}: root projection registration from a plugin is admitted`, outcome.register === 'allowed', JSON.stringify(outcome))
+  check(`${order}: admitted projection registration is live`, registry.registrations.has('agentTeamProbe'))
+  check(`${order}: root.effect itself stays refused to the plugin`, outcome.rootEffect === 'denied', JSON.stringify(outcome))
   await teamFiber.dispose()
-  check('unloading the plugin drops its projection key', !registry.registrations.has('agentTeamProbe'))
+  check(`${order}: unloading the plugin drops its projection key`, !registry.registrations.has('agentTeamProbe'))
   await teamRoot.fiber.dispose()
 }
 if (failures > 0) {

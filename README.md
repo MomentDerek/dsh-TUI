@@ -293,8 +293,12 @@ coordinate on a shared task board. It is off by default. Enable it by adding
 the upstream bundle to the TUI profile, then restart the TUI:
 
 ```sh
-dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.0-rc.2
 ```
+
+Pin the version: it must match the supported DSH line (`0.2.0-rc.2`). The
+untagged install resolves to an older bundle, and `0.2.1` changes how team
+messages are delivered, which this release does not render yet.
 
 With its tools enabled, the presets dsh-TUI registers (`liangshen` and the
 official `standard` / `ptc` / `cordis`) drop their `subagent` / `subagent_fork`
@@ -309,8 +313,8 @@ tools as one-line cards (`send_message` with its target and
 
 Limits: enabling or disabling the bundle takes effect on the next start; a
 preset the profile declares itself is not adjusted; the agents dashboard does
-not yet show the roster and task board, and there is no "enter teammate
-session". Upstream limits apply: teammates share one working directory, a
+not yet show the roster and task board, there is no "enter teammate
+session", and `/export` leaves team messages out. Upstream limits apply: teammates share one working directory, a
 team lives in one process, and a task owner is never released automatically.
 
 ## Keybindings & Mouse

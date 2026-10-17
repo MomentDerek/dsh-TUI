@@ -2,7 +2,10 @@
  * Agent Teams peer-message bubble (src/components/messages/TeamMessageBubble.tsx,
  * issue #1241): a `✉ <sender> · team message` line, then the body with a
  * hanging indent that holds under wrapping — at a normal and a narrow
- * terminal width, with a wide-character sender and body.
+ * terminal width, with a wide-character sender and body, and inside a column
+ * narrower than the terminal (a child scene's padded page beside a rail).
+ * In the main list a team row is never a turn: the timeline rail and the
+ * pinned header (Chat reads `pinnedId`) only take the human's prompts.
  *
  * Run: node --import tsx/esm scripts/verify-team-message-bubble.tsx
  */
@@ -26,6 +29,7 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, termTest, bubb
   import('../src/components/messages/TeamMessageBubble.js'),
   import('../src/ink/stringWidth.js'),
 ])
+const { MessageList } = await import('../src/components/MessageList.js')
 const { settled, viewportLines } = termTest
 const { render } = ui
 
@@ -35,7 +39,15 @@ const check = (name: string, ok: boolean, extra = '') => {
   if (!ok) failed++
 }
 
-async function frame(cols: number, sender: string, text: string): Promise<string[]> {
+/** A child scene's page: padded on both sides beside a fixed-width rail. */
+const Hosted = ({ children }: { children: React.ReactNode }) => (
+  <ui.Box flexDirection="row" paddingX={3}>
+    <ui.Box flexGrow={1} flexShrink={1} paddingX={1}>{children}</ui.Box>
+    <ui.Box width={10} flexShrink={0}><ui.Text>{'|rail'}</ui.Text></ui.Box>
+  </ui.Box>
+)
+
+async function frame(cols: number, sender: string, text: string, hosted = false, content?: React.ReactNode): Promise<string[]> {
   const rows = 12
   const term = new XTerm({ cols, rows, scrollback: 50, allowProposedApi: true })
   class FakeStdout extends Writable {
@@ -54,8 +66,9 @@ async function frame(cols: number, sender: string, text: string): Promise<string
     ref() { return this }
     unref() { return this }
   }
+  const node = <bubble.TeamMessageBubble sender={sender} text={text} marginTopOnTurn={false} />
   const instance = await render(
-    <bubble.TeamMessageBubble sender={sender} text={text} marginTopOnTurn={false} />,
+    content ?? (hosted ? <Hosted>{node}</Hosted> : node),
     { stdout: new FakeStdout(), stdin: new FakeStdin(), stderr: new Sink(), exitOnCtrlC: false, patchConsole: false },
   )
   await settled(() => viewportLines(term, rows).some((line: string) => line.includes('✉')))
@@ -75,6 +88,33 @@ try {
   check('narrow: the wrapped body keeps its indent', body.length > 1 && body.every(line => line.startsWith('  ') && !line.startsWith('   ')), JSON.stringify(body))
   check('narrow: no row overflows the terminal', narrow.every(line => width.stringWidth(line) <= 24), JSON.stringify(narrow))
   check('narrow: every body character is shown', body.map(line => line.trim()).join('') === '这是一条需要在窄终端里换行的团队消息内容', JSON.stringify(body))
+
+  // A child scene hosts the bubble in a column narrower than the terminal:
+  // the body wraps to that column, losing no character to truncation.
+  const longBody = 'the quick brown fox jumps over the lazy dog and keeps running far past the column edge'
+  const hosted = await frame(60, 'lead', longBody)
+  const inPage = await frame(60, 'lead', longBody, true)
+  check('hosted: the body is not clipped by the page padding or the rail',
+    inPage.slice(1).map(line => line.replace(/\|rail$/, '').trim()).join(' ') === longBody, JSON.stringify(inPage))
+  check('hosted: no body row reaches into the rail column', inPage.slice(1).every(line => !line.replace(/\|rail$/, '').includes('…')), JSON.stringify(inPage))
+  check('hosted: same text as the full-width bubble', hosted.slice(1).map(line => line.trim()).join(' ') === longBody, JSON.stringify(hosted))
+
+  // The main list: a peer message renders its bubble but opens no turn.
+  type Timeline = { turns: readonly { id: number }[]; pinnedId: number | null }
+  let timeline: Timeline | null = null
+  const chatRows = [
+    { id: 0, kind: 'user', text: 'human prompt' },
+    { id: 1, kind: 'assistant', text: 'spawning teammates' },
+    { id: 2, kind: 'user', label: 'team-message', sender: 'reviewer', text: 'reviewer report' },
+    { id: 3, kind: 'assistant', text: 'noted' },
+  ] as never[]
+  const list = await frame(60, 'reviewer', '', false,
+    <MessageList rows={chatRows} expanded={false} expandedRows={new Set()} selectedId={null} onToggleRow={() => {}}
+      model="test" showAll onToggleAll={() => {}} historyPaintEnabled={false} scrollHandle={null}
+      registerRowRef={() => {}} onTimeline={(next: Timeline) => { timeline = next }} />)
+  check('list: the peer row renders as its bubble', list.some(line => line.startsWith('✉ reviewer')), JSON.stringify(list))
+  const turns = (timeline as Timeline | null)?.turns.map(turn => turn.id)
+  check('list: only the human prompt is a turn (rail, pinned header)', JSON.stringify(turns) === '[0]', JSON.stringify(turns))
 } finally {
   rmSync(dataDir, { recursive: true, force: true })
 }

@@ -239,8 +239,11 @@ DSH 的实验性 Agent Teams 让会话的主 agent（Lead）创建有名字的 t
 profile 后重启 TUI 即可开启：
 
 ```sh
-dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile
+dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.0-rc.2
 ```
+
+版本必须钉住，与支持的 DSH 版本线（`0.2.0-rc.2`）一致：不带版本会装到较旧的 bundle，
+`0.2.1` 又改了团队消息的投递方式，本版本尚不能显示。
 
 团队工具启用后，dsh-TUI 注册的 preset（`liangshen` 与官方 `standard` / `ptc` /
 `cordis`）会去掉 `subagent` / `subagent_fork` 行和旧版 `send_message` /
@@ -250,7 +253,7 @@ dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profil
 （`send_message` 带目标与 `accepted` / `queued`）。
 
 限制：bundle 的启用/停用在下次启动生效；profile 自己声明的 preset 不会被调整；
-agents 仪表盘暂不显示成员名单与任务板，也还不能「进入 teammate 会话」。上游限制同样
+agents 仪表盘暂不显示成员名单与任务板，也还不能「进入 teammate 会话」；`/export` 不导出团队消息。上游限制同样
 适用：teammate 共用一个工作目录、团队只在单进程内、任务负责人不会自动释放。
 
 ## 快捷键与鼠标
