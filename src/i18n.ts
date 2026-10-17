@@ -1794,6 +1794,7 @@ const dict = {
     zh: '团队 bundle 未安装。在这里安装：/plugin install {{bundle}}（装完即开启）；或在终端：dsh plugin --profile {{profile}} add {{bundle}}',
     en: 'The team bundle is not installed. Install it here with /plugin install {{bundle}} (it is switched on once installed), or in a terminal with dsh plugin --profile {{profile}} add {{bundle}}',
   },
+  'team-cmd-off-not-installed': { zh: '团队 bundle 未安装，团队本就是关闭的，无需改动。', en: 'The team bundle is not installed, so the team is already off; nothing to change.' },
   'team-cmd-service': { zh: '团队服务：{{state}}', en: 'Team service: {{state}}' },
   'team-cmd-running': { zh: '运行中', en: 'running' },
   'team-cmd-stopped': { zh: '未运行', en: 'not running' },

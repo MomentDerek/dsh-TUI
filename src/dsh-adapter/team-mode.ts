@@ -128,11 +128,11 @@ export function createTeamCommandEntry(
       profileName: profile(),
       teamActiveMembers: () => sink.members().active,
     })
-    if (parsed.kind === 'off') return { kind: 'flow', flow }
-    // `on` without the package: the lifecycle flow would answer with its
-    // generic "no such target" and every addressable name. Say what is
-    // missing and how to install it instead; installing stays an explicit
-    // `/plugin install` (it runs third-party code behind its own trust step).
+    // Without the package the lifecycle flow would answer with its generic
+    // "no such target" and every addressable name. Say what is missing
+    // instead: `on` with how to install it (installing stays an explicit
+    // `/plugin install`, it runs third-party code behind its own trust step),
+    // `off` that there is nothing to switch off.
     const bindingAtStart = sink.binding()
     return {
       kind: 'flow',
@@ -142,11 +142,16 @@ export function createTeamCommandEntry(
           let installed = true
           let enabled = false
           try {
-            const bundle = (await manager.listBundles()).find(candidate => candidate.name === TEAM_BUNDLE)
-            installed = bundle !== undefined
-            enabled = bundle?.enabled === true
+            const entry = (await manager.listBundles()).find(candidate => candidate.name === TEAM_BUNDLE)
+            installed = entry !== undefined
+            enabled = entry?.enabled === true
           } catch {
             // A failing read is the flow's to report: it reads the same list.
+          }
+          if (parsed.kind === 'off') {
+            if (installed) return flow.begin()
+            if (sink.binding() === bindingAtStart) sink.onLines([t('team-cmd-off-not-installed')])
+            return { kind: 'done' }
           }
           // Already selected: no trust question about code already running,
           // no no-op write. Say whether it is actually running.

@@ -284,6 +284,16 @@ try {
     assert.deepEqual(calls, [])
   }
   {
+    // off without the package: nothing to switch off, not the generic "no such target".
+    const { ctx, calls } = rig({ bundles: [{ ...teamBundle(true), name: '@deepseek-ai/dsh-base' }] })
+    const lines: string[] = []
+    const outcome = createTeamCommandEntry(ctx as never, { profileName: 'dsh-tui' })('off', sink({ total: 0, active: 0 }, lines))
+    if (outcome.kind !== 'flow') throw new Error('expected a flow')
+    assert.equal((await outcome.flow.begin()).kind, 'done')
+    assert.deepEqual(lines, ['The team bundle is not installed, so the team is already off; nothing to change.'])
+    assert.deepEqual(calls, [])
+  }
+  {
     // off with nobody active writes straight away; with active members it asks first.
     const idle = rig()
     const quiet = createTeamCommandEntry(idle.ctx as never, { profileName: 'dsh-tui' })('off', sink({ total: 1, active: 0 }, []))
@@ -311,7 +321,7 @@ try {
     const other = await plugin('disable other-bundle', pluginSink)!.begin()
     assert.equal(other.kind, 'done', 'only the team bundle asks')
   }
-  console.log('PASS /team on|off and /plugin disable through the lifecycle flow (trust, not installed, team-active confirm, writes)')
+  console.log('PASS /team on|off and /plugin disable through the lifecycle flow (trust, not installed on/off, team-active confirm, writes)')
 } finally {
   rmSync(dataDir, { recursive: true, force: true })
 }
