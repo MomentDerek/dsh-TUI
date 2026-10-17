@@ -1754,6 +1754,22 @@ const dict = {
   'subagent-hint-compose': { zh: '发消息', en: 'compose' },
   'subagent-empty-hint': { zh: '让主代理发起 Task 后，子代理会出现在这里', en: 'Subagents appear here once the main agent starts Task delegations' },
 
+  // ── Agent Teams：代理面板的团队模式（components/SubagentDashboard.tsx）──
+  'team-dashboard-title': { zh: ' 代理团队 ', en: ' Agent Team ' },
+  'team-status-provisioning': { zh: '准备中', en: 'provisioning' },
+  'team-status-running': { zh: '运行中', en: 'running' },
+  'team-status-idle': { zh: '空闲', en: 'idle' },
+  'team-status-failed': { zh: '失败', en: 'failed' },
+  'team-members-title': { zh: '成员', en: 'Members' },
+  'team-lead-row': { zh: 'lead · 当前会话', en: 'lead · this session' },
+  'team-others-title': { zh: '其他子代理', en: 'Other subagents' },
+  'team-tasks-title': { zh: '任务板 · {{completed}}/{{total}}', en: 'Tasks · {{completed}}/{{total}}' },
+  'team-tasks-empty': { zh: '暂无任务', en: 'No tasks' },
+  'team-tasks-count': { zh: '任务 {{completed}}/{{total}}', en: 'tasks {{completed}}/{{total}}' },
+  'team-last-run-failed': { zh: '上一轮失败 {{error}}', en: 'last run failed {{error}}' },
+  'team-task-blocked': { zh: '阻塞', en: 'blocked' },
+  'team-failure': { zh: '团队记录被拒：{{failure}}', en: 'Team record rejected: {{failure}}' },
+
   // ── agent team：子代理转录视图、发消息输入框、消息流 ──
   'agent-view-title': { zh: '子代理转录', en: 'Agent transcript' },
   'agent-view-readonly': { zh: '只读', en: 'read-only' },

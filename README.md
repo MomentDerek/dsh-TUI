@@ -309,12 +309,16 @@ tools of the same names are the only ones; workflow and ralph keep their
 members as a `✉ <sender>` bubble in the receiving session (for a teammate, on
 its subagent detail's Transcript page), and the other team
 tools as one-line cards (`send_message` with its target and
-`accepted` / `queued`).
+`accepted` / `queued`). The agents dashboard (Ctrl+A) and the agents side
+panel switch to a team view: each teammate under its member name with
+`running` / `idle` / `provisioning` / `failed` (a teammate whose turn ended
+is idle — a message wakes it — not done), the Lead line, the remaining
+subagents, a read-only task board (status, owner, `blocked`, write-scope
+warnings) and a banner when the team record was rejected.
 
 Limits: enabling or disabling the bundle takes effect on the next start; a
-preset the profile declares itself is not adjusted; the agents dashboard does
-not yet show the roster and task board, there is no "enter teammate
-session", and `/export` leaves team messages out. Upstream limits apply: teammates share one working directory, a
+preset the profile declares itself is not adjusted; there is no "enter
+teammate session" yet, and `/export` leaves team messages out. Upstream limits apply: teammates share one working directory, a
 team lives in one process, and a task owner is never released automatically.
 
 ## Keybindings & Mouse

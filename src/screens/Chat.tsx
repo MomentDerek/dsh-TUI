@@ -6376,6 +6376,7 @@ export function Chat({
     const dashboard = (
       <SubagentDashboard
         subagents={[...channel.subagents]}
+        team={channel.team}
         onSelect={(id) => {
           setSubagentDashboardOpen(false)
           setSubagentDetailId(id)

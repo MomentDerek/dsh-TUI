@@ -250,10 +250,13 @@ dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profil
 `list_agents` / `interrupt_agent` 控件：委派工具只剩 `spawn_teammate`，同名工具只剩
 团队作用域的那一份；workflow 与 ralph 仍用 `spawn` provider。teammate 显示为子代理行，
 成员间的消息在接收方会话里显示为 `✉ <发送者>` 气泡（teammate 收到的在其子代理详情的 Transcript 页），其余团队工具显示为单行卡片
-（`send_message` 带目标与 `accepted` / `queued`）。
+（`send_message` 带目标与 `accepted` / `queued`）。agents 仪表盘（Ctrl+A）与 agents 侧栏
+进入团队视图：teammate 以成员名显示，状态为运行中 / 空闲 / 准备中 / 失败（回合结束的
+teammate 是空闲而不是完成，发消息即可唤醒）；另有 Lead 行、其余子代理、只读任务板
+（状态、负责人、阻塞、写入范围警告），团队记录被拒时显示错误横幅。
 
 限制：bundle 的启用/停用在下次启动生效；profile 自己声明的 preset 不会被调整；
-agents 仪表盘暂不显示成员名单与任务板，也还不能「进入 teammate 会话」；`/export` 不导出团队消息。上游限制同样
+还不能「进入 teammate 会话」；`/export` 不导出团队消息。上游限制同样
 适用：teammate 共用一个工作目录、团队只在单进程内、任务负责人不会自动释放。
 
 ## 快捷键与鼠标

@@ -168,6 +168,8 @@ function AgentsPanelAdapter({ focused, visible }: PanelProps): React.ReactNode {
   React.useEffect(() => {
     const running = subagents.filter(s => s.status === 'running' || s.status === 'starting').length
     const failedIds = new Set(subagents.filter(s => s.status === 'failed').map(s => s.agentId))
+    // A failed team member is durable; it counts once even beside a failed run.
+    for (const member of channel.team?.members ?? []) if (member.phase === 'failed') failedIds.add(member.id)
     if (visible) {
       seenFailedRef.current = failedIds
       panelStore.setBadge('agents', running > 0 ? { level: 'info', unread: 0 } : null)
@@ -207,6 +209,7 @@ function AgentsPanelAdapter({ focused, visible }: PanelProps): React.ReactNode {
   return (
     <SubagentDashboard
       subagents={subagents}
+      team={channel.team}
       variant="panel"
       focused={focused}
       visible={visible}
