@@ -566,6 +566,32 @@ await root.fiber.dispose()
   await entryRoot.fiber.dispose()
 }
 
+// The entry's backend assembly resolves the composition root before the kernel
+// is chosen. It must run inside the deferral: a root first seen undeferred is
+// guarded for good, and DSH 0.2.0-rc.2's first Remote service then fails on
+// `ctx.root.accessor('invocation')` (a root effect) in its own activation.
+{
+  const { armRootCapabilityGuard, deferRootCapabilityGuard } = await import('../src/dsh-adapter/host-access.js')
+  const { assembleBackendsFromProfile } = await import('../src/dsh-adapter/backend-assembly.js')
+  const entryRoot = new Context()
+  const release = deferRootCapabilityGuard(entryRoot)
+  assembleBackendsFromProfile(entryRoot)
+  armRootCapabilityGuard(entryRoot)
+  let result = 'allowed'
+  await entryRoot.plugin({ name: 'dsh-remote-row', apply(ctx: Context) {
+    try { ctx.root.accessor('invocation', { get: () => undefined }) } catch (error) { result = error instanceof Error ? error.message : String(error) }
+  } })
+  check('deferred guard: backend assembly leaves DSH rows their root effects', result === 'allowed', result)
+  release()
+  await entryRoot.fiber.dispose()
+
+  const { readFileSync } = await import('node:fs')
+  const entry = readFileSync(new URL('../src/dsh-adapter/host-entry.ts', import.meta.url), 'utf8')
+  const deferAt = entry.indexOf('deferRootCapabilityGuard(ctx)')
+  const assembleAt = entry.indexOf('assembleBackendsFromProfile(ctx)')
+  check('host entry defers the root guard before its backend assembly', deferAt !== -1 && assembleAt !== -1 && deferAt < assembleAt, `defer@${deferAt} assemble@${assembleAt}`)
+}
+
 // DSH's agent-team service registers its projection through
 // `ctx.root.sessionProjections`. Behind the installed guard that call rides
 // the calling plugin's fiber (unloading it drops the key), while the root's

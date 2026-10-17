@@ -154,6 +154,11 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   // the route is re-decided afterwards. `apply` assembles again; the pass is a
   // no-op the second time. Without a host root there is no Loader and no profile to
   // read: the assembly says so and registers nothing.
+  // Plugins use root capabilities while they activate: hold the TUI's guard
+  // back until composition arms it (./host-access.ts). Before the assembly: it
+  // resolves the composition root, and a root first seen undeferred is guarded
+  // for good — DSH's base rows would then fail on their own root effects.
+  const releaseRootGuard = root === undefined ? undefined : deferRootCapabilityGuard(ctx)
   assembleBackendsFromProfile(ctx)
   const kernel: KernelBackendId = entryKernel(env, { configured: configuredBackend(profile) })
   try {
@@ -183,9 +188,6 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   })
   // Only a host root gets a composition (DSH without one was delegated above).
   const slot = root === undefined ? undefined : createEntrySlot(kernel === 'dsh', root.kernelVersion)
-  // Plugins use root capabilities while they activate: hold the TUI's guard
-  // back until composition arms it (./host-access.ts).
-  const releaseRootGuard = slot === undefined ? undefined : deferRootCapabilityGuard(ctx)
   try {
     // `entryKernel`: the runtime must not re-resolve the kernel — its rebuilt Config
     // lacks the profile patch's row this route was decided on (the entry read that
