@@ -235,28 +235,34 @@ OpenAI 条款约束。完整操作与当前边界：[Codex 后端](docs/codex-ba
 ### 实验性：DSH Agent Teams
 
 DSH 的实验性 Agent Teams 让会话的主 agent（Lead）创建有名字的 teammate：它们共用
-工作目录、互相发消息，并在一块共享任务板上协作。默认关闭。把上游 bundle 加进 TUI
-profile 后重启 TUI 即可开启：
+工作目录、互相发消息，并在一块共享任务板上协作。默认关闭。先把上游 bundle 装进 TUI
+profile（一次即可）：
 
 ```sh
 dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.0-rc.2
 ```
 
+之后用 `/team on` / `/team off` 开关（单独 `/team` 报告 bundle、服务与本会话的
+teammate）。开关就是在 profile 里启停这个 bundle，重启后保持；`dsh --profile` 启动时
+立即生效，运行中的会话也跟着变，模型会收到工具增减的通知。有 teammate 在运行时关闭
+会先确认：它们不会被停止，而是以普通子代理身份跑完当前回合；团队记录留在会话里，
+下次 `/team on` 时恢复。对这个 bundle 用 `/plugin enable|disable` 效果相同。
+
 版本必须钉住，与支持的 DSH 版本线（`0.2.0-rc.2`）一致：不带版本会装到较旧的 bundle，
 `0.2.1` 又改了团队消息的投递方式，本版本尚不能显示。
 
-团队工具启用后，dsh-TUI 注册的 preset（`liangshen` 与官方 `standard` / `ptc` /
-`cordis`）会去掉 `subagent` / `subagent_fork` 行和旧版 `send_message` /
-`list_agents` / `interrupt_agent` 控件：委派工具只剩 `spawn_teammate`，同名工具只剩
-团队作用域的那一份；workflow 与 ralph 仍用 `spawn` provider。teammate 显示为子代理行，
+请求里有 `spawn_teammate` 时，dsh-TUI 从中去掉 `subagent` / `subagent_fork`，团队的
+`send_message` / `list_agents` / `interrupt_agent` / `wait_agent` 顶替同名的旧版控件：
+委派工具只剩 `spawn_teammate`；团队关闭后旧版工具回来。不是团队成员的子代理（workflow、
+ralph）保留 `subagent`。teammate 显示为子代理行，
 成员间的消息在接收方会话里显示为 `✉ <发送者>` 气泡（teammate 收到的在其子代理详情的 Transcript 页），其余团队工具显示为单行卡片
 （`send_message` 带目标与 `accepted` / `queued`）。agents 仪表盘（Ctrl+A）与 agents 侧栏
 进入团队视图：teammate 以成员名显示，状态为运行中 / 空闲 / 准备中 / 失败（回合结束的
 teammate 是空闲而不是完成，发消息即可唤醒）；另有 Lead 行、其余子代理、只读任务板
 （状态、负责人、阻塞、写入范围警告），团队记录被拒时显示错误横幅。
 
-限制：bundle 的启用/停用在下次启动生效；profile 自己声明的 preset 不会被调整；
-还不能「进入 teammate 会话」；`/export` 不导出团队消息。上游限制同样
+限制：开关作用于整个 profile，不能按会话开关（没有 profile 插件服务或没有热重载的
+启动要用 `dsh plugin` 并重启）；还不能「进入 teammate 会话」；`/export` 不导出团队消息。上游限制同样
 适用：teammate 共用一个工作目录、团队只在单进程内、任务负责人不会自动释放。
 
 ## 快捷键与鼠标

@@ -98,9 +98,10 @@ console.log('PASS team root (Lead itself, teammate → parentSession, fork stays
     snapshot: session => ({ values: { [TEAM_PROJECTION_KEY]: String((session as { id: unknown }).id) === LEAD ? team : undefined } }),
   }
   const ctx = {
-    get: (name: string) => (name === 'agents' ? agents : undefined),
+    get: (name: string) => (name === 'agents' ? agents : name === 'agentTeams' ? {} : undefined),
     logger: { warn: () => undefined },
     inject(_deps: unknown, callback: (ctx: unknown) => void) { callback({ sessionProjections: registry, effect: () => undefined }) },
+    on: () => () => undefined,
   }
   const store = createTeamRosterStore(ctx as never)
   store.seed(mateSession)

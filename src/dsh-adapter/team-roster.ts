@@ -17,6 +17,9 @@ import { attachSessionProjection, createSessionProjectionStore, type SessionProj
 
 export const TEAM_PROJECTION_KEY = 'agentTeam'
 
+/** The upstream bundle that mounts the team service and tools: the team-mode switch. */
+export const TEAM_BUNDLE = '@deepseek-ai/dsh-experimental-agent-team-profile'
+
 /** What the channel reads: the team of one session, if any. */
 export interface TeamSource {
   /** The team of `sessionId` — `undefined` unless it is the session last
@@ -113,11 +116,18 @@ export function teamRootOf(session: unknown, agents: AgentsLike | undefined): Wa
 export function createTeamRosterStore(ctx: Context): TeamRosterStore {
   const store = createSessionProjectionStore<TeamView>({
     key: TEAM_PROJECTION_KEY,
-    narrow: asTeamView,
+    // A team bundle switched off at run time takes the service down before
+    // (or while) its projection definition leaves: no service, no team.
+    narrow: (value, leadSessionId) => (ctx.get('agentTeams', false) === undefined ? undefined : asTeamView(value, leadSessionId)),
     watch: session => teamRootOf(session, ctx.get('agents') as AgentsLike | undefined),
     warn: message => { ctx.logger.warn(message) },
   })
   attachSessionProjection(ctx, TEAM_PROJECTION_KEY, store as SessionProjectionStore<unknown>)
+  // The plugin manager announces every profile write it applied (`/team`,
+  // `/plugin`, the Web UI). Unregistering a projection emits nothing on the
+  // change feed, so the bound session is read again: an unmounted team clears
+  // the view, a remounted one comes back from the Lead's log.
+  ctx.on('plugin-manager/changed', () => { store.reseed() })
   return Object.assign(store, {
     teamOf: (sessionId: string) => (store.boundId === sessionId ? store.read() : undefined),
   })

@@ -57,37 +57,13 @@ assert.deepEqual(mixed.registrations, [], 'profile declarations own their seats 
 const disabled = harness([{ disabled: true, options: { name: '@deepseek-ai/dsh-agent-preset', config: { id: 'standard' } } }])
 await registerBundledPresets(disabled.ctx)
 assert.equal(disabled.registrations.length, 5)
-
-// An enabled Agent Teams tool row (the upstream team bundle) disables the
-// replaced delegation rows inside every preset the TUI registers.
-const TEAM_REPLACED = ['tool-subagent', 'tool-subagent-fork', 'tool-subagent-control', 'tool-subagent-list-agents']
-function rowsById(rows, found = new Map()) {
-  for (const row of rows) {
-    if (typeof row.id === 'string') found.set(row.id, row)
-    if (row.group === true && Array.isArray(row.config)) rowsById(row.config, found)
-  }
-  return found
-}
-const teamRow = { disabled: false, options: { name: '@deepseek-ai/dsh-experimental-tool-agent-team' } }
-const team = harness([teamRow])
+// Agent Teams leaves the presets alone: which delegation tools a request
+// carries is decided per assembly (presets.ts filterTeamReplacedTools), so a
+// bundle toggled at run time also reaches the sessions already joined.
+const team = harness([{ disabled: false, options: { name: '@deepseek-ai/dsh-experimental-tool-agent-team' } }])
 await registerBundledPresets(team.ctx)
-for (const id of ['standard', 'ptc', 'cordis']) {
-  const rows = rowsById(team.registrations.find(row => row.definition.id === id).definition.plugins)
-  const original = rowsById(fresh.registrations.find(row => row.definition.id === id).definition.plugins)
-  for (const replaced of TEAM_REPLACED) assert.equal(rows.get(replaced)?.disabled, true, `${id}: ${replaced} yields to the team tools`)
-  for (const [rowId, row] of original) {
-    if (!TEAM_REPLACED.includes(rowId)) assert.deepEqual(rows.get(rowId).disabled, row.disabled, `${id}: ${rowId} is untouched`)
-  }
-}
-assert.deepEqual(team.registrations.find(row => row.definition.id === 'liangshen').definition.plugins[0].config.patches,
-  TEAM_REPLACED.map(id => ({ id, disabled: true })))
-for (const declared of [[], [{ ...teamRow, disabled: true }]]) {
-  const plain = harness(declared)
-  await registerBundledPresets(plain.ctx)
-  const rows = rowsById(plain.registrations.find(row => row.definition.id === 'standard').definition.plugins)
-  assert.equal(rows.get('tool-subagent')?.disabled, undefined, 'without enabled team tools, presets stay unchanged')
-  assert.equal(plain.registrations.find(row => row.definition.id === 'liangshen').definition.plugins[0].config.patches, undefined)
-}
+assert.deepEqual(team.registrations.map(row => row.definition), fresh.registrations.map(row => row.definition),
+  'an enabled team tool row must not rewrite the registered presets')
 // A real Cordis dependency appears after the TUI's registration attempt.
 const delayed = new Context()
 const delayedRegistrations = []
@@ -137,10 +113,7 @@ try {
   // Different metadata makes a hard-coded copy fail, including name and order.
   const relocatedMetadata = { name: 'Relocated 梁神', description: 'Metadata from preset.yml', order: 17 }
   writeFileSync(join(assets, 'preset.yml'), JSON.stringify(relocatedMetadata))
-  writeFileSync(join(assets, 'agent.cordis.yml'), [
-    '- id: fixture', '  name: cordis:fixture',
-    '- id: tool-subagent', '  name: cordis:replaced', '',
-  ].join('\n'))
+  writeFileSync(join(assets, 'agent.cordis.yml'), '- id: fixture\n  name: cordis:fixture\n')
   const { registerBundledPresets: registerRelocated } = await import(pathToFileURL(join(modules, 'bundled-presets.js')).href)
   const relocated = harness()
   await registerRelocated(relocated.ctx)
@@ -155,21 +128,8 @@ try {
     mounted++
     ctx.effect(() => () => { mounted-- })
   }
-  let replaced = 0
-  runtime.loader.builtins.replaced = ctx => {
-    replaced++
-    ctx.effect(() => () => { replaced-- })
-  }
-  const teamRelocated = harness([{ disabled: false, options: { name: '@deepseek-ai/dsh-experimental-tool-agent-team' } }])
-  await registerRelocated(teamRelocated.ctx)
-  const disposeTeam = await runtime.agentPresets.register(teamRelocated.registrations.find(row => row.definition.id === 'liangshen').definition)
-  assert.equal(mounted, 1)
-  assert.equal(replaced, 0, 'the real Include applies the team patches')
-  await disposeTeam()
-  assert.equal(mounted, 0)
   const dispose = await runtime.agentPresets.register(definition)
   assert.equal(mounted, 1, 'the real Include must open the asset and activate its child')
-  assert.equal(replaced, 1, 'without team tools the delegation rows mount')
   assert.deepEqual(await runtime.agentPresets.list(), [{ id: 'liangshen', ...relocatedMetadata }],
     'registration resolving is insufficient: the preset must have no broken diagnostic')
   const document = await runtime.agentPresets.readDocument('liangshen')
@@ -182,4 +142,4 @@ try {
   await runtime.fiber.dispose()
   rmSync(relocatedRoot, { recursive: true, force: true })
 }
-console.log('bundled presets OK (official definitions, expressions, ownership, legacy, team delegation rows, relocated Include, metadata, disposal)')
+console.log('bundled presets OK (official definitions, expressions, ownership, legacy, relocated Include, metadata, disposal)')

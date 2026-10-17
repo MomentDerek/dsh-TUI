@@ -289,23 +289,32 @@ OpenAI’s terms. Full instructions and current boundaries:
 
 DSH's experimental Agent Teams lets the session's agent (the Lead) create
 named teammates that share the working directory, message each other and
-coordinate on a shared task board. It is off by default. Enable it by adding
-the upstream bundle to the TUI profile, then restart the TUI:
+coordinate on a shared task board. It is off by default. Install the
+upstream bundle into the TUI profile once:
 
 ```sh
 dsh plugin --profile dsh-tui add @deepseek-ai/dsh-experimental-agent-team-profile@0.2.0-rc.2
 ```
 
+Then switch it with `/team on` / `/team off` (`/team` alone reports the
+bundle, the service and this session's teammates). The switch enables or
+disables the bundle in the profile, so it persists across restarts, and on a
+`dsh --profile` launch it applies at once — running sessions included: the
+model is told which tools came and went. Turning it off while teammates run
+asks first; they are not stopped but finish their turn as plain subagents,
+and the team record stays in the session for the next `/team on`.
+`/plugin enable|disable` on the bundle does the same.
+
 Pin the version: it must match the supported DSH line (`0.2.0-rc.2`). The
 untagged install resolves to an older bundle, and `0.2.1` changes how team
 messages are delivered, which this release does not render yet.
 
-With its tools enabled, the presets dsh-TUI registers (`liangshen` and the
-official `standard` / `ptc` / `cordis`) drop their `subagent` / `subagent_fork`
-rows and the legacy `send_message` / `list_agents` / `interrupt_agent`
-controls, so `spawn_teammate` is the delegation tool and the team-scoped
-tools of the same names are the only ones; workflow and ralph keep their
-`spawn` provider. A teammate shows up as a subagent row, a message between
+While a request carries `spawn_teammate`, dsh-TUI drops `subagent` /
+`subagent_fork` from it, and the team's `send_message` / `list_agents` /
+`interrupt_agent` / `wait_agent` take the place of the legacy controls of the
+same names, so `spawn_teammate` is the delegation tool; with the team off
+the legacy tools are back. Subagents that are not team members (workflow,
+ralph) keep `subagent`. A teammate shows up as a subagent row, a message between
 members as a `✉ <sender>` bubble in the receiving session (for a teammate, on
 its subagent detail's Transcript page), and the other team
 tools as one-line cards (`send_message` with its target and
@@ -316,9 +325,9 @@ is idle — a message wakes it — not done), the Lead line, the remaining
 subagents, a read-only task board (status, owner, `blocked`, write-scope
 warnings) and a banner when the team record was rejected.
 
-Limits: enabling or disabling the bundle takes effect on the next start; a
-preset the profile declares itself is not adjusted; there is no "enter
-teammate session" yet, and `/export` leaves team messages out. Upstream limits apply: teammates share one working directory, a
+Limits: the switch covers the whole profile, not one session (a launch
+without the profile plugin service, or without hot reload, needs `dsh plugin`
+and a restart); there is no "enter teammate session" yet, and `/export` leaves team messages out. Upstream limits apply: teammates share one working directory, a
 team lives in one process, and a task owner is never released automatically.
 
 ## Keybindings & Mouse

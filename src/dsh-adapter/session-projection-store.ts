@@ -40,6 +40,12 @@ export interface SessionProjectionStore<T> {
   seed(session: unknown): void
   /** Record one value from the change feed. */
   update(sessionId: string, value: unknown): void
+  /**
+   * Read the bound session's baseline again. For a change the feed does not
+   * carry: a projection definition that left (its key reads as absent) or
+   * came back.
+   */
+  reseed(): void
   /** The bound session's id, once a session bound. */
   readonly boundId: string | undefined
   /** The watched session's id, once a session bound. */
@@ -99,6 +105,9 @@ export function createSessionProjectionStore<T>(options: SessionProjectionStoreO
       if (narrowed === undefined && value === undefined) return
       value = narrowed
       emit()
+    },
+    reseed() {
+      if (bound !== undefined) store.seed(bound)
     },
     get boundId() {
       return bound === undefined ? undefined : sessionIdOf(bound)

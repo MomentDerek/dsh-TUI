@@ -50,6 +50,7 @@ import {
 } from './plugin-guard.js'
 import { pluginManagerOf, type PluginManagerView } from './plugin-manager.js'
 import { cell, parsePluginArgs, pluginFootprintContains } from './plugins-info.js'
+import { TEAM_BUNDLE } from './team-roster.js'
 
 /** The three lifecycle actions. */
 export type PluginManageAction = PluginGuardAction
@@ -96,6 +97,12 @@ export type PluginManageQuestion =
    * switching it off unloads services this application injects.
    */
   | { readonly kind: 'host-row' }
+  /**
+   * `disable` of the Agent Teams bundle while teammates run or are being
+   * created: they are not stopped — they finish the turn as plain subagents,
+   * without the team tools — so the person decides with that in view.
+   */
+  | { readonly kind: 'team-active'; readonly members: number }
 
 /**
  * What `/plugin remove|enable|disable` has to say next. `done` means the flow
@@ -113,6 +120,8 @@ export interface PluginManageSink {
   readonly busy: () => boolean
   /** Where the flow's transcript lines go (already sanitized and capped). */
   readonly onLines: (lines: readonly string[]) => void
+  /** See `teamActiveMembers` on the flow's options. */
+  readonly teamActiveMembers?: (() => number) | undefined
 }
 
 /**
@@ -148,6 +157,11 @@ export interface PluginManageFlowOptions {
    * consulted after it.
    */
   readonly residueOf?: ((name: string) => PluginResidueWatch | undefined) | undefined
+  /**
+   * Teammates of the bound session that are running or provisioning. Read
+   * when `disable` resolves to the Agent Teams bundle; absent reads as none.
+   */
+  readonly teamActiveMembers?: (() => number) | undefined
 }
 
 export interface PluginManageFlow {
@@ -368,7 +382,8 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
    * - **`disable`** asks only about a row the host layer owns — the one whose
    *   removal takes this application's own services down with it. A bundle and a
    *   third-party row are reversible and run no new code, so the guard's
-   *   `allowed` is the whole answer.
+   *   `allowed` is the whole answer — except the Agent Teams bundle while
+   *   teammates are active, whose running turns lose their team tools.
    */
   async function ask(hostRowIds: ReadonlySet<string>): Promise<PluginManageStep> {
     const resolved = target
@@ -376,7 +391,9 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     if (options.action === 'remove') return { kind: 'confirm', target: resolved, question: { kind: 'remove' } }
     if (options.action === 'disable') {
       const hostRow = resolved.kind === 'row' && resolved.patchId !== undefined && hostRowIds.has(resolved.patchId)
-      return hostRow ? { kind: 'confirm', target: resolved, question: { kind: 'host-row' } } : run()
+      if (hostRow) return { kind: 'confirm', target: resolved, question: { kind: 'host-row' } }
+      const members = resolved.kind === 'bundle' && resolved.name === TEAM_BUNDLE ? options.teamActiveMembers?.() ?? 0 : 0
+      return members > 0 ? { kind: 'confirm', target: resolved, question: { kind: 'team-active', members } } : run()
     }
     return { kind: 'confirm', target: resolved, question: { kind: 'trust' } }
   }
@@ -524,6 +541,7 @@ export function createPluginManageEntry(
       binding: sink.binding,
       busy: sink.busy,
       onLines: sink.onLines,
+      teamActiveMembers: sink.teamActiveMembers,
       profileName: options.profileName ?? resolveDshProfileName(),
       // Only a removal has anything to leave behind, and only a removal has a
       // package to read the declaration from.

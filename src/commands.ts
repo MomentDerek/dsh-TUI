@@ -91,6 +91,7 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
   { name: 'migrate', description: 'Import conversations from other coding agents (claude-code / codex / omp / zcode / grok-build)' },
   { name: 'init', description: 'Create AGENTS.md in the working directory' },
   { name: 'agents', description: 'Show subagents of this session' },
+  { name: 'team', description: 'Agent Teams: show status, or switch on / off (the team bundle)' },
   { name: 'jobs', description: 'Show background jobs of this session' },
   { name: 'panel', description: 'Side panel: toggle / focus / zoom / switch panels' },
   // Model / display
@@ -215,6 +216,9 @@ const LOCAL_COMMAND_REQUIREMENTS: ReadonlyMap<string, LocalCommandRequirement> =
   // plugin service), so it stays on the `dsh` default: stated here rather than
   // inherited from the unlisted fallback.
   ['plugin', 'dsh'],
+  // /team switches the DSH profile's Agent Teams bundle through the same
+  // service; another kernel must not rewrite the DSH profile.
+  ['team', 'dsh'],
 ])
 
 /** The requirement of one built-in command name (unlisted → `dsh`). */

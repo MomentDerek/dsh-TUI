@@ -332,6 +332,7 @@ dsh-tui
 | `/migrate` | `[agent] [--dry-run]` | 从其他编程代理（claude-code/codex/omp/zcode/grok-build）导入对话历史，子进程运行不卡界面，详见[会话迁移](migrate.md) |
 | `/init` | 无 | 在工作目录创建 `AGENTS.md`（created / exists / failed 三态提示） |
 | `/agents` | 无 | 本会话子代理列表 |
+| `/team` | `status`（默认）/ `on` / `off` | 实验性 Agent Teams 的开关：启停团队 bundle，有热重载时立即生效；`status` 报告 bundle、服务与本会话 teammate |
 | `/jobs` | 无 | 后台任务面板：状态/运行时长/退出码实时跟踪，`↑/↓` 选择、`k` 停止；面板打开时 `Esc` **只关面板**不打断回合（想中断先关面板再 `Ctrl+C`） |
 | `/settings` | 无 | 打开插件设置编辑器（命名空间读取/编辑） |
 | `/setup` | 无 | 重跑首次引导向导（API Key / 语言主题 / 模型工作区 / 快捷键），与首次启动是同一个界面 |

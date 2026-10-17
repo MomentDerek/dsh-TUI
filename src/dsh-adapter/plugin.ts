@@ -82,6 +82,7 @@ import { attachSessionListMetadata } from './session-list-metadata.js'
 import { createActivityStore } from './activity-store.js'
 import { createContextOccupancyStore } from './context-occupancy.js'
 import { createTeamRosterStore } from './team-roster.js'
+import { createTeamCommandEntry, filterTeamReplacedTools } from './team-mode.js'
 import { getHostToastStore, type TuiToastRuntime } from './toast.js'
 import { getHostShortcuts, type TuiShortcutRuntime } from './shortcuts.js'
 import { getHostThemes, type TuiThemeHost, type TuiThemeRuntime } from './themes.js'
@@ -415,8 +416,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // persistent shell: bash on POSIX, pwsh on Windows). Filter only that preset
     // at the final assembly boundary. Reading the session on every assembly also
     // makes blank-session /preset switches and resumed sessions behave correctly.
+    // Agent Teams is decided at the same boundary: presets keep their legacy
+    // delegation rows, and a request that carries `spawn_teammate` drops
+    // `subagent` / `subagent_fork` (team-mode.ts), so a team bundle switched
+    // at run time reaches the sessions already running.
     dshCtx.on('system-prompt/assemble', async (_assembly, context, next) => {
-      const assembled = await next()
+      const assembled = filterTeamReplacedTools(await next())
       const presetId = context.agent === undefined ? undefined : runningPresetOf(context.agent.session)
       return filterMinimalPresetTools(assembled, presetId)
     })
@@ -2437,6 +2442,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // them with a fixture context. `undefined` ⇒ not one of those forms, or no
     // service to act through; the screen then runs the read-only report.
     onPluginManage: createPluginManageEntry(ctx, {
+      profileName: profile ?? resolveDshProfileName(),
+    }),
+    // `/team [status] | on | off`: the Agent Teams bundle through the same
+    // lifecycle flow (team-mode.ts).
+    onTeamCommand: createTeamCommandEntry(ctx, {
       profileName: profile ?? resolveDshProfileName(),
     }),
     kernelPinned: backendPinned,

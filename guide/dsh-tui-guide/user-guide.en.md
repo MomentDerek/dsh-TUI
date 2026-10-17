@@ -368,6 +368,7 @@ The command menu = built-in commands (aliases included) + DSH registry commands 
 | `/migrate` | `[agent] [--dry-run]` | import conversation history from other coding agents (claude-code/codex/omp/zcode/grok-build); runs in a child process — see [Session migration](migrate.en.md) |
 | `/init` | none | create `AGENTS.md` in the working directory (created / exists / failed) |
 | `/agents` | none | subagent list for this session |
+| `/team` | `status` (default) / `on` / `off` | switch experimental Agent Teams: enables or disables the team bundle, live when the profile hot-reloads; `status` reports the bundle, the service and this session's teammates |
 | `/jobs` | none | background-task panel: status/runtime/exit-code tracking, `↑/↓` select, `k` stop; while open, `Esc` **closes only the panel** and won't interrupt the turn (close the panel first, then `Ctrl+C`) |
 | `/settings` | none | open the plugin settings editor (namespace read/edit) |
 | `/setup` | none | re-run the first-run guide (API key / language+theme / model+workspace / shortcuts) — same screen as the very first launch |
