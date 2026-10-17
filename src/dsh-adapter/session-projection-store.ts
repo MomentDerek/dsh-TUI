@@ -114,8 +114,12 @@ export function createSessionProjectionStore<T>(options: SessionProjectionStoreO
       // The narrow may read host state the value reference does not track
       // (the team's service presence), so an unchanged value, an absent one
       // included, is re-narrowed.
+      const held = raw
       raw = UNREAD
       store.seed(bound)
+      // No snapshot was read (no registry, the watched session not live, or a
+      // failed read): narrow the value already held instead.
+      if (raw === UNREAD && held !== UNREAD && watched !== undefined) store.update(watched.id, held)
     },
     get boundId() {
       return bound === undefined ? undefined : sessionIdOf(bound)

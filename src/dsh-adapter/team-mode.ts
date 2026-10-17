@@ -123,14 +123,21 @@ export function createTeamCommandEntry(
         ...flow,
         async begin() {
           let installed = true
+          let enabled = false
           try {
-            installed = (await manager.listBundles()).some(bundle => bundle.name === TEAM_BUNDLE)
+            const bundle = (await manager.listBundles()).find(candidate => candidate.name === TEAM_BUNDLE)
+            installed = bundle !== undefined
+            enabled = bundle?.enabled === true
           } catch {
             // A failing read is the flow's to report: it reads the same list.
           }
-          if (installed) return flow.begin()
+          // Already selected: no trust question about code already running,
+          // no no-op write. Say whether it is actually running.
+          if (installed && !enabled) return flow.begin()
           if (sink.binding() === bindingAtStart) {
-            sink.onLines([t('team-cmd-not-installed', { profile: cell(profile()), bundle: TEAM_BUNDLE_SPEC })])
+            sink.onLines(!installed
+              ? [t('team-cmd-not-installed', { profile: cell(profile()), bundle: TEAM_BUNDLE_SPEC })]
+              : [t('team-cmd-already-on'), ...ctx.get('agentTeams', false) === undefined ? [t('team-cmd-pending-on')] : []])
           }
           return { kind: 'done' }
         },

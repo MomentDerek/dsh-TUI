@@ -3685,6 +3685,9 @@ export function Chat({
         void outcome.lines.then((lines) => {
           if (channel.agentBindingGeneration !== originAgentBinding) return
           channel.pushLocal('/team', [...lines])
+        }, (error: unknown) => {
+          if (channel.agentBindingGeneration !== originAgentBinding) return
+          channel.pushLocal('/team', [t('plugins-manage-failed', { reason: cleanCommandError(error) })])
         })
         return true
       }

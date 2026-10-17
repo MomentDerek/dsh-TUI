@@ -118,6 +118,67 @@ try {
     notify!()
     assert.equal(sameRef.read()?.members.length, 2, 'and comes back on the same cached value')
     console.log('PASS team store re-narrows an unchanged projection value on plugin-manager/changed')
+
+    // A service change the plugin manager never announces (an HMR-applied
+    // CLI edit, a late activation) is followed through `internal/service`.
+    let present = true
+    let serviceChanged: ((name: unknown) => void) | undefined
+    const quiet = createTeamRosterStore({
+      ...ctx,
+      get: (name: string) => (name === 'agentTeams' ? (present ? {} : undefined) : name === 'agents' ? { list: () => [] } : undefined),
+      inject(_deps: unknown, callback: (ctx: unknown) => void) {
+        callback({ sessionProjections: { onChanged: () => () => undefined, snapshot: () => ({ values: { [TEAM_PROJECTION_KEY]: team } }) }, effect: () => undefined })
+      },
+      on(name: string, listener: (name: unknown) => void) {
+        if (name === 'internal/service') serviceChanged = listener
+        return () => undefined
+      },
+    } as never)
+    quiet.seed({ id: LEAD })
+    assert.equal(quiet.read()?.members.length, 2)
+    present = false
+    serviceChanged!('agents')
+    assert.equal(quiet.read()?.members.length, 2, 'another service changing reads nothing again')
+    serviceChanged!('agentTeams')
+    assert.equal(quiet.read(), undefined, 'the team service gone without a manager event: the view clears')
+    present = true
+    serviceChanged!('agentTeams')
+    assert.equal(quiet.read()?.members.length, 2, 'and comes back with it')
+    console.log('PASS team store follows the agentTeams service through internal/service')
+
+    // A teammate whose Lead is not live has no snapshot to read: a reseed
+    // still narrows the value it holds, so a stopped service clears it.
+    let up = true
+    let feed: ((session: unknown, key: string, value: unknown) => void) | undefined
+    let onService: ((name: unknown) => void) | undefined
+    const orphan = createTeamRosterStore({
+      ...ctx,
+      get: (name: string) => (name === 'agentTeams' ? (up ? {} : undefined) : name === 'agents' ? { list: () => [] } : undefined),
+      inject(_deps: unknown, callback: (ctx: unknown) => void) {
+        callback({
+          sessionProjections: {
+            onChanged: (listener: typeof feed) => { feed = listener; return () => undefined },
+            snapshot: () => { throw new Error('no snapshot for a session that is not live') },
+          },
+          effect: () => undefined,
+        })
+      },
+      on(name: string, listener: (name: unknown) => void) {
+        if (name === 'internal/service') onService = listener
+        return () => undefined
+      },
+    } as never)
+    orphan.seed({ id: 'm1', header: { origin: 'subagent', parentSession: LEAD } })
+    assert.equal(orphan.watchedId, LEAD)
+    feed!({ id: LEAD }, TEAM_PROJECTION_KEY, team)
+    assert.equal(orphan.read()?.members.length, 2, 'the Lead value arrives on the feed')
+    up = false
+    onService!('agentTeams')
+    assert.equal(orphan.read(), undefined, 'no snapshot to read: the held value is narrowed again and clears')
+    up = true
+    onService!('agentTeams')
+    assert.equal(orphan.read()?.members.length, 2, 'and comes back from the same held value')
+    console.log('PASS team store re-narrows the held value when the watched Lead has no snapshot')
   }
 
   // ── /team ──────────────────────────────────────────────────────────────
@@ -188,6 +249,19 @@ try {
     await outcome.flow.confirm()
     assert.deepEqual(calls, [`setBundleEnabled:${TEAM_BUNDLE}:true`])
     assert.ok(lines.some(line => line.includes(TEAM_BUNDLE)), lines.join(' | '))
+  }
+  {
+    // on with the bundle already selected: no trust question, no write.
+    for (const service of [true, false]) {
+      const { ctx, calls } = rig({ bundles: [teamBundle(true)], service })
+      const lines: string[] = []
+      const outcome = createTeamCommandEntry(ctx as never, { profileName: 'dsh-tui' })('on', sink({ total: 0, active: 0 }, lines))
+      if (outcome.kind !== 'flow') throw new Error('expected a flow')
+      assert.equal((await outcome.flow.begin()).kind, 'done')
+      assert.deepEqual(calls, [])
+      assert.match(lines.join('\n'), /already on/)
+      assert.equal(/service is not running/.test(lines.join('\n')), !service, lines.join(' | '))
+    }
   }
   {
     // on without the package: the install hint, not the generic "no such target", and nothing written.

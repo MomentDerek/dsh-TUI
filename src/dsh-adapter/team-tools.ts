@@ -118,7 +118,7 @@ function resultLine(name: string, value: unknown): string | undefined {
     }
     case 'wait_agent':
       if (!isRecord(value) || typeof value.timedOut !== 'boolean') return undefined
-      if (value.noProgress !== undefined) return 'noProgress'
+      if (value.noProgress) return 'noProgress'
       return value.timedOut ? 'timedOut' : 'changed'
     case 'interrupt_agent':
       return isRecord(value) ? str(value.previousStatus) : undefined

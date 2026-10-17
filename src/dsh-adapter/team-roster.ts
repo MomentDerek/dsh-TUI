@@ -128,6 +128,13 @@ export function createTeamRosterStore(ctx: Context): TeamRosterStore {
   // change feed, so the bound session is read again: an unmounted team clears
   // the view, a remounted one comes back from the Lead's log.
   ctx.on('plugin-manager/changed', () => { store.reseed() })
+  // Not every service change is announced there (an HMR-applied CLI or hand
+  // edit, a late or recovered activation), and the narrow reads the service:
+  // follow it directly. A service that comes back before its projection
+  // definition reads absent here; the manager event above reads it again.
+  ctx.on('internal/service' as never, ((name: unknown) => {
+    if (name === 'agentTeams') store.reseed()
+  }) as never)
   return Object.assign(store, {
     teamOf: (sessionId: string) => (store.boundId === sessionId ? store.read() : undefined),
   })
