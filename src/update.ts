@@ -1220,17 +1220,14 @@ export interface ReleaseAgeExcludeOutcome {
  * preserved, a missing `minimumReleaseAgeExclude` block is appended, a
  * missing file is created, and an absent profile directory resolves to
  * undefined — the caller still runs pnpm, whose own diagnostic stays the
- * visible fallback. Own entries are re-rendered target-first on every
- * rewrite: pnpm 11.7.x honours only the FIRST entry per package (later
- * entries for the same package are ignored against the real registry), and
- * 11.21.x applies every entry in any order, so the target — the version the
- * swap itself has to resolve, and published by construction while a
- * dev-built `updatedFrom` need not be — takes the slot older pnpm still
- * reads. Both exemptions come from the manifest, not from `pnpm-lock.yaml`:
- * a profile whose manifest and lockfile diverged keeps the lockfile's entry
- * unexempted. The 11.7.x `--frozen-lockfile` policy check reads that first
- * entry only, so a two-entry list does not clear it there; the `pnpm add`
- * path `/update` runs resolves the target and does pass.
+ * visible fallback. Both versions share ONE entry, `pkg@<target> || <from>`:
+ * pnpm 11.5.x–11.7.x honour only the FIRST entry per package (later entries
+ * for the same package are ignored), so two entries leave the old lockfile
+ * version unexempted there whatever their order — the `pnpm update` dsh runs
+ * for `/update` fails on it (issue #1605) — while 11.10+ applies every entry.
+ * A version union is read whole by both. Both exemptions come from the
+ * manifest, not from `pnpm-lock.yaml`: a profile whose manifest and lockfile
+ * diverged keeps the lockfile's entry unexempted.
  *
  * @param profile - The dsh profile whose workspace file is seeded.
  * @param version - The update target (exact version).
@@ -1252,10 +1249,9 @@ export function ensureProfileReleaseAgeExclude(
       // Missing file — start from an empty document; writeFileSync creates it.
     }
     const entry = `${PACKAGE_NAME}@${version}`
-    const alsoEntry = alsoExempt !== undefined && alsoExempt !== '' && alsoExempt !== version
-      ? `${PACKAGE_NAME}@${alsoExempt}`
-      : undefined
-    const keep = alsoEntry === undefined ? [entry] : [entry, alsoEntry]
+    const keep = alsoExempt !== undefined && alsoExempt !== '' && alsoExempt !== version
+      ? [`${entry} || ${alsoExempt}`]
+      : [entry]
     const lines = text.split(/\r?\n/u)
     let blockStart = -1
     for (let i = 0; i < lines.length; i += 1) {
@@ -1294,10 +1290,8 @@ export function ensureProfileReleaseAgeExclude(
     if (!droppedStale && missing.length === 0) {
       return { entries: [...foreignLines.map(itemOf), ...present], changed: false }
     }
-    // Own entries are re-rendered in keep order (target first) instead of
-    // copied as found: pnpm 11.7.x honours only the first entry per package
-    // (11.21.x applies them all, order-independent), and the target is the
-    // version the swap must resolve, so it takes that first slot.
+    // Own entries are re-rendered from the keep set instead of copied as
+    // found, so a pre-#1605 two-entry pair collapses into the single union.
     const insert = foreignLines.concat(keep.map(item => `  - '${item}'`))
     if (blockStart !== -1) {
       lines.splice(blockStart + 1, blockEnd - blockStart - 1, ...insert)
@@ -1868,7 +1862,7 @@ export async function updateTui(
     )
     if (releaseAge !== undefined && releaseAge.changed) {
       const exempted = updatedFrom !== '' && updatedFrom !== targetVersion
-        ? `${PACKAGE_NAME}@${targetVersion} + ${PACKAGE_NAME}@${updatedFrom}`
+        ? `${PACKAGE_NAME}@${targetVersion} || ${updatedFrom}`
         : `${PACKAGE_NAME}@${targetVersion}`
       process.stderr.write(
         `dsh-tui: pre-seeded profile release-age exclusion (${exempted}) — ` +

@@ -445,17 +445,17 @@ check(
       `${JSON.stringify(outcome)} :: ${text}`,
     )
 
-    // Case 3b: the same entry is KEPT when it is the second exemption
-    // (alsoExempt) — the locked version still inside the release-age window.
+    // Case 3b: the same version is KEPT when it is the second exemption
+    // (alsoExempt) — the locked version still inside the release-age window —
+    // joined to the target in one union entry.
     writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.9.3'\n")
     outcome = ensureProfileReleaseAgeExclude('tui', '0.10.0-beta.1', '0.9.3')
     text = readFileSync(yamlPath, 'utf8')
     check(
       'releaseAge: alsoExempt keeps the locked version alongside the target',
       outcome !== undefined && outcome.changed === true &&
-        text.includes("- 'x@1.0.0'") &&
-        text.includes("- '@deepseek-harness-tui/dsh-tui@0.9.3'") &&
-        text.includes("- '@deepseek-harness-tui/dsh-tui@0.10.0-beta.1'"),
+        text.includes("minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.10.0-beta.1 || 0.9.3'\n") &&
+        (text.match(/@deepseek-harness-tui\/dsh-tui@/g) ?? []).length === 1,
       `${JSON.stringify(outcome)} :: ${text}`,
     )
 
@@ -487,22 +487,18 @@ check(
 
     // Case 3e (issue #1205): two releases inside the window — the locked old
     // version is exempted together with the target, so the lockfile entry
-    // pnpm verifies before the swap installs too. Target-first order is
-    // load-bearing on pnpm 11.7.x, which honours only the first entry per
-    // package (11.21.x applies every entry regardless of order): the target
-    // is the version the swap itself resolves, and the locked version may be
-    // a dev build the registry cannot resolve at all.
+    // pnpm verifies before the swap installs too. One union entry, not two:
+    // pnpm 11.5.x–11.7.x honour only the first entry per package, so a
+    // second entry for the locked version is ignored there (issue #1605).
     writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.11.2'\n")
     outcome = ensureProfileReleaseAgeExclude('tui', '0.12.0', '0.11.2')
     text = readFileSync(yamlPath, 'utf8')
     check(
-      'releaseAge: same-day double release exempts locked + target (#1205)',
+      'releaseAge: same-day double release exempts locked + target in one entry (#1205, #1605)',
       outcome !== undefined && outcome.changed === true &&
-        text.includes("- 'x@1.0.0'") &&
-        text.includes("- '@deepseek-harness-tui/dsh-tui@0.11.2'") &&
-        text.includes("- '@deepseek-harness-tui/dsh-tui@0.12.0'") &&
-        text.indexOf("- '@deepseek-harness-tui/dsh-tui@0.12.0'") <
-          text.indexOf("- '@deepseek-harness-tui/dsh-tui@0.11.2'"),
+        JSON.stringify(outcome.entries) === JSON.stringify(['x@1.0.0', '@deepseek-harness-tui/dsh-tui@0.12.0 || 0.11.2']) &&
+        text.includes("minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.12.0 || 0.11.2'\n") &&
+        (text.match(/@deepseek-harness-tui\/dsh-tui@/g) ?? []).length === 1,
       `${JSON.stringify(outcome)} :: ${text}`,
     )
     const doubleBefore = readFileSync(yamlPath, 'utf8')
@@ -520,10 +516,21 @@ check(
     check(
       'releaseAge: older own entry dropped once no longer needed',
       outcome !== undefined && outcome.changed === true &&
-        text.includes("- 'x@1.0.0'") &&
-        text.includes("- '@deepseek-harness-tui/dsh-tui@0.12.0'") &&
-        text.includes("- '@deepseek-harness-tui/dsh-tui@0.13.0'") &&
-        !text.includes('0.11.2'),
+        text.includes("minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.13.0 || 0.12.0'\n") &&
+        (text.match(/@deepseek-harness-tui\/dsh-tui@/g) ?? []).length === 1,
+      `${JSON.stringify(outcome)} :: ${text}`,
+    )
+
+    // Case 3g: the pre-#1605 two-entry pair collapses into the union, which
+    // pnpm 11.5.x–11.7.x read whole.
+    writeFileSync(yamlPath, "minimumReleaseAgeExclude:\n  - '@deepseek-harness-tui/dsh-tui@0.16.1'\n  - '@deepseek-harness-tui/dsh-tui@0.16.0'\n  - 'x@1.0.0'\n")
+    outcome = ensureProfileReleaseAgeExclude('tui', '0.16.1', '0.16.0')
+    text = readFileSync(yamlPath, 'utf8')
+    check(
+      'releaseAge: legacy two-entry pair rewritten as one union entry (#1605)',
+      outcome !== undefined && outcome.changed === true &&
+        text.includes("minimumReleaseAgeExclude:\n  - 'x@1.0.0'\n  - '@deepseek-harness-tui/dsh-tui@0.16.1 || 0.16.0'\n") &&
+        (text.match(/@deepseek-harness-tui\/dsh-tui@/g) ?? []).length === 1,
       `${JSON.stringify(outcome)} :: ${text}`,
     )
 
