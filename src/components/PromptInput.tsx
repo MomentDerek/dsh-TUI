@@ -1127,7 +1127,15 @@ export function PromptInput({
   // tell the caller to clear it.
   const lastFill = React.useRef<string | null>(null)
   React.useLayoutEffect(() => {
-    if (fillText && fillText !== lastFill.current) {
+    // The caller clears a fill once it lands (`fillText` returns to null).
+    // Drop the dedupe key with it: keeping the key past the clear made the
+    // next recall of the SAME text look like a duplicate re-render and
+    // silently swallowed it (#1665).
+    if (!fillText) {
+      lastFill.current = null
+      return
+    }
+    if (fillText !== lastFill.current) {
       lastFill.current = fillText
       syncImageGeneration()
       discardDraftImages()
