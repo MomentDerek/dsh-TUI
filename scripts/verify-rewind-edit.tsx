@@ -159,10 +159,16 @@ async function verify(fullscreen: boolean, columns: number, entry: 'slash' | 'es
    * can carry the same text, so a stale frame after a session swap makes
    * `promptShows` true while the composer is still empty; the same-text
    * rewind regression must read the composer itself.
+   *
+   * Compare its CONTENT, not a substring: `includes` also accepted a wrong
+   * refill (`hihi` for `hi`). The row is `⌸ ❯ <padded value>⛶`; drop the
+   * session-entry control, the prompt glyph, the padding and the expand
+   * affordance before comparing.
    */
   const composerShows = (text: string) => {
     const rows = viewportLines(terminal).filter(line => /^\s*(?:⌸\s*)?❯/u.test(line))
-    return rows.length > 0 && rows[rows.length - 1]!.includes(text)
+    const row = rows.at(-1)
+    return row !== undefined && row.replace(/^\s*(?:⌸\s*)?❯\s*/u, '').replace(/\s*⛶$/u, '') === text
   }
   const enter = async () => {
     await sleep(120) // 固定窗:墙钟 Enter deduplication is 80 ms in both Chat and PromptInput
@@ -206,10 +212,10 @@ async function verify(fullscreen: boolean, columns: number, entry: 'slash' | 'es
       }
       await rewindSame(1)
       await enter()
-      assert.ok(await settled(() => delivered.length === 2 && !channel.working), 'same-text unchanged prompt delivered')
+      assert.ok(await settled(() => delivered.length === 2 && delivered.every(item => item.text === 'hi') && !channel.working), 'same-text unchanged prompt delivered')
       await rewindSame(2)
       await enter()
-      assert.ok(await settled(() => delivered.length === 3 && !channel.working), 'same-text restored prompt delivered again')
+      assert.ok(await settled(() => delivered.length === 3 && delivered.every(item => item.text === 'hi') && !channel.working), 'same-text restored prompt delivered again')
       console.log(`PASS rewind same text twice (${fullscreen ? 'fullscreen' : 'inline'}, ${columns} columns)`)
       return
     }
