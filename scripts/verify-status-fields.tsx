@@ -691,17 +691,25 @@ try {
       statusRow(outside).includes('app→') && statusRow(outside).includes('other/repo'),
       JSON.stringify(statusRow(outside)))
     // A narrow footer is the tightest budget: the anchor must survive even
-    // when the target has to truncate, and the row must stay inside the
-    // terminal (FieldLine truncates instead of wrapping).
-    const narrow = async (target: string): Promise<string> =>
-      statusRow(await capture(40, {}, moved(target)))
+    // when the target has to truncate, and the footer must stay one line.
+    // `statusRow` alone cannot prove the second half: a wrapped continuation
+    // leaves the MODELX line and its anchor intact, and every viewport line is
+    // at most the terminal width. Inspect the whole viewport instead: only
+    // the status row may carry text.
+    const narrow = async (target: string): Promise<{ row: string; lines: readonly string[] }> => {
+      const lines = await capture(40, {}, moved(target))
+      return { row: statusRow(lines), lines }
+    }
     const narrowInside = await narrow('/w/app/src/ink')
     const narrowDeep = await narrow('/w/app/' + 'nested/'.repeat(6) + 'leaf')
     const narrowOutside = await narrow('/other/' + 'nested/'.repeat(6) + 'leaf')
-    check('R16 narrow footer keeps the anchor and fits the row',
-      narrowInside.includes('app›') && narrowDeep.includes('app›') && narrowOutside.includes('app→')
-      && [narrowInside, narrowDeep, narrowOutside].every(row => stringWidth(row) <= 40),
-      JSON.stringify({ narrowInside, narrowDeep, narrowOutside }))
+    const oneFooterRow = (sample: { row: string; lines: readonly string[] }): boolean =>
+      sample.lines.every(line => line === sample.row || line.trim() === '')
+    check('R16 narrow footer keeps the anchor on one line',
+      narrowInside.row.includes('app›') && narrowDeep.row.includes('app›') && narrowOutside.row.includes('app→')
+      && [narrowInside, narrowDeep, narrowOutside].every(oneFooterRow),
+      JSON.stringify([narrowInside, narrowDeep, narrowOutside].map(sample =>
+        sample.lines.filter(line => line.trim() !== ''))))
   }
 
   // R13 — stable registration order inside one slot.
