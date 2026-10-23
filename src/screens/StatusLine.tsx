@@ -181,7 +181,7 @@ function FieldLine({
     <>
       {visible.map((part, index) => (
         <React.Fragment key={part.key}>
-          {index > 0 ? <Text dimColor> · </Text> : null}
+          {index > 0 ? <Text dimColor wrap="truncate"> · </Text> : null}
           <Box
             flexShrink={part.flexShrink ?? 1}
             {...(part.id === undefined ? {} : hoverProps(part.id))}
