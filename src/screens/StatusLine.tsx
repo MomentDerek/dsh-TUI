@@ -151,6 +151,10 @@ type FieldPart = {
   /** Click target (fullscreen mouse): the backend mode segment opens the
    *  /permission picker — the same route the launchpad param row takes. */
   onClick?: () => void
+  /** Flex shrink weight; defaults to 1. 0 protects a field the row must not
+   *  lose under pressure (the model); the long cwd field gives up width
+   *  before the rest. */
+  flexShrink?: number
 }
 
 /**
@@ -179,7 +183,7 @@ function FieldLine({
         <React.Fragment key={part.key}>
           {index > 0 ? <Text dimColor> · </Text> : null}
           <Box
-            flexShrink={1}
+            flexShrink={part.flexShrink ?? 1}
             {...(part.id === undefined ? {} : hoverProps(part.id))}
             {...(part.onClick === undefined ? {} : { onClick: part.onClick })}
           >
@@ -509,7 +513,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
   const builtinLeft: FieldPart[] = [
     ...(startingPart !== undefined ? [startingPart] : []),
     ...(statusBar.model
-      ? [{ key: 'model', id: 'model' as const, ...(modelPicker === undefined ? {} : { onClick: modelPicker.onOpen }), node: <Text color="inactiveShimmer">{channel.modelDisplay ?? channel.model}</Text> }]
+      ? [{ key: 'model', id: 'model' as const, flexShrink: 0, ...(modelPicker === undefined ? {} : { onClick: modelPicker.onOpen }), node: <Text color="inactiveShimmer">{channel.modelDisplay ?? channel.model}</Text> }]
       : []),
     ...(tpsPart !== undefined ? [tpsPart] : []),
     ...(jobsPart !== undefined ? [jobsPart] : []),
@@ -606,6 +610,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
       ? [{
           key: 'cwd',
           id: 'cwd' as const,
+          flexShrink: 2,
           node: (
             <Text color="inactiveShimmer">
               {statusBar.compact ? compactCwd(channel, displayCwd) : displayCwd}

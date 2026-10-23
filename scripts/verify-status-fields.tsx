@@ -690,6 +690,18 @@ try {
     check('R16 outside move shows project→path',
       statusRow(outside).includes('app→') && statusRow(outside).includes('other/repo'),
       JSON.stringify(statusRow(outside)))
+    // A narrow footer is the tightest budget: the anchor must survive even
+    // when the target has to truncate, and the row must stay inside the
+    // terminal (FieldLine truncates instead of wrapping).
+    const narrow = async (target: string): Promise<string> =>
+      statusRow(await capture(40, {}, moved(target)))
+    const narrowInside = await narrow('/w/app/src/ink')
+    const narrowDeep = await narrow('/w/app/' + 'nested/'.repeat(6) + 'leaf')
+    const narrowOutside = await narrow('/other/' + 'nested/'.repeat(6) + 'leaf')
+    check('R16 narrow footer keeps the anchor and fits the row',
+      narrowInside.includes('app›') && narrowDeep.includes('app›') && narrowOutside.includes('app→')
+      && [narrowInside, narrowDeep, narrowOutside].every(row => stringWidth(row) <= 40),
+      JSON.stringify({ narrowInside, narrowDeep, narrowOutside }))
   }
 
   // R13 — stable registration order inside one slot.
