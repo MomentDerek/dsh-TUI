@@ -23,6 +23,12 @@ const sessionsRoot = join(root, 'sessions')
 const project = join(root, 'app')
 const worktree = join(project, '.agents', 'worktrees', 'try')
 mkdirSync(worktree, { recursive: true })
+// The DSH skill filesystem anchors project roots on a `.git` marker. Without
+// these, an ancestor checkout (a local TMPDIR can live inside one) becomes the
+// project root and shadows this fixture; a real project and linked worktree
+// both carry one.
+mkdirSync(join(project, '.git'), { recursive: true })
+writeFileSync(join(worktree, '.git'), '# fixture worktree marker\n')
 writeFileSync(join(project, 'project-only.txt'), '')
 writeFileSync(join(worktree, 'worktree-only.txt'), '')
 mkdirSync(join(worktree, '.dsh', 'skills', 'worktree-only-skill'), { recursive: true })
