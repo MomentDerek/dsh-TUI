@@ -35,7 +35,7 @@ import { MiniWake } from '../components/trajectory/MiniWake.js'
 import { getTheme, isLightThemeActive } from '../theme.js'
 import { ContextBarView } from '../components/ContextBarView.js'
 import { TooltipTarget } from '../components/Tooltip.js'
-import { formatProject } from '../sessions/format.js'
+import { displayWorkingDirectory, formatProject } from '../sessions/format.js'
 import { homeDir } from '../utils/paths.js'
 import {
   USED_SEGMENTS,
@@ -313,9 +313,10 @@ export function StatusLine({
     visibleFields.filter(field => field.slot === slot).map(toFieldPart)
   // Provider workspaces expose a remote display path alongside a host alias;
   // only the local target has identical cwd/displayCwd values to fold.
+  const currentCwd = displayWorkingDirectory(channel)
   const displayCwd = channel.displayCwd === channel.cwd
-    ? formatProject(channel.displayCwd, homeDir())
-    : channel.displayCwd
+    ? formatProject(currentCwd, homeDir())
+    : currentCwd
   const usage = channel.lastUsage
   // ONE occupancy reading behind every ctx surface in this footer (the field,
   // its hover gauge, the segmented bar, the working line's pressure prefix):
@@ -1121,7 +1122,7 @@ function buildHoverDetail(
     case 'cwd':
       return (
         <Text wrap="truncate">
-          {dim('cwd ')}{channel.displayCwd}
+          {dim('cwd ')}{displayWorkingDirectory(channel)}
         </Text>
       )
     case 'title':

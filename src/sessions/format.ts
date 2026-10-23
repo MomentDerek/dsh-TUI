@@ -7,6 +7,7 @@
  *
  * @module @deepseek-harness-tui/dsh-tui/sessions/format
  */
+import { sessionWorkingDirectory } from '../channel/working-directory.js'
 import { t } from '../i18n.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import { getGraphemeSegmenter } from '../utils/intl.js'
@@ -284,6 +285,14 @@ export function formatProject(cwd: string, home: string): string {
     return suffix.length === 0 ? '~' : `~${suffix.startsWith('/') ? suffix : `/${suffix}`}`
   }
   return normalized
+}
+
+/** The session's current directory for display: the host's `displayCwd`
+ *  until the session moves away from its project (DSH
+ *  `working-directory/change`), then the directory it moved to. */
+export function displayWorkingDirectory(channel: { readonly cwd: string; readonly displayCwd: string; readonly workingDirectory: string | undefined }): string {
+  const current = sessionWorkingDirectory(channel)
+  return current === channel.cwd ? channel.displayCwd : current
 }
 
 /** Compact final path segment for the working-directory menu. */
