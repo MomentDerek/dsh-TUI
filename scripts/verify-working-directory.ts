@@ -48,6 +48,7 @@ const [
   SkillFileSystem,
   { default: CommandRegistry },
   { createChannel },
+  { compactWorkingDirectory },
 ] = await Promise.all([
   import('@deepseek-ai/cordis'),
   import('@deepseek-ai/dsh-agent'),
@@ -63,6 +64,7 @@ const [
   import('@deepseek-ai/dsh-skill-filesystem'),
   import('@deepseek-ai/dsh-commands'),
   import('../src/dsh-adapter/channel.js'),
+  import('../src/sessions/format.js'),
 ])
 
 const JsonlSessionPersistence = 'default' in JsonlSessionPersistenceModule
@@ -105,6 +107,7 @@ try {
   const channel = createChannel(original, handle.agent, { handle, cwd: project, activity: false })
   channels.push(channel)
   assert.equal(channel.workingDirectory, undefined, 'a session that never moved records no directory')
+  assert.equal(compactWorkingDirectory(channel, root), undefined, 'an unmoved session shows the bare project name')
   assert.ok(await completes(channel, 'project-only.txt'), '@ completion starts in the project')
   assert.ok(await listsSkill(channel, false), 'the project lists no worktree skill')
 
@@ -112,10 +115,14 @@ try {
   move(session, project)
   assert.equal(channel.workingDirectory, project)
   assert.equal(channel.cwd, project)
+  assert.equal(compactWorkingDirectory(channel, root), undefined, 'a move to the project root shows no breadcrumb')
 
   move(session, worktree)
   assert.equal(channel.workingDirectory, worktree, 'a live move reaches the channel')
   assert.equal(channel.cwd, project, 'project identity stays the opening directory')
+  assert.deepEqual(compactWorkingDirectory(channel, root), {
+    anchor: 'app', separator: '›', target: '.agents/worktrees/try',
+  }, 'the compact footer anchors the worktree under its project')
   assert.ok(await completes(channel, 'worktree-only.txt'), '@ completion follows the move')
   assert.ok(!(await completes(channel, 'project-only.txt')), '@ completion no longer lists the project root')
   assert.ok(await listsSkill(channel, true), 'skill commands are re-read in the new directory')

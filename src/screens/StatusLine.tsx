@@ -35,7 +35,7 @@ import { MiniWake } from '../components/trajectory/MiniWake.js'
 import { getTheme, isLightThemeActive } from '../theme.js'
 import { ContextBarView } from '../components/ContextBarView.js'
 import { TooltipTarget } from '../components/Tooltip.js'
-import { displayWorkingDirectory, formatProject } from '../sessions/format.js'
+import { compactWorkingDirectory, displayWorkingDirectory, formatProject } from '../sessions/format.js'
 import { homeDir } from '../utils/paths.js'
 import {
   USED_SEGMENTS,
@@ -608,7 +608,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
           id: 'cwd' as const,
           node: (
             <Text color="inactiveShimmer">
-              {statusBar.compact ? basename(displayCwd) : displayCwd}
+              {statusBar.compact ? compactCwd(channel, displayCwd) : displayCwd}
             </Text>
           ),
         }]
@@ -1165,4 +1165,19 @@ export function formatSelectionBadge(
 function basename(path: string): string {
   const parts = path.split(/[\\/]/)
   return parts[parts.length - 1] ?? path
+}
+
+/** Compact footer cwd: the plain project name until the session moves, then a
+ *  breadcrumb that keeps the project as the anchor (`project›relative`) and
+ *  names the directory a move out of the project landed in. The anchor is
+ *  dimmed so the relative half reads as position, not as part of the name. */
+function compactCwd(channel: Channel, displayCwd: string): React.ReactNode {
+  const breadcrumb = compactWorkingDirectory(channel, homeDir())
+  if (breadcrumb === undefined) return basename(displayCwd)
+  return (
+    <>
+      <Text dimColor>{breadcrumb.anchor}</Text>
+      {`${breadcrumb.separator}${breadcrumb.target}`}
+    </>
+  )
 }

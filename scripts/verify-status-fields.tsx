@@ -667,6 +667,31 @@ try {
     }
   }
 
+  // R16 — compact cwd keeps the project anchor once the session moves. The
+  // leaf alone (`ink`, `try`) says where the session is but not which project
+  // it belongs to; the breadcrumb keeps both.
+  {
+    const moved = (workingDirectory: string | undefined) => channelWith({}, {
+      cwd: '/w/app',
+      displayCwd: '/w/app',
+      workingDirectory,
+    })
+    const still = await capture(100, {}, moved(undefined))
+    const inside = await capture(100, {}, moved('/w/app/src/ink'))
+    const deep = await capture(100, {}, moved('/w/app/' + 'nested/'.repeat(6) + 'leaf'))
+    const outside = await capture(100, {}, moved('/other/repo'))
+    check('R16 unmoved session shows the bare project name',
+      statusRow(still).includes('app') && !statusRow(still).includes('›'),
+      JSON.stringify(statusRow(still)))
+    check('R16 in-project move shows project›relative',
+      statusRow(inside).includes('app›src/ink'), JSON.stringify(statusRow(inside)))
+    check('R16 deep path truncates from the left, keeping the anchor and leaf',
+      statusRow(deep).includes('app›…/nested/nested/nested/leaf'), JSON.stringify(statusRow(deep)))
+    check('R16 outside move shows project→path',
+      statusRow(outside).includes('app→') && statusRow(outside).includes('other/repo'),
+      JSON.stringify(statusRow(outside)))
+  }
+
   // R13 — stable registration order inside one slot.
   {
     const lines = await capture(100, {
