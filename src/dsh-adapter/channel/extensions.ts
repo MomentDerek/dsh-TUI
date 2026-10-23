@@ -624,6 +624,9 @@ export function attachDshExtensions(
     seedUpstreamRetry,
     retireAttachment: core.input.retireAttachment,
     onWorkingDirectoryChange: () => {
+      // The 1s poll also re-probes the new directory; starting it here drops
+      // the stale-branch window on a move.
+      core.refreshGitBranch()
       void refreshLoadedContext()
       void refreshSkillCommands()
     },
