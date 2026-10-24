@@ -15,6 +15,7 @@ import { createUserMessage, MessageId, type ContentBlock, type UserMessage } fro
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import type { AgentEvent, AgentEventMeta, PendingItem } from '../../agent/events.js'
 import type { AgentInput, AgentSession, AgentSessionStatus, CancelCause, SubmitPlacement } from '../../agent/session.js'
+import { t } from '../../i18n.js'
 import { isTokenDelta, tokenDeltaChars } from '../channel/usage.js'
 import type { ToolsRegistryLike } from '../channel/types.js'
 import { snapshotLiveSessionEvents } from '../compat/liveSession.js'
@@ -206,6 +207,19 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
           disposed = true
           listener([{ type: 'session.status', status: 'disposed' }], QUIET)
         }))
+        // Every listener here lives on `ctx`. When its fiber unloads (the
+        // dsh-tui row goes with the `agents` service it injects), they go
+        // with it, and the agent's closing `agent/status` / `agent/disposed`
+        // can no longer arrive: the screen would project the turn forever
+        // (#1651). Nothing can reach this agent through this session any
+        // more, so report it disposed. An unsubscribe has already cleared
+        // `active` when it releases this effect, so it reports nothing.
+        // Test doubles that serve only `on` have no fiber to follow.
+        own(ctx.effect?.(() => () => {
+          if (!active) return
+          disposed = true
+          listener([{ type: 'session.status', status: 'disposed' }], QUIET)
+        }, 'dsh-tui session listeners') ?? (() => undefined))
         /**
          * The inbox removed one message. Both events retire the pending entry;
          * the channel retires attached context only for a discard.
@@ -276,6 +290,9 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
     // and a synchronous throw reaches the caller synchronously (the input
     // pipeline rolls its bookkeeping back on it).
     submit(input: AgentInput, placement: SubmitPlacement) {
+      // A disposed agent can neither run nor report this input: refuse it
+      // instead of queuing a preview nothing will ever retire.
+      if (disposed) return Promise.resolve({ accepted: false, reason: t('input-session-disposed') })
       const message = messageFor(input)
       const queued = placement === 'steer' ? 'steer' : 'followup'
       pending.set(message.id, { id: message.id, text: input.text, placement: queued })

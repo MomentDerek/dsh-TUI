@@ -192,6 +192,7 @@ const dict = {
   'input-images-staged-adapted': { zh: '已附加 {{count}} 张图片 · {{adapted}} 张已适配', en: { one: 'Attached {{count}} image · {{adapted}} adapted', other: 'Attached {{count}} images · {{adapted}} adapted' } },
   'send-failed': { zh: '发送失败 · {{err}}', en: 'Send failed · {{err}}' },
   'input-not-accepted': { zh: '后端没有接受这条消息，请重试或检查会话状态', en: 'The backend did not accept this message; retry or check the session state' },
+  'input-session-disposed': { zh: '这个会话已经结束，消息未发送；用 /restart 恢复该会话，或 /new 开始新会话', en: 'This session has ended and the message was not sent; /restart resumes it, /new starts a new one' },
   // ── agent team: 用户发给子代理的消息，由父代理转发（模型可见） ──────
   'agent-message-native-envelope': { zh: '请通过 {{tool}} 将下面的消息发送给子代理 {{name}}（id: {{id}}）。不要代替子代理回复。\n\n{{text}}', en: 'Use {{tool}} to send the following message to subagent {{name}} (id: {{id}}). Do not answer on behalf of the subagent.\n\n{{text}}' },
   'agent-message-envelope': {
