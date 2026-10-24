@@ -17,7 +17,7 @@
  *      cancel window and tool count released) without any agent event [A1-A3]
  *   B. events the agent sends after the unload change nothing [B1]
  *   C. a submit after the unload is refused with the disposed reason: the
- *      agent sees no call and no preview is left queued [C1-C3]
+ *      agent sees no call and the text is held in the dock [C1-C3]
  *   D. a session unsubscribed before its context unloads reports nothing
  *      [D1]; a session on a context that stays is untouched [D2]
  *   E. the delivered `agent/disposed` path is unchanged, and a submit after
@@ -33,16 +33,22 @@
  *   H. on any backend's channel: a `dropped` input is held [H1]; held rows
  *      survive `/new` [H2] and the dock delivers each once to the new
  *      session [H3]; an interrupt's dock still ends with its session [H4]
+ *   I. texts a `/restart` carried over are parked as held rows [I1, I2]
+ *   R. the carry-over file is taken once, and only a file it wrote [R1-R4]
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
 import assert from 'node:assert/strict'
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
 import { createDshSession } from '../src/dsh-adapter/backend/session.js'
 import { createChannel } from '../src/dsh-adapter/channel.js'
+import { HELD_INPUTS_ENV, takeHeldInputs, writeHeldInputs } from '../src/heldInputs.js'
 import { setLang, t } from '../src/i18n.js'
 
 setLang('en')
@@ -129,12 +135,14 @@ const root = new Context()
 
   const notified = channel.notifications.length
   channel.submit('sent after the unload')
-  const refusal = t('input-session-disposed')
+  const refusal = t('input-refused-held', { reason: t('input-session-disposed') })
   check('C1 a submit after the unload is refused with the disposed reason',
     await settled(() => channel.notifications.slice(notified).some(item => item.text === refusal)),
     channel.notifications.map(item => item.text))
   check('C2 the agent never sees that input', calls.length === callsBefore, calls)
-  check('C3 no preview is left queued for it', channel.pending.length === pendingBefore && !channel.pending.some(item => item.text === 'sent after the unload'), channel.pending)
+  const refused = channel.pending.find(item => item.text === 'sent after the unload')
+  check('C3 the refused input is held in the dock, not queued and not lost',
+    channel.pending.length === pendingBefore + 1 && refused?.docked === true && refused.orphaned === true, channel.pending)
 
   const queued = channel.pending.find(item => item.text === 'queued while the turn runs')
   check('G1 the follow-up queued before the unload is held in the dock, with a notice',
@@ -145,6 +153,31 @@ const root = new Context()
     channel.deliverDocked() === 0 && channel.pending.some(item => item.id === queued?.id && item.docked === true)
       && calls.length === beforeSend && channel.notifications.some(item => item.text === t('input-dock-session-disposed')),
     { pending: channel.pending, calls })
+
+  const rows = channel.pending.length
+  check('I1 texts a /restart carried over are parked as held rows, blanks skipped, with a notice',
+    channel.holdInputs(['carried over', '   ']) === 1 && channel.pending.length === rows + 1
+      && channel.pending.at(-1)?.text === 'carried over' && channel.pending.at(-1)?.docked === true && channel.pending.at(-1)?.orphaned === true
+      && channel.notifications.at(-1)?.text === t('input-orphans-held', { count: 1 }),
+    channel.pending)
+  check('I2 nothing reaches the agent for them', calls.length === beforeSend, calls)
+}
+
+// ── R: the /restart carry-over file ──────────────────────────────────────
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-tui-held-'))
+  try {
+    check('R1 an empty queue writes nothing', writeHeldInputs(['', '  '], dir, 42) === undefined && readdirSync(dir).length === 0)
+    const env: NodeJS.ProcessEnv = { ...writeHeldInputs(['one', 'two\nlines', ' '], dir, 42) }
+    check('R2 the replacement takes the texts once, and the file and marker go', JSON.stringify(takeHeldInputs(env)) === '["one","two\\nlines"]'
+      && env[HELD_INPUTS_ENV] === undefined && readdirSync(dir).length === 0)
+    check('R3 a second take finds nothing', takeHeldInputs({ ...env }).length === 0)
+    const foreign = join(dir, 'notes.json')
+    writeFileSync(foreign, JSON.stringify({ texts: ['x'] }))
+    check('R4 a marker naming any other file is ignored and the file is kept', takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }).length === 0 && existsSync(foreign))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 }
 
 // ── F: own discards vs the kernel's ──────────────────────────────────────

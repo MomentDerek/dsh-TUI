@@ -79,7 +79,7 @@ export function createSessionResumeActions(
   },
   deps: {
     owner: Pick<ChannelOwner, 'current'>
-    binding: Pick<Binding, 'agent' | 'capture' | 'isCurrent' | 'prepare' | 'abandon' | 'adopt' | 'waitForDisposal'>
+    binding: Pick<Binding, 'agent' | 'session' | 'capture' | 'isCurrent' | 'prepare' | 'abandon' | 'adopt' | 'waitForDisposal'>
     /**
      * Adopt an agent this process already has live. `/resume` uses it so a
      * target that is already running here is re-attached in place (parking the
@@ -379,8 +379,10 @@ export function createSessionResumeActions(
     // default disposition disposes the handle that IS running, so a second
     // Enter on the `current` row stopped the live turn while reporting success.
     // `attachToAgent()` has always short-circuited here; this is the same rule
-    // for the unified screen's `/resume` path.
-    if (String(sessionId) === String(entrySession.id)) return { ok: true }
+    // for the unified screen's `/resume` path. A disposed foreground (its
+    // agent unloaded under the screen, #1651) has nothing running: resuming
+    // its own id reopens the log like any other disk resume.
+    if (String(sessionId) === String(entrySession.id) && deps.binding.session.status !== 'disposed') return { ok: true }
     // Switching away starts disposal without blocking the synchronous commit.
     // Do not adopt that closing Agent (or reopen its still-held JSONL writer).
     await deps.binding.waitForDisposal(sessionId)

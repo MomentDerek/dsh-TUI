@@ -192,7 +192,9 @@ const dict = {
   'input-images-staged-adapted': { zh: '已附加 {{count}} 张图片 · {{adapted}} 张已适配', en: { one: 'Attached {{count}} image · {{adapted}} adapted', other: 'Attached {{count}} images · {{adapted}} adapted' } },
   'send-failed': { zh: '发送失败 · {{err}}', en: 'Send failed · {{err}}' },
   'input-not-accepted': { zh: '后端没有接受这条消息，请重试或检查会话状态', en: 'The backend did not accept this message; retry or check the session state' },
-  'input-session-disposed': { zh: '这个会话已经结束，消息未发送；用 /restart 恢复该会话，或 /new 开始新会话', en: 'This session has ended and the message was not sent; /restart resumes it, /new starts a new one' },
+  'input-refused-held': { zh: '{{reason}}。消息已暂存：按 ↑ 编辑', en: '{{reason}}. The message is held: ↑ to edit' },
+  'session-reattached': { zh: '会话服务已恢复，已重新打开这个会话', en: 'The session services are back; this session was reopened' },
+  'input-session-disposed': { zh: '这个会话已经结束，/new 开新会话或 /restart 恢复该会话', en: 'This session has ended; /new starts a new one, /restart resumes it' },
   // ── agent team: 用户发给子代理的消息，由父代理转发（模型可见） ──────
   'agent-message-native-envelope': { zh: '请通过 {{tool}} 将下面的消息发送给子代理 {{name}}（id: {{id}}）。不要代替子代理回复。\n\n{{text}}', en: 'Use {{tool}} to send the following message to subagent {{name}} (id: {{id}}). Do not answer on behalf of the subagent.\n\n{{text}}' },
   'agent-message-envelope': {
@@ -776,7 +778,7 @@ const dict = {
   'reload-kind-activity': { zh: '活动指示', en: 'activity' },
   // ── /restart (process restart with session resume) ────────────────────
   'restart-starting': { zh: '正在重启 dsh-tui，完成后自动恢复当前会话……', en: 'Restarting dsh-tui. The session resumes when it comes back…' },
-  'restart-during-turn': { zh: '当前回合仍在运行，正在中断重启；排队输入不会保留。若进程无法正常收尾，退出后会打印恢复本会话的命令。', en: 'The current turn is still running; interrupting and restarting. Queued input is not kept. If the process cannot shut down cleanly it exits and prints the command that resumes this session.' },
+  'restart-during-turn': { zh: '当前回合仍在运行，正在中断重启；排队输入会在重启后暂存，不会自动发送。若进程无法正常收尾，退出后会打印恢复本会话的命令（排队输入不保留）。', en: 'The current turn is still running; interrupting and restarting. Queued input is held after the restart, not sent automatically. If the process cannot shut down cleanly it exits and prints the command that resumes this session (queued input is not kept).' },
   'restart-unavailable': { zh: '当前运行方式不支持进程内重启（未挂载重启通道）。', en: 'Restart is unavailable in this launch mode (no restart channel mounted).' },
   'streaming-folded': { zh: '…（前 {{count}} 字符流式期间已折叠，落定后完整显示）', en: '…(first {{count}} chars folded while streaming; full text renders once the turn settles)' },
   'mermaid-too-wide': { zh: '（图需要 {{width}} 列，当前宽度不足，显示源码）', en: '(diagram needs {{width}} columns; showing the source)' },
@@ -1044,14 +1046,16 @@ const dict = {
   'input-pending-steer-label': { zh: '插话 · 下一步送达', en: 'Steer · delivered next' },
   'input-pending-queue-label': { zh: '排队 · 回合结束后送达', en: 'Queued · delivered after the turn' },
   'input-pending-actions-hint': { zh: '撤回 · Esc 打断并暂存排队消息', en: 'Retract · Esc interrupts and holds the queue' },
+  'input-pending-actions-hint-disposed': { zh: '撤回', en: 'Retract' },
   'input-pending-dock-label': { zh: '已暂存 · 打断后保留，不会自动发送', en: 'Held · kept after the interrupt, not sent automatically' },
   'input-pending-orphan-label': { zh: '已暂存 · 未送达，不会自动发送', en: 'Held · not delivered, not sent automatically' },
   'input-pending-dock-hint': { zh: '按 ↑ 编辑排队消息，⏎ 立即发送', en: 'Press ↑ to edit queued messages, ⏎ to send now' },
+  'input-pending-dock-hint-disposed': { zh: '会话已结束：按 ↑ 编辑暂存消息，/new 开新会话后 ⏎ 发送', en: 'Session ended: press ↑ to edit held messages, ⏎ sends them after /new' },
   'input-pending-dock-hint-working': { zh: '按 ↑ 编辑排队消息，回合结束后 ⏎ 发送', en: 'Press ↑ to edit queued messages, ⏎ sends after the turn' },
   'input-dock-sent': { zh: '已发送 {{n}} 条暂存消息', en: 'Sent {{n}} held message(s)' },
   'input-dock-swapped': { zh: '已交换：草稿暂存，所点消息回到输入框（Ctrl+Z 换回）', en: 'Swapped: the draft is held and the picked message is back in the input (Ctrl+Z swaps back)' },
   'input-orphans-held': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑，⏎ 发送', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit, ⏎ to send', other: '{{count}} queued messages were not delivered and are held: ↑ to edit, ⏎ to send' } },
-  'input-dock-session-disposed': { zh: '会话已结束，暂存消息仍保留；/new 开新会话后按 ⏎ 发送（/restart 不保留暂存消息）', en: 'This session has ended; held messages are kept. Start one with /new, then ⏎ sends them (/restart does not keep them)' },
+  'input-dock-session-disposed': { zh: '会话已结束，暂存消息仍保留；/new 开新会话或 /restart 恢复该会话后按 ⏎ 发送', en: 'This session has ended; held messages are kept. After /new or /restart, ⏎ sends them' },
   'input-dock-confirming': { zh: '{{n}} 条暂存消息还在等打断完成，稍后再发送或编辑', en: '{{n}} held message(s) are waiting for the interrupt to finish; send or edit again in a moment' },
   // U+30FB (not U+00B7): the separator participates in the folded-chip
   // width arithmetic; U+00B7 is EA-ambiguous and paints 2 cells on CJK

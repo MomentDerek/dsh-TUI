@@ -4447,11 +4447,11 @@ export function PromptInput({
                   // 点击提示行 = 全部发送（与空输入 ⏎ 同路径）
                   onClick={() => { sendDocked() }}
                 >
-                  <Text dimColor>{' '}{t(channel.working ? 'input-pending-dock-hint-working' : 'input-pending-dock-hint')}</Text>
+                  <Text dimColor>{' '}{t(channel.status === 'disposed' ? 'input-pending-dock-hint-disposed' : channel.working ? 'input-pending-dock-hint-working' : 'input-pending-dock-hint')}</Text>
                 </Box>
               </Box>
             )}
-            <Text dimColor>Alt+↑ {t('input-pending-actions-hint')}</Text>
+            <Text dimColor>Alt+↑ {t(channel.status === 'disposed' ? 'input-pending-actions-hint-disposed' : 'input-pending-actions-hint')}</Text>
           </Box>
         )}
         {fileOverlayOpen && (

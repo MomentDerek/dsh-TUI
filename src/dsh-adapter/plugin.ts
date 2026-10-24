@@ -61,6 +61,7 @@ import { clearResumeTarget, resumeTargetFromArgv, stripResumeArgs, writeResumeTa
 import { cmdlineArgsOf, initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
+import { takeHeldInputs, writeHeldInputs } from '../heldInputs.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
 import { DSH_BACKEND_ID, HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
@@ -96,7 +97,7 @@ import type { DshAuthService } from './oauth/service.js'
 import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspaces.js'
 import { trackHostSettingsSection, type TuiSettingsField, type TuiSettingsFieldWrite, type TuiSettingsSection } from './settings-sections.js'
-import { compositionRoot, withHostRootCapability } from './host-access.js'
+import { compositionRoot, outsideActivation, withHostRootCapability } from './host-access.js'
 import { armAdmissionLoader } from './admission-loader.js'
 import { assembleBackendsFromProfile } from './backend-assembly.js'
 import { disposeRootSettled } from './root-dispose.js'
@@ -2219,6 +2220,20 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // The standalone entry has no `ctx.cmdlineArgs` (its argv is the app's); a
   // replacement keeps the arguments but the first process sent their prompt.
   const initialPrompt = launchPromptSent ? '' : initialPromptFromCmdlineArgs(cmdlineArgs ?? process.argv.slice(2))
+  // The queue a /restart carried over: held, never auto-sent (heldInputs.ts).
+  const heldInputs = takeHeldInputs()
+  if (heldInputs.length > 0) {
+    if (channel.ready) {
+      channel.holdInputs(heldInputs)
+    } else {
+      const unsubscribe = channel.subscribe(() => {
+        if (!channel.ready) return
+        unsubscribe()
+        channel.holdInputs(heldInputs)
+      })
+      ctx.effect(() => unsubscribe, 'dsh-tui held inputs after startup')
+    }
+  }
   if (initialPrompt) {
     // A placeholder session refuses sends and nothing replays them after
     // adoption: hold the prompt until the channel is ready.
@@ -2407,17 +2422,20 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           })
         }
         refreshLastRunRecord()
+        // The queue dies with this process (the kernel records it canceled);
+        // the replacement parks the same texts as held dock rows (#1651).
+        const heldEnv = writeHeldInputs(channel.pending.map(item => item.text))
         void finishExit(
           ctx,
           instance,
           bootedFullscreen,
           // This line is the one the user actually sees before the terminal is
           // handed over (the composer's toast dies with the unmount): a
-          // mid-turn restart must say that the running turn and its queued
-          // input are dropped, not promise a clean resume.
+          // mid-turn restart must say that the running turn is interrupted,
+          // not promise a clean resume.
           t(channel.working ? 'restart-during-turn' : 'restart-starting'),
           undefined,
-          () => runRestart(ctx, profile, handoffSessionId(), handoffHint, { kernel: backendChoice }, exitSeam),
+          () => runRestart(ctx, profile, handoffSessionId(), handoffHint, { kernel: backendChoice, env: heldEnv }, exitSeam),
         )
         return
       }
@@ -2922,6 +2940,17 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         channel.pushLocal(t('startup-open-failed', { backend: backendLabel('dsh'), err: reason.split('\n')[0] ?? reason }), [hint])
       } catch {
       }
+    }
+    entrySlot.reattachDsh = () => {
+      if (compositionFailed || exited || !channel.ready || channel.status !== 'disposed') return false
+      // The resume path reopens the session on the entry's own context, so
+      // a later unload of the row can no longer take its listeners along. It
+      // runs as the entry's action: the row's activation only triggered it.
+      void outsideActivation(() => channel.resumeTo(channel.sessionId)).then(
+        result => { if (result.ok) notifyChannel(t('session-reattached')) },
+        (error: unknown) => { logForDebugging(`dsh-tui: reopening the session after its row came back failed (${error instanceof Error ? error.message : String(error)})`) },
+      )
+      return true
     }
     entrySlot.attachDsh = async (rowCtx, rowRuntimeConfig) => {
       const dshCtx = rowCtx as Context
@@ -3641,7 +3670,11 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
   // abort). Spawning the replacement then would race this process for the
   // session mount, so the only honest answer is the resume hint the user can
   // run after this process is gone.
+  // Held texts no replacement took (a stall, a failed spawn) do not stay on
+  // disk; one the replacement took is already gone.
+  const dropHeldInputs = (): void => { takeHeldInputs({ ...options.env }) }
   const stalled = (): void => {
+    dropHeldInputs()
     writeHandoffNotice(`\ndsh-tui restart timed out while stopping the current turn.${preservedSessionTail(sessionId, hint)}`)
     process.exit(1)
   }
@@ -3658,6 +3691,7 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
     void restartTui(sessionId, supervision).then(
       restartCode => {
         logRestartEvent('runRestart: restartTui resolved', { restartCode })
+        dropHeldInputs()
         if (restartCode !== 0) {
           writeHandoffNotice(
             `\ndsh-tui restart failed to spawn (exit ${restartCode}).${preservedSessionTail(sessionId, hint)}`,
@@ -3666,6 +3700,7 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
         process.exit(restartCode)
       },
       restartError => {
+        dropHeldInputs()
         const message = restartError instanceof Error ? restartError.message : String(restartError)
         logRestartEvent('runRestart: restartTui rejected', { message })
         writeHandoffNotice(

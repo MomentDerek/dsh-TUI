@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { AgentSession, CancelOutcome } from '../../agent/session.js'
 import { t } from '../../i18n.js'
 import { touchSession } from '../../sessionHistory.js'
-import type { ChannelState, ComposerImageRef, ComposerSubmission } from './types.js'
+import type { ChannelState, ComposerImageRef, ComposerSubmission, PendingMessage } from './types.js'
 
 export interface InputConvergence {
   cancelInFlight: boolean
@@ -41,7 +41,7 @@ export function createInputActions(
   /** Move the used session to the front of the `/resume` MRU (DSH session
    *  history); a backend whose sessions that list cannot open passes a no-op. */
   touch: (sessionId: string) => void = touchSession,
-): Pick<ChannelState, 'submit' | 'steer' | 'removePending' | 'cancel' | 'interruptAndDeliver' | 'interruptAndDock' | 'deliverDocked' | 'swapDockedForDraft'> {
+): Pick<ChannelState, 'submit' | 'steer' | 'removePending' | 'cancel' | 'interruptAndDeliver' | 'interruptAndDock' | 'deliverDocked' | 'swapDockedForDraft' | 'holdInputs'> {
   return {
     submit(text, images = []) {
       owner.assertActive()
@@ -321,6 +321,21 @@ export function createInputActions(
       ]
       state.emit()
       return true
+    },
+
+    holdInputs(texts: readonly string[]): number {
+      owner.assertActive()
+      const state = getState()
+      // Local ids like the swap's: no backend copy exists, so no inbox event
+      // can match these rows and no interrupt receipt covers them.
+      const held = texts.filter(text => text.trim() !== '').map((text): PendingMessage => ({
+        id: `dock-held-${randomUUID()}`, text, images: [], placement: 'followup', docked: true, orphaned: true,
+      }))
+      if (held.length === 0) return 0
+      state.pending = [...state.pending, ...held]
+      state.emit()
+      state.notify(t('input-orphans-held', { count: held.length }), { color: 'warning', timeoutMs: 8000 })
+      return held.length
     },
 
     interruptAndDeliver(inputs: readonly (string | ComposerSubmission)[]): number {

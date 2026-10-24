@@ -87,7 +87,7 @@ function fixture(hooks: Hooks = {}) {
     runtime: { mode: 'legacy', slices: [] },
   })
   return {
-    actions, binding, owner, target,
+    actions, binding, owner, target, source, ctx,
     get opens() { return opens }, get adoptedLive() { return adoptedLive },
     async close() { owner.dispose(); await ctx.fiber.dispose(); clearOwnMounts() },
   }
@@ -171,6 +171,21 @@ try {
       assert.equal(f.opens, 0)
       assert.equal(f.adoptedLive, 0)
       assertFree('registry replacement')
+    } finally { await f.close() }
+  })
+
+  await test('resuming the attached session is a no-op until it ends, then reopens it', async () => {
+    const f = fixture()
+    try {
+      assert.deepEqual(await f.actions.resumeTo('resume-source'), { ok: true })
+      assert.equal(f.opens, 0, 'a live foreground is never reopened')
+      // The agent went away under the screen (#1651): the session is disposed.
+      f.binding.session.subscribe(() => undefined)
+      f.ctx.emit('agent/disposed' as never, { agent: f.source } as never)
+      assert.equal(f.binding.session.status, 'disposed')
+      assert.equal((await f.actions.resumeTo('resume-source')).ok, true)
+      assert.equal(f.opens, 1, 'a disposed foreground reopens through the disk path')
+      assert.equal(f.binding.agent.session.id, targetId, 'the reopened session is adopted')
     } finally { await f.close() }
   })
 

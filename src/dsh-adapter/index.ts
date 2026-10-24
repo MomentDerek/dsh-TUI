@@ -507,6 +507,8 @@ export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promis
 function attachToEntry(ctx: Context, config: RuntimeConfig<Config>): void {
   const attach = takeEntryAttach()
   if (attach === undefined) {
+    // The previous row unloaded with the screen's session: reopen it here.
+    if (peekEntrySlot()?.reattachDsh?.() === true) return
     ctx.logger.warn('dsh-tui: the entry\'s screen already holds a DSH session; this dsh-tui row stays idle')
     return
   }
