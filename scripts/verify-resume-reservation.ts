@@ -68,7 +68,7 @@ function fixture(hooks: Hooks = {}) {
     },
   })
   const state = {
-    rows: [], agentId: source.id, sessionId: source.id, cwd: home,
+    rows: [], pending: [], agentId: source.id, sessionId: source.id, cwd: home,
     displayCwd: home, provider: 'test', model: 'test', status: 'idle', emit() {},
   } as Parameters<typeof createSessionResumeActions>[1]
   const actions = createSessionResumeActions(ctx, state, { provider: 'test', model: 'test' }, {

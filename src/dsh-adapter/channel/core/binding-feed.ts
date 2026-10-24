@@ -21,6 +21,7 @@ import type { AgentEvent, AgentEventMeta, AgentEventOf } from '../../../agent/ev
 import type { AgentSession } from '../../../agent/session.js'
 import { attachInteraction } from '../../../channel/interaction.js'
 import { createChannelProjection, type ChannelProjection, type ChannelProjectionDeps } from '../../../channel/projection.js'
+import { t } from '../../../i18n.js'
 import { logForDebugging } from '../../../utils/debug.js'
 import type { BindingCapture, ChannelBinding } from '../binding.js'
 import type { InputConvergence } from '../input-actions.js'
@@ -75,6 +76,8 @@ export function createSessionBatchRouter(deps: {
   onReset?(event: AgentEventOf<'session.reset'>): void
   ownsCompactionProgress?(): boolean
   warn(message: string): void
+  /** Tell the user about inputs held for them; absent = held silently. */
+  notify?: ChannelProjectionDeps['notify']
   taskCompletion?: ReturnType<typeof createTaskCompletion>
 }) {
   const reconcileRetiredProjection = (status: 'idle' | 'disposed'): void => {
@@ -88,11 +91,32 @@ export function createSessionBatchRouter(deps: {
     deps.projector.updateSpinnerMode()
   }
 
+  /**
+   * Hold previews no backend will run any more (#1651): the backend dropped
+   * them on its own (`ids`), or the session ended (`'all'`), possibly after
+   * its drop notices could no longer arrive. They join the dock, which never
+   * re-sends by itself, and stay across the switch to the next session.
+   */
+  const holdOrphans = (ids: ReadonlySet<string> | 'all'): void => {
+    let held = 0
+    let changed = false
+    deps.state.pending = deps.state.pending.map(item => {
+      if (item.orphaned === true || (ids !== 'all' && !ids.has(item.id))) return item
+      changed = true
+      if (item.docked !== true) held += 1
+      return { ...item, docked: true, orphaned: true }
+    })
+    if (!changed) return
+    if (held > 0) deps.notify?.(t('input-orphans-held', { count: held }), { color: 'warning', timeoutMs: 8000 })
+    deps.state.emit()
+  }
+
   /** `session.status` as the backend reports it. */
   const applyStatus = (status: 'idle' | 'running' | 'requires-action' | 'disposed'): void => {
     if (status === 'disposed') {
       deps.state.status = 'disposed'
       reconcileRetiredProjection('disposed')
+      holdOrphans('all')
       deps.state.emit()
       return
     }
@@ -109,7 +133,8 @@ export function createSessionBatchRouter(deps: {
    * delete the context before it is ever injected.
    */
   const applyPending = (event: AgentEventOf<'pending.changed'>): void => {
-    for (const messageId of event.discarded ?? []) deps.retireAttachment?.(messageId)
+    for (const messageId of [...event.discarded ?? [], ...event.dropped ?? []]) deps.retireAttachment?.(messageId)
+    if (event.dropped !== undefined && event.dropped.length > 0) holdOrphans(new Set(event.dropped))
     // A discard of a docked preview only drops the backend copy. The dock
     // (where an interrupt parks inputs on the channel side) owns the row, so
     // it stays until sent (`deliverDocked`) or retracted. A claim always
@@ -310,6 +335,7 @@ export function createBindingFeed(ctx: { readonly logger: ChannelHostLogger }, d
     projector,
     inputConvergence,
     retireAttachment: deps.retireAttachment,
+    notify: deps.projection.notify,
     ownsCompactionProgress: () => deps.hooks().ownsCompactionProgress?.() ?? false,
     ...(deps.onReset === undefined ? {} : { onReset: deps.onReset }),
     warn: message => ctx.logger.warn(message),

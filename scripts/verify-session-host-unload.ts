@@ -23,12 +23,24 @@
  *   E. the delivered `agent/disposed` path is unchanged, and a submit after
  *      it is refused too [E1, E2]
  *
+ * Queued inputs must not vanish with the session either:
+ *
+ *   G. the follow-up queued before the unload is held in the dock [G1], and
+ *      sending the dock while the session is gone keeps it [G2]
+ *   F. the DSH session tells its own discards (cancel, retraction) from the
+ *      kernel's (teardown, hook or parent cancel): only the latter go out as
+ *      `dropped` [F1-F3]
+ *   H. on any backend's channel: a `dropped` input is held [H1]; held rows
+ *      survive `/new` [H2] and the dock delivers each once to the new
+ *      session [H3]; an interrupt's dock still ends with its session [H4]
+ *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import type { AgentEvent } from '../src/agent/events.js'
+import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
+import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
 import { createDshSession } from '../src/dsh-adapter/backend/session.js'
 import { createChannel } from '../src/dsh-adapter/channel.js'
 import { setLang, t } from '../src/i18n.js'
@@ -123,6 +135,105 @@ const root = new Context()
     channel.notifications.map(item => item.text))
   check('C2 the agent never sees that input', calls.length === callsBefore, calls)
   check('C3 no preview is left queued for it', channel.pending.length === pendingBefore && !channel.pending.some(item => item.text === 'sent after the unload'), channel.pending)
+
+  const queued = channel.pending.find(item => item.text === 'queued while the turn runs')
+  check('G1 the follow-up queued before the unload is held in the dock, with a notice',
+    queued?.docked === true && queued.orphaned === true && channel.notifications.some(item => item.text === t('input-orphans-held', { count: 1 }) && item.text.startsWith('1 queued message was')),
+    { queued, notices: channel.notifications.map(item => item.text) })
+  const beforeSend = calls.length
+  check('G2 sending the dock while the session is gone keeps it and says why',
+    channel.deliverDocked() === 0 && channel.pending.some(item => item.id === queued?.id && item.docked === true)
+      && calls.length === beforeSend && channel.notifications.some(item => item.text === t('input-dock-session-disposed')),
+    { pending: channel.pending, calls })
+}
+
+// ── F: own discards vs the kernel's ──────────────────────────────────────
+{
+  const { agent } = stubAgent(root, 'discards')
+  const changes: AgentEvent[] = []
+  const session = createDshSession(root, { agent: agent as never, handle: undefined })
+  const release = session.subscribe(batch => { for (const event of batch) if (event.type === 'pending.changed') changes.push(event) })
+  const queue: string[] = []
+  const discard = (id: string): void => { root.emit('agent/inbox/discarded', { agent, message: { id } } as never) }
+  // The kernel reports a discard synchronously, inside the call that made it.
+  agent.followup = (message: { id: string }) => { queue.push(message.id) }
+  agent.cancel = () => { for (const id of queue.splice(0)) discard(id) }
+  agent.inbox.remove = ((id: string) => { const at = queue.indexOf(id); if (at < 0) return false; queue.splice(at, 1); discard(id); return true }) as never
+  const submit = async (text: string): Promise<string> => {
+    const id = `${text}-id`
+    await session.submit({ text, clientMessageId: id, native: { id, content: [{ type: 'text', text }] } } as never, 'followup')
+    return id
+  }
+  const kinds = (event: AgentEvent): string => event.type !== 'pending.changed' ? '' : Object.keys(event).filter(key => key === 'discarded' || key === 'dropped' || key === 'claimed').join()
+
+  const retracted = await submit('retract me')
+  session.capabilities.pendingRetraction!.remove(retracted)
+  check('F1 a retraction is the session\'s own discard', changes.length === 1 && kinds(changes[0]!) === 'discarded', changes)
+
+  await submit('interrupt me')
+  await session.cancel('interrupt')
+  check('F2 an interrupt drops its queue as the session\'s own discard', changes.length === 2 && kinds(changes[1]!) === 'discarded', changes)
+
+  const lost = await submit('lose me')
+  queue.splice(queue.indexOf(lost), 1)
+  discard(lost)
+  check('F3 a discard the session did not ask for goes out as dropped', changes.length === 3 && kinds(changes[2]!) === 'dropped'
+    && (changes[2] as { dropped?: readonly string[] }).dropped?.[0] === lost, changes)
+  release()
+}
+
+// ── H: held rows on any backend's channel, across /new ───────────────────
+{
+  interface Fake extends AgentSession {
+    readonly sent: string[]
+    emit(events: readonly AgentEvent[]): void
+  }
+  const fake = (sessionId: string): Fake => {
+    const listeners = new Set<(batch: readonly AgentEvent[], meta: AgentEventMeta) => void>()
+    const session: Fake = {
+      ref: { backendId: 'fake', sessionId },
+      cwd: '/tmp',
+      status: 'idle',
+      capabilities: { native: {} },
+      sent: [],
+      history: () => Promise.resolve([]),
+      subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
+      submit(input: AgentInput, _placement: SubmitPlacement) { session.sent.push(input.text); return Promise.resolve({ accepted: true }) },
+      cancel: () => Promise.resolve({ stillQueued: [], outcome: 'confirmed' }),
+      dispose: () => Promise.resolve(),
+      emit(events) { for (const listener of [...listeners]) listener(events, { replay: false, wake: 'sync' }) },
+    }
+    return session
+  }
+  const first = fake('33333333-3333-4333-8333-333333333333')
+  const opened: Fake[] = []
+  const bare = { on: () => () => undefined, get: () => undefined, logger: { warn() {}, info() {}, debug() {} } } as never
+  const channel = createChannel(bare, first, {
+    model: 'm', provider: '', cwd: '/tmp', activity: false,
+    openSession: () => { const next = fake(`44444444-4444-4444-8444-44444444444${opened.length}`); opened.push(next); return Promise.resolve(next) },
+  })
+  const idOf = (text: string): string | undefined => channel.pending.find(item => item.text === text)?.id
+  first.emit([{ type: 'turn.start', turn: 1, origin: 'user', time: 1 }])
+  channel.submit('dropped by the backend')
+  channel.submit('kept by an interrupt')
+  assert.ok(await settled(() => first.sent.length === 2), 'fixture: both inputs reached the first session')
+  const dropped = idOf('dropped by the backend')!
+  first.emit([{ type: 'pending.changed', items: [], dropped: [dropped] }])
+  const held = channel.pending.find(item => item.id === dropped)
+  check('H1 a dropped input is held in the dock, not retired', held?.docked === true && held.orphaned === true, channel.pending)
+
+  // An interrupt docks the other row the usual way: its dock is the session's.
+  assert.ok(channel.interruptAndDock() >= 1, 'fixture: the interrupt docked a row')
+  await tick()
+  first.emit([{ type: 'turn.end', turn: 1, reason: { kind: 'interrupted' }, time: 2 }])
+  assert.ok(await channel.newSession() === true && opened.length === 1, 'fixture: /new opened the next session')
+  check('H2 the held row survives /new', channel.pending.some(item => item.id === dropped && item.docked === true), channel.pending)
+  check('H4 an interrupt\'s dock still ends with its session', !channel.pending.some(item => item.text === 'kept by an interrupt'), channel.pending)
+  const next = opened[0]!
+  check('H3 the dock delivers the held row once, to the new session',
+    channel.deliverDocked() === 1 && await settled(() => next.sent.length === 1) && next.sent[0] === 'dropped by the backend'
+      && first.sent.length === 2 && !channel.pending.some(item => item.docked === true),
+    { next: next.sent, first: first.sent, pending: channel.pending })
 }
 
 // ── D: an unsubscribed session, and a session on a context that stays ────

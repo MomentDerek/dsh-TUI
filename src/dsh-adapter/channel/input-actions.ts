@@ -31,7 +31,7 @@ export interface InputConvergence {
   provisionalDockIds?: string[]
 }
 export function createInputActions(
-  getState: () => Pick<ChannelState, 'agentId' | 'pending' | 'cancelPending' | 'emit' | 'notify' | 'backendCapabilities'>,
+  getState: () => Pick<ChannelState, 'agentId' | 'pending' | 'cancelPending' | 'emit' | 'notify' | 'backendCapabilities' | 'status'>,
   getSession: () => AgentSession,
   owner: { assertActive(): void },
   input: InputConvergence,
@@ -266,6 +266,12 @@ export function createInputActions(
       const held = (id: string): boolean => input.provisionalDockIds?.includes(id) === true
       const docked = state.pending.filter(item => item.docked === true)
       if (docked.length === 0) return 0
+      // The session ended: nothing would run them, and a refused send would
+      // lose them. They stay docked for the next session.
+      if (state.status === 'disposed') {
+        state.notify(t('input-dock-session-disposed'), { color: 'warning', timeoutMs: 6000 })
+        return 0
+      }
       // Provisional rows are always the newest dock batches, so the confirmed
       // remainder is a FIFO prefix; holding the tail never reorders anyone.
       const ready = docked.filter(item => !held(item.id))

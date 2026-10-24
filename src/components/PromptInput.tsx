@@ -4426,7 +4426,7 @@ export function PromptInput({
             )}
             {dockCount > 0 && (
               <Box flexDirection="column">
-                <Text dimColor>⏸ {t('input-pending-dock-label')}</Text>
+                <Text dimColor>⏸ {t(dockedPending.every(item => item.orphaned === true) ? 'input-pending-orphan-label' : 'input-pending-dock-label')}</Text>
                 {dockedPending.slice(dockStart, dockEnd).map((item, index) => {
                   // The window maps to absolute dock indices: the click and
                   // the highlight name the same row the user sees.

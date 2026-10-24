@@ -1045,10 +1045,13 @@ const dict = {
   'input-pending-queue-label': { zh: '排队 · 回合结束后送达', en: 'Queued · delivered after the turn' },
   'input-pending-actions-hint': { zh: '撤回 · Esc 打断并暂存排队消息', en: 'Retract · Esc interrupts and holds the queue' },
   'input-pending-dock-label': { zh: '已暂存 · 打断后保留，不会自动发送', en: 'Held · kept after the interrupt, not sent automatically' },
+  'input-pending-orphan-label': { zh: '已暂存 · 未送达，不会自动发送', en: 'Held · not delivered, not sent automatically' },
   'input-pending-dock-hint': { zh: '按 ↑ 编辑排队消息，⏎ 立即发送', en: 'Press ↑ to edit queued messages, ⏎ to send now' },
   'input-pending-dock-hint-working': { zh: '按 ↑ 编辑排队消息，回合结束后 ⏎ 发送', en: 'Press ↑ to edit queued messages, ⏎ sends after the turn' },
   'input-dock-sent': { zh: '已发送 {{n}} 条暂存消息', en: 'Sent {{n}} held message(s)' },
   'input-dock-swapped': { zh: '已交换：草稿暂存，所点消息回到输入框（Ctrl+Z 换回）', en: 'Swapped: the draft is held and the picked message is back in the input (Ctrl+Z swaps back)' },
+  'input-orphans-held': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑，⏎ 发送', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit, ⏎ to send', other: '{{count}} queued messages were not delivered and are held: ↑ to edit, ⏎ to send' } },
+  'input-dock-session-disposed': { zh: '会话已结束，暂存消息仍保留；/new 开新会话后按 ⏎ 发送（/restart 不保留暂存消息）', en: 'This session has ended; held messages are kept. Start one with /new, then ⏎ sends them (/restart does not keep them)' },
   'input-dock-confirming': { zh: '{{n}} 条暂存消息还在等打断完成，稍后再发送或编辑', en: '{{n}} held message(s) are waiting for the interrupt to finish; send or edit again in a moment' },
   // U+30FB (not U+00B7): the separator participates in the folded-chip
   // width arithmetic; U+00B7 is EA-ambiguous and paints 2 cells on CJK

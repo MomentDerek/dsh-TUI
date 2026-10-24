@@ -90,6 +90,15 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
   let disposed = false
   /** Inputs this session queued that the inbox has not claimed or discarded. */
   const pending = new Map<string, PendingItem>()
+  /** Set while this session's own call (a cancel, a retraction) drops queued
+   *  inputs: the inbox reports those discards synchronously, inside the call.
+   *  Any other discard is the kernel's own (the agent's teardown, a hook or
+   *  parent cancel). */
+  let dropping = false
+  const dropOwn = <T>(drop: () => T): T => {
+    dropping = true
+    try { return drop() } finally { dropping = false }
+  }
 
   /**
    * One `session/event` listener per subscription period, shared by raw and
@@ -178,7 +187,7 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
     capabilities: {
       pendingRetraction: {
         remove(clientMessageId: string): boolean {
-          const removed = agent.inbox.remove(MessageId(clientMessageId))
+          const removed = dropOwn(() => agent.inbox.remove(MessageId(clientMessageId)))
           if (removed) pending.delete(clientMessageId)
           return removed
         },
@@ -222,7 +231,9 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
         }, 'dsh-tui session listeners') ?? (() => undefined))
         /**
          * The inbox removed one message. Both events retire the pending entry;
-         * the channel retires attached context only for a discard.
+         * the channel retires attached context only for a discard. A discard
+         * this session did not ask for goes out as `dropped`: the input never
+         * ran, and the channel keeps it for the user.
          * `agent/inbox/claimed` fires while the loop claims the batch, before
          * the resident `agent/pre-step` listener can append the attachment
          * (dsh-agent-loop: `inbox.claim()` → claimed event → `agent/pre-step`).
@@ -235,7 +246,9 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
           const items = [...pending.values()]
           listener([how === 'claimed'
             ? { type: 'pending.changed', items, claimed: [messageId] }
-            : { type: 'pending.changed', items, discarded: [messageId] }], QUIET)
+            : dropping
+              ? { type: 'pending.changed', items, discarded: [messageId] }
+              : { type: 'pending.changed', items, dropped: [messageId] }], QUIET)
         }
         own(ctx.on('agent/inbox/claimed', payload => retire(payload, 'claimed')))
         own(ctx.on('agent/inbox/discarded', payload => retire(payload, 'discarded')))
@@ -297,7 +310,7 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
       const queued = placement === 'steer' ? 'steer' : 'followup'
       pending.set(message.id, { id: message.id, text: input.text, placement: queued })
       try {
-        if (placement === 'now') agent.cancel({ kind: 'user' })
+        if (placement === 'now') dropOwn(() => agent.cancel({ kind: 'user' }))
         if (placement === 'steer') agent.steer(message)
         else agent.followup(message)
       } catch (error) {
@@ -314,7 +327,7 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
       // a switch/dispose never resumes the old queue. keepInbox is only for
       // the user-cancel and normal turn-end paths.
       if (cause === 'user') agent.cancel({ kind: 'user' }, { keepInbox: true })
-      else agent.cancel({ kind: 'user' })
+      else dropOwn(() => agent.cancel({ kind: 'user' }))
       // The kernel cancel settles its bookkeeping synchronously: the answer
       // is definitive either way (kept ids for a 'user' cancel, an emptied
       // queue otherwise).
