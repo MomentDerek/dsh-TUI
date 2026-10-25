@@ -51,6 +51,7 @@
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
+import './lib/fake-home.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
