@@ -1,19 +1,20 @@
 /**
  * `/restart` carry-over of the composer queue (#1651): the queued and held
- * texts the old process still showed are written to a per-process file whose
+ * texts the old process still showed are written to a per-restart file whose
  * path rides the replacement's env, and the replacement parks them as held
  * dock rows. The backend copies die with the old process (the kernel records
  * them as canceled), so nothing re-sends them until the user sends the dock.
  * Text only: staged images live in the old process's memory.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { DATA_DIR } from './utils/paths.js'
 
 /** env marker naming the file the replacement takes its held texts from. */
 export const HELD_INPUTS_ENV = 'DSH_TUI_HELD_INPUTS'
 
-const HELD_INPUTS_FILE = /^held-inputs-\d+\.json$/u
+const HELD_INPUTS_FILE = /^held-inputs-\d+-[0-9a-f]{12}\.json$/u
 /** A restart that stalled leaves its file for the printed resume command; one
  *  nobody resumed within this long is swept at a later launch. */
 const HELD_INPUTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
@@ -27,11 +28,13 @@ const HELD_INPUTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 export function writeHeldInputs(texts: readonly string[], dir: string = DATA_DIR, pid: number = process.pid): Record<string, string> | undefined {
   const kept = texts.filter(text => text.trim() !== '')
   if (kept.length === 0) return undefined
-  const file = join(dir, `held-inputs-${pid}.json`)
+  // Unique per restart: a stalled restart's file stays for its printed
+  // resume command, and a later process reusing the pid must not replace it.
+  const file = join(dir, `held-inputs-${pid}-${randomBytes(6).toString('hex')}.json`)
   try {
     mkdirSync(dir, { recursive: true })
     // The user's own prompt text: readable by them alone.
-    writeFileSync(file, JSON.stringify({ texts: kept }), { mode: 0o600 })
+    writeFileSync(file, JSON.stringify({ texts: kept }), { mode: 0o600, flag: 'wx' })
     return { [HELD_INPUTS_ENV]: file }
   } catch {
     return undefined

@@ -43,11 +43,14 @@
  *      draft swapped in for a held row is held too and survives /new [K2, K3];
  *      a held row keeps its images into the next session [K4]; an interrupt
  *      receipt that comes back after the session ended leaves it held [K5]
+ *   L. reopening the screen's own agent, still live under an ended session,
+ *      keeps the handle the screen holds [L1]
  *   R. the carry-over file is taken once, and only a file it wrote [R1-R4];
  *      only its owner can read it [R5]; a restart that ended early names it
  *      in the resume command (PowerShell form on Windows) [R6, R7]; the
  *      replacement holds what it took once its channel is ready [R8, R9]; a
- *      boot sweeps week-old files nobody resumed [R10]
+ *      boot sweeps week-old files nobody resumed [R10]; each restart writes a
+ *      file of its own, even under a reused pid [R11]
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
@@ -62,6 +65,7 @@ import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
 import { createDshSession } from '../src/dsh-adapter/backend/session.js'
 import { createChannel } from '../src/dsh-adapter/channel.js'
+import { createLiveAgentAdoption } from '../src/dsh-adapter/channel/session-live-adoption.js'
 import { adoptHeldInputs, HELD_INPUTS_ENV, heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../src/heldInputs.js'
 import { setLang, t } from '../src/i18n.js'
 
@@ -248,6 +252,14 @@ const root = new Context()
       readdirSync(dir))
     rmSync(fresh, { force: true })
     rmSync(unrelated, { force: true })
+    // A stalled restart's file outlives its process; a later one with the
+    // same pid writes its own.
+    const before = { ...writeHeldInputs(['before'], dir, 49) } as NodeJS.ProcessEnv
+    const reused = { ...writeHeldInputs(['after pid reuse'], dir, 49) } as NodeJS.ProcessEnv
+    check('R11 two restarts with the same pid keep separate files, each taken back by its own marker',
+      before[HELD_INPUTS_ENV] !== reused[HELD_INPUTS_ENV]
+        && JSON.stringify(takeHeldInputs(before)) === '["before"]' && JSON.stringify(takeHeldInputs(reused)) === '["after pid reuse"]',
+      { before: before[HELD_INPUTS_ENV], reused: reused[HELD_INPUTS_ENV] })
     const foreign = join(dir, 'notes.json')
     writeFileSync(foreign, JSON.stringify({ texts: ['x'] }))
     check('R4 a marker naming any other file is ignored and the file is kept', takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }).length === 0 && existsSync(foreign))
@@ -452,6 +464,28 @@ const root = new Context()
     exited?.docked === true && exited.orphaned === true
       && !lateNotices.includes(t('interrupt-failed')) && !lateNotices.includes(t('interrupt-unconfirmed')),
     { pending: interrupted.pending, lateNotices })
+}
+
+// ── L: reopening the screen's own agent, live under an ended session ─────
+{
+  // The row's reattach resumes the screen's own id; when its agent outlived
+  // the listeners, the live adoption must keep the handle the screen holds,
+  // or the switch's default disposal closes the agent it just adopted.
+  const own = { id: 'own', status: 'idle', session: { id: 'own', events: [], header: {} } }
+  const other = { id: 'other', status: 'idle', session: { id: 'other', events: [], header: {} } }
+  const ownHandle = { agent: own }
+  const parkedHandle = { agent: other }
+  const opened: unknown[] = []
+  const adopt = createLiveAgentAdoption({} as never, {
+    binding: { handle: ownHandle, switchTo: () => ({ ok: true }) },
+    openSession: (_agent: unknown, handle: unknown) => { opened.push(handle); return {} },
+    backgroundHandles: new Map([['other', parkedHandle]]),
+  } as never)
+  await adopt(own as never)
+  await adopt(other as never)
+  await adopt({ ...other, id: 'third' } as never)
+  check('L1 adopting the screen\'s own live agent keeps its handle; others take their parked handle or none',
+    opened[0] === ownHandle && opened[1] === parkedHandle && opened[2] === undefined, opened)
 }
 
 // ── D: an unsubscribed session, and a session on a context that stays ────

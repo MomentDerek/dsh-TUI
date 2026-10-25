@@ -15,7 +15,9 @@
  * recording dependencies (the entry's runtime needs a terminal). How
  * `plugin.ts` fills those dependencies is pinned on its source.
  *
- *   A. the first row gets `attachDsh` in a runtime fiber of its own [A1]
+ *   A. a row that unloads before the Loader settled leaves the first attach
+ *      to the next row [A0]; the first row gets `attachDsh` in a runtime
+ *      fiber of its own [A1]
  *   B. a second row while the first is mounted stays idle [B1]
  *   C. after the first row unloads, a new row gets the reattach hook with its
  *      runtime context and config, reads the config, mounts the seams and
@@ -83,6 +85,10 @@ slot.attachDsh = async (ctx, config) => {
 slot.reattachDsh = attachment.reattach
 
 const root = new Context()
+// The Loader: held open for the first row, settled for every later one.
+let settleLoader: () => void = () => {}
+let loaderSettled: Promise<void> = new Promise(resolve => { settleLoader = resolve })
+root.provide('loader', { await: () => loaderSettled })
 const rowConfig = (model: string) => ({ model }) as never
 async function mountRow(name: string, model: string): Promise<{ unload(): Promise<void> }> {
   currentRow = name
@@ -92,6 +98,17 @@ async function mountRow(name: string, model: string): Promise<{ unload(): Promis
 }
 
 try {
+  // A row that unloads before its Loader settled never took the first attach.
+  currentRow = 'row-0'
+  const early = root.plugin({ name: 'row-0', apply: (ctx: Context) => apply(ctx, rowConfig('early-model')) } as never) as unknown as { dispose(): Promise<void> | void }
+  const applied = await settled(() => slot.rowSeen)
+  await early.dispose()
+  settleLoader()
+  loaderSettled = Promise.resolve()
+  await settled(() => false, 20)
+  check('A0 a row that unloads before the Loader settled leaves the first attach for the next row',
+    applied && steps().length === 0 && slot.attachDsh !== undefined, { applied, steps: steps() })
+
   const first = await mountRow('row-1', 'first-model')
   check('A1 the first row gets attachDsh, in a runtime fiber of its own',
     await settled(() => steps().length === 2) && steps().join() === 'attach,seams' && calls[0]!.ctx !== root && slot.attachDsh === undefined,
