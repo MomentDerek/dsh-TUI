@@ -98,6 +98,7 @@ import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspaces.js'
 import { trackHostSettingsSection, type TuiSettingsField, type TuiSettingsFieldWrite, type TuiSettingsSection } from './settings-sections.js'
 import { compositionRoot, outsideActivation, withHostRootCapability } from './host-access.js'
+import { createRowAttachment } from './row-attachment.js'
 import { armAdmissionLoader } from './admission-loader.js'
 import { assembleBackendsFromProfile } from './backend-assembly.js'
 import { disposeRootSettled } from './root-dispose.js'
@@ -2932,36 +2933,31 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     }
     // The row's seams (presets, ask_user, approvals, the assembly filters)
     // live on the row and unload with it: a row that comes back mounts them again.
-    let rowMounted = false
-    const mountRowSeams = async (dshCtx: Context): Promise<void> => {
-      rowMounted = true
-      dshCtx.effect(() => () => { rowMounted = false })
-      await installPresets(dshCtx)
-      const seams = mountDshQuestionSeams(dshCtx)
-      if (seams.notice !== undefined) notifyChannel(seams.notice, { color: 'error' })
-      if (seams.registration.kind === 'waterfall') seams.registration.register(channel)
-      mountDshApprovals(dshCtx)
-      refreshHostServices()
-    }
-    entrySlot.reattachDsh = () => {
-      if (compositionFailed || exited || rowMounted || !channel.ready) return undefined
-      return async (rowCtx, rowRuntimeConfig) => {
-        if (compositionFailed || exited || rowMounted) return
-        try {
-          // The row may come back with a changed config: read it like the first.
-          rowFacts.config = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>)
-          await mountRowSeams(rowCtx as Context)
-          if (channel.status !== 'disposed') return
-          // The resume path reopens the session on the entry's own context, so
-          // a later unload of the row can no longer take the agent along. It
-          // runs as the entry's action: the row's activation only triggered it.
-          const result = await outsideActivation(() => channel.resumeTo(channel.sessionId))
-          if (result.ok) notifyChannel(t('session-reattached'))
-        } catch (error) {
-          logForDebugging(`dsh-tui: reopening the session after its row came back failed (${error instanceof Error ? error.message : String(error)})`)
-        }
-      }
-    }
+    const rowAttachment = createRowAttachment({
+      closed: () => compositionFailed || exited,
+      ready: () => channel.ready,
+      mountSeams: async (dshCtx) => {
+        await installPresets(dshCtx)
+        const seams = mountDshQuestionSeams(dshCtx)
+        if (seams.notice !== undefined) notifyChannel(seams.notice, { color: 'error' })
+        if (seams.registration.kind === 'waterfall') seams.registration.register(channel)
+        mountDshApprovals(dshCtx)
+        refreshHostServices()
+      },
+      readConfig: (rowRuntimeConfig) => { rowFacts.config = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>) },
+      ended: () => channel.status === 'disposed',
+      // The resume path reopens the session on the entry's own context, so
+      // a later unload of the row can no longer take the agent along. It
+      // runs as the entry's action: the row's activation only triggered it.
+      reopen: async () => {
+        const result = await outsideActivation(() => channel.resumeTo(channel.sessionId))
+        if (result.ok) notifyChannel(t('session-reattached'))
+      },
+      failed: (error) => {
+        logForDebugging(`dsh-tui: reopening the session after its row came back failed (${error instanceof Error ? error.message : String(error)})`)
+      },
+    })
+    entrySlot.reattachDsh = rowAttachment.reattach
     entrySlot.attachDsh = async (rowCtx, rowRuntimeConfig) => {
       const dshCtx = rowCtx as Context
       // The composition failed (its row is on screen), or the process is
@@ -2970,7 +2966,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       try {
         const rowConfig = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>)
         rowFacts.config = rowConfig
-        await mountRowSeams(dshCtx)
+        await rowAttachment.mount(dshCtx)
         const rowRoute = { provider: rowConfig.provider, model: rowConfig.model }
         // The same startup/deployment split the plugin's own boot makes (issue #67).
         const { startupRoute: rowStartupRoute, deploymentRoute: rowDeploymentRoute } = startupRoutes(dshCtx, rowRoute)

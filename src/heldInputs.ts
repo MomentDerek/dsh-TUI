@@ -6,12 +6,17 @@
  * them as canceled), so nothing re-sends them until the user sends the dock.
  * Text only: staged images live in the old process's memory.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { DATA_DIR } from './utils/paths.js'
 
 /** env marker naming the file the replacement takes its held texts from. */
 export const HELD_INPUTS_ENV = 'DSH_TUI_HELD_INPUTS'
+
+const HELD_INPUTS_FILE = /^held-inputs-\d+\.json$/u
+/** A restart that stalled leaves its file for the printed resume command; one
+ *  nobody resumed within this long is swept at a later launch. */
+const HELD_INPUTS_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Write the texts for a replacement process to take.
@@ -41,8 +46,10 @@ export function writeHeldInputs(texts: readonly string[], dir: string = DATA_DIR
 export function adoptHeldInputs(
   channel: { readonly ready: boolean; subscribe(listener: () => void): () => void; holdInputs(texts: readonly string[]): number },
   env: NodeJS.ProcessEnv = process.env,
+  dir: string = DATA_DIR,
 ): (() => void) | undefined {
   const texts = takeHeldInputs(env)
+  sweepHeldInputs(dir)
   if (texts.length === 0) return undefined
   if (channel.ready) {
     channel.holdInputs(texts)
@@ -59,13 +66,13 @@ export function adoptHeldInputs(
 /**
  * The resume command after a restart that ended before any replacement took
  * the held texts (a stall, a failed spawn): their file stays, and the command
- * hands it to the next launch. A Windows command takes no env prefix, so
- * there the file is only named.
+ * hands it to the next launch. A Windows command takes no env prefix: there
+ * it is the PowerShell form that sets the marker first.
  */
 export function heldInputsResumeCommand(command: string, env: Readonly<Record<string, string>> | undefined, platform: NodeJS.Platform = process.platform): string {
   const file = env?.[HELD_INPUTS_ENV]
   if (file === undefined || !existsSync(file)) return command
-  if (platform === 'win32') return `${command}\n(queued messages kept in ${file})`
+  if (platform === 'win32') return `$env:${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\'')}'; ${command}`
   return `${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\\\'\'')}' ${command}`
 }
 
@@ -78,7 +85,7 @@ export function takeHeldInputs(env: NodeJS.ProcessEnv = process.env): string[] {
   delete env[HELD_INPUTS_ENV]
   // Only ever a file writeHeldInputs named: the marker is env input, and
   // this deletes what it names.
-  if (file === undefined || !/^held-inputs-\d+\.json$/u.test(basename(file))) return []
+  if (file === undefined || !HELD_INPUTS_FILE.test(basename(file))) return []
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
     const texts = parsed !== null && typeof parsed === 'object' ? (parsed as { texts?: unknown }).texts : undefined
@@ -87,5 +94,23 @@ export function takeHeldInputs(env: NodeJS.ProcessEnv = process.env): string[] {
     return []
   } finally {
     rmSync(file, { force: true })
+  }
+}
+
+/** Remove held-input files older than the resume window (best effort). */
+export function sweepHeldInputs(dir: string = DATA_DIR, now: number = Date.now()): void {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch {
+    return
+  }
+  for (const name of names) {
+    if (!HELD_INPUTS_FILE.test(name)) continue
+    const file = join(dir, name)
+    try {
+      if (now - statSync(file).mtimeMs > HELD_INPUTS_MAX_AGE_MS) rmSync(file, { force: true })
+    } catch {
+    }
   }
 }

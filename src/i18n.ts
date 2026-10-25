@@ -1050,7 +1050,7 @@ const dict = {
   'input-pending-dock-label': { zh: '已暂存 · 打断后保留，不会自动发送', en: 'Held · kept after the interrupt, not sent automatically' },
   'input-pending-orphan-label': { zh: '已暂存 · 未送达，不会自动发送', en: 'Held · not delivered, not sent automatically' },
   'input-pending-dock-hint': { zh: '按 ↑ 编辑排队消息，⏎ 立即发送', en: 'Press ↑ to edit queued messages, ⏎ to send now' },
-  'input-pending-dock-hint-disposed': { zh: '会话已结束：按 ↑ 编辑暂存消息，/new 开新会话后 ⏎ 发送', en: 'Session ended: press ↑ to edit held messages, ⏎ sends them after /new' },
+  'input-pending-dock-hint-disposed': { zh: '会话已结束：/new 开新会话后，⏎ 发送暂存消息，↑ 编辑', en: 'Session ended: after /new, ⏎ sends the held messages and ↑ edits them' },
   'input-pending-dock-hint-working': { zh: '按 ↑ 编辑排队消息，回合结束后 ⏎ 发送', en: 'Press ↑ to edit queued messages, ⏎ sends after the turn' },
   'input-dock-sent': { zh: '已发送 {{n}} 条暂存消息', en: 'Sent {{n}} held message(s)' },
   'input-dock-swapped': { zh: '已交换：草稿暂存，所点消息回到输入框（Ctrl+Z 换回）', en: 'Swapped: the draft is held and the picked message is back in the input (Ctrl+Z swaps back)' },

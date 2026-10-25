@@ -11,18 +11,21 @@
  * mounted stays idle.
  *
  * The routing runs through the real `dsh-adapter/index.ts` `apply` on a real
- * Cordis tree with a published entry slot whose hooks record their calls (the
- * entry's runtime needs a terminal). What those hooks do in `plugin.ts` is
- * pinned on its source.
+ * Cordis tree; the slot's hooks are the real `row-attachment.ts` with
+ * recording dependencies (the entry's runtime needs a terminal). How
+ * `plugin.ts` fills those dependencies is pinned on its source.
  *
  *   A. the first row gets `attachDsh` in a runtime fiber of its own [A1]
  *   B. a second row while the first is mounted stays idle [B1]
  *   C. after the first row unloads, a new row gets the reattach hook with its
- *      runtime context and config, in a fiber that unloads with it [C1, C2]
- *   P. plugin.ts: the reattach hook reads the new row's config, mounts the
- *      row seams the first attach mounts, and only then reopens the ended
- *      session, outside the row's activation; it is refused while a row is
- *      mounted [P1-P4]
+ *      runtime context and config, reads the config, mounts the seams and
+ *      only then reopens the ended session, and unloads with its row [C1-C3]
+ *   R. the reattach hook: a live session is not reopened; a failed mount or
+ *      reopen is reported, a failed mount reopens nothing; no hook once the
+ *      screen is gone or before the channel is ready [R1-R4]
+ *   P. plugin.ts: the first attach and the reattach share that attachment;
+ *      its dependencies mount the seams and reopen the ended session outside
+ *      the row's activation [P1-P2]
  *
  * Run: node --import tsx/esm scripts/verify-entry-row-reattach.ts
  */
@@ -32,6 +35,7 @@ import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import { createEntrySlot, type EntrySlot } from '../src/dsh-adapter/entry-slot.js'
 import { apply } from '../src/dsh-adapter/index.js'
+import { createRowAttachment } from '../src/dsh-adapter/row-attachment.js'
 
 let passed = 0
 const check = (label: string, ok: boolean, detail?: unknown): void => {
@@ -48,25 +52,35 @@ async function settled(predicate: () => boolean, rounds = 100): Promise<boolean>
   return predicate()
 }
 
-type Call = { hook: 'attach' | 'reattach'; ctx: Context; config: unknown; row: string }
+type Call = { step: string; ctx?: Context; config?: unknown; row: string }
 const calls: Call[] = []
+const steps = (): string[] => calls.map(call => call.step)
 const slot: EntrySlot = createEntrySlot(true)
-// The entry's contract (plugin.ts): a row is "mounted" from its attach until
-// its runtime context unloads, and only an unmounted row is taken over.
-let rowMounted = false
-const mount = (ctx: Context): void => {
-  rowMounted = true
-  ctx.effect(() => () => { rowMounted = false })
-}
+const state = { closed: false, ready: true, ended: false, failMount: false, failReopen: false }
+const failures: unknown[] = []
 let currentRow = ''
+const attachment = createRowAttachment({
+  closed: () => state.closed,
+  ready: () => state.ready,
+  readConfig: (config) => { calls.push({ step: 'config', config, row: currentRow }) },
+  mountSeams: async (ctx) => {
+    calls.push({ step: 'seams', ctx, row: currentRow })
+    if (state.failMount) throw new Error('mount failed')
+  },
+  ended: () => state.ended,
+  reopen: async () => {
+    calls.push({ step: 'reopen', row: currentRow })
+    if (state.failReopen) throw new Error('reopen failed')
+    state.ended = false
+  },
+  failed: (error) => { failures.push(error) },
+})
+// The entry's first attach (plugin.ts) mounts the row's seams the same way.
 slot.attachDsh = async (ctx, config) => {
-  calls.push({ hook: 'attach', ctx: ctx as Context, config, row: currentRow })
-  mount(ctx as Context)
+  calls.push({ step: 'attach', ctx: ctx as Context, config, row: currentRow })
+  await attachment.mount(ctx as Context)
 }
-slot.reattachDsh = () => rowMounted ? undefined : async (ctx, config) => {
-  calls.push({ hook: 'reattach', ctx: ctx as Context, config, row: currentRow })
-  mount(ctx as Context)
-}
+slot.reattachDsh = attachment.reattach
 
 const root = new Context()
 const rowConfig = (model: string) => ({ model }) as never
@@ -80,46 +94,85 @@ async function mountRow(name: string, model: string): Promise<{ unload(): Promis
 try {
   const first = await mountRow('row-1', 'first-model')
   check('A1 the first row gets attachDsh, in a runtime fiber of its own',
-    await settled(() => calls.length === 1) && calls[0]!.hook === 'attach' && calls[0]!.ctx !== root && slot.attachDsh === undefined,
-    calls.map(call => call.hook))
+    await settled(() => steps().length === 2) && steps().join() === 'attach,seams' && calls[0]!.ctx !== root && slot.attachDsh === undefined,
+    steps())
 
+  calls.length = 0
   const second = await mountRow('row-2', 'second-model')
-  check('B1 a second row while the first is mounted stays idle', calls.length === 1 && rowMounted, calls.map(call => call.hook))
+  check('B1 a second row while the first is mounted stays idle', steps().length === 0 && slot.reattachDsh?.() === undefined, steps())
   await second.unload()
 
   await first.unload()
-  check('fixture: the first row\'s unload ended its mount', !rowMounted)
+  state.ended = true
   const third = await mountRow('row-3', 'third-model')
-  const taken = await settled(() => calls.length === 2) ? calls[1] : undefined
-  check('C1 after the first row unloaded, a new row gets the reattach hook with its own config',
-    taken?.hook === 'reattach' && (taken.config as { model?: string } | undefined)?.model === 'third-model' && rowMounted,
-    calls.map(call => ({ hook: call.hook, config: call.config })))
+  check('C1 after the first row unloaded, a new row reads its own config, then mounts the seams, then reopens the ended session',
+    await settled(() => steps().length === 3) && steps().join() === 'config,seams,reopen'
+      && (calls[0]!.config as { model?: string } | undefined)?.model === 'third-model' && calls[1]!.row === 'row-3' && calls[1]!.ctx !== root
+      && !state.ended && failures.length === 0,
+    { steps: steps(), failures: failures.map(String) })
+  check('C2 the returning row counts as mounted: a fourth row stays idle', slot.reattachDsh?.() === undefined)
   await third.unload()
-  check('C2 the reattached runtime unloads with its row', !rowMounted)
+  check('C3 the reattached row unloads with its fiber, and the hook is offered again', slot.reattachDsh?.() !== undefined)
+
+  calls.length = 0
+  const live = await mountRow('row-4', 'fourth-model')
+  await settled(() => steps().length === 2)
+  await settled(() => false, 10)
+  check('R1 a row that comes back over a live session mounts the seams and reopens nothing',
+    steps().join() === 'config,seams' && failures.length === 0,
+    steps())
+  await live.unload()
+
+  calls.length = 0
+  state.ended = true
+  state.failMount = true
+  const broken = await mountRow('row-5', 'fifth-model')
+  await settled(() => failures.length === 1)
+  check('R2 a failed seam mount is reported and reopens nothing',
+    failures.length === 1 && String(failures[0]).includes('mount failed') && !steps().includes('reopen'), { steps: steps(), failures: failures.map(String) })
+  await broken.unload()
+  state.failMount = false
+
+  calls.length = 0
+  failures.length = 0
+  state.failReopen = true
+  const unopened = await mountRow('row-6', 'sixth-model')
+  await settled(() => failures.length === 1)
+  check('R3 a failed reopen is reported, the session stays ended',
+    steps().join() === 'config,seams,reopen' && failures.length === 1 && String(failures[0]).includes('reopen failed') && state.ended,
+    { steps: steps(), failures: failures.map(String) })
+  await unopened.unload()
+  state.failReopen = false
+
+  state.ready = false
+  const notReady = slot.reattachDsh?.()
+  state.ready = true
+  state.closed = true
+  const closed = slot.reattachDsh?.()
+  state.closed = false
+  check('R4 no reattach before the channel is ready, nor once the screen is gone',
+    notReady === undefined && closed === undefined && slot.reattachDsh?.() !== undefined)
 } finally {
   await root.fiber.dispose()
 }
 
-// ── P: what the hooks do in plugin.ts ────────────────────────────────────
+// ── P: how plugin.ts fills the attachment ────────────────────────────────
 {
   const plugin = readFileSync(new URL('../src/dsh-adapter/plugin.ts', import.meta.url), 'utf8')
-  const start = plugin.indexOf('entrySlot.reattachDsh = () => {')
+  const start = plugin.indexOf('const rowAttachment = createRowAttachment({')
   const end = plugin.indexOf('entrySlot.attachDsh = async', start)
-  const reattach = start >= 0 && end > start ? plugin.slice(start, end) : ''
+  const deps = start >= 0 && end > start ? plugin.slice(start, end) : ''
   const attachEnd = plugin.indexOf('const rowRoute', end)
   const attach = end >= 0 && attachEnd > end ? plugin.slice(end, attachEnd) : ''
-  const at = (pattern: RegExp): number => reattach.search(pattern)
-  check('P1 the reattach hook is refused while a row is mounted, and once the screen is gone',
-    /if \(compositionFailed \|\| exited \|\| rowMounted \|\| !channel\.ready\) return undefined/.test(reattach))
-  check('P2 it reads the new row\'s config, then mounts the row seams, then reopens',
-    at(/rowFacts\.config = configValues/) >= 0 && at(/rowFacts\.config = configValues/) < at(/await mountRowSeams\(rowCtx as Context\)/)
-      && at(/await mountRowSeams\(rowCtx as Context\)/) < at(/channel\.resumeTo\(channel\.sessionId\)/))
-  check('P3 it reopens only an ended session, as the entry (outside the row\'s activation)',
-    /if \(channel\.status !== 'disposed'\) return/.test(reattach) && /outsideActivation\(\(\) => channel\.resumeTo\(channel\.sessionId\)\)/.test(reattach)
+  check('P1 the first attach and the reattach share the attachment, which mounts the seams',
+    /entrySlot\.reattachDsh = rowAttachment\.reattach\b/.test(deps) && /await rowAttachment\.mount\(dshCtx\)/.test(attach)
+      && /closed: \(\) => compositionFailed \|\| exited,/.test(deps) && /ready: \(\) => channel\.ready,/.test(deps)
+      && /mountSeams: async \(dshCtx\) => \{\s*await installPresets\(dshCtx\)\s*const seams = mountDshQuestionSeams\(dshCtx\)[\s\S]*?mountDshApprovals\(dshCtx\)/.test(deps)
+      && /readConfig: \(rowRuntimeConfig\) => \{ rowFacts\.config = configValues/.test(deps))
+  check('P2 the reopen resumes the ended session as the entry (outside the row\'s activation)',
+    /ended: \(\) => channel\.status === 'disposed',/.test(deps)
+      && /reopen: async \(\) => \{\s*const result = await outsideActivation\(\(\) => channel\.resumeTo\(channel\.sessionId\)\)/.test(deps)
       && plugin.split('outsideActivation(').length - 1 === 1)
-  check('P4 the first attach mounts the same row seams, and they mark the row mounted until it unloads',
-    /await mountRowSeams\(dshCtx\)/.test(attach)
-      && /const mountRowSeams = async \(dshCtx: Context\): Promise<void> => \{\s*rowMounted = true\s*dshCtx\.effect\(\(\) => \(\) => \{ rowMounted = false \}\)\s*await installPresets\(dshCtx\)\s*const seams = mountDshQuestionSeams\(dshCtx\)[\s\S]*?mountDshApprovals\(dshCtx\)/.test(plugin))
 }
 
 console.log(`\n${passed} checks passed`)

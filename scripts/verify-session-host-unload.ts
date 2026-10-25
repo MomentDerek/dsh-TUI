@@ -44,13 +44,14 @@
  *      a held row keeps its images into the next session [K4]
  *   R. the carry-over file is taken once, and only a file it wrote [R1-R4];
  *      only its owner can read it [R5]; a restart that ended early names it
- *      in the resume command [R6, R7]; the replacement holds what it took once
- *      its channel is ready [R8, R9]
+ *      in the resume command (PowerShell form on Windows) [R6, R7]; the
+ *      replacement holds what it took once its channel is ready [R8, R9]; a
+ *      boot sweeps week-old files nobody resumed [R10]
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -203,7 +204,7 @@ const root = new Context()
     const line = heldInputsResumeCommand('dsh-tui --resume s1', kept, 'linux')
     check('R6 a restart that ended early names the kept file in the resume command, quoted, and that command takes it',
       line === `${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\\\'\'')}' dsh-tui --resume s1`
-        && heldInputsResumeCommand('dsh-tui --resume s1', kept, 'win32') === `dsh-tui --resume s1\n(queued messages kept in ${file})`
+        && heldInputsResumeCommand('dsh-tui --resume s1', kept, 'win32') === `$env:${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\'')}'; dsh-tui --resume s1`
         && JSON.stringify(takeHeldInputs({ ...kept })) === '["kept"]',
       line)
     check('R7 with nothing kept the resume command is unchanged',
@@ -218,14 +219,30 @@ const root = new Context()
       subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
       holdInputs(texts: readonly string[]) { held.push([...texts]); return texts.length },
     }
-    const stop = adoptHeldInputs(later, carried)
+    const stop = adoptHeldInputs(later, carried, dir)
     const waited = held.length === 0 && stop !== undefined
     later.ready = true
     for (const listener of [...listeners]) listener()
     check('R8 a replacement takes the carried texts and holds them once its channel is ready, then stops listening',
       waited && JSON.stringify(held) === '[["first","second"]]' && listeners.size === 0 && carried[HELD_INPUTS_ENV] === undefined,
       { held, listeners: listeners.size })
-    check('R9 a boot with nothing carried holds nothing', adoptHeldInputs(later, {}) === undefined && held.length === 1)
+    check('R9 a boot with nothing carried holds nothing', adoptHeldInputs(later, {}, dir) === undefined && held.length === 1)
+    // A stalled restart's file nobody resumed: a later boot sweeps it, but
+    // still takes one its own marker names, however old.
+    const old = Date.now() / 1000 - 8 * 24 * 60 * 60
+    const stale = writeHeldInputs(['stale'], dir, 46)?.[HELD_INPUTS_ENV] ?? ''
+    const resumed = { ...writeHeldInputs(['resumed late'], dir, 47) } as NodeJS.ProcessEnv
+    const fresh = writeHeldInputs(['fresh'], dir, 48)?.[HELD_INPUTS_ENV] ?? ''
+    const unrelated = join(dir, 'held-inputs-notes.json')
+    writeFileSync(unrelated, '{}')
+    for (const file of [stale, resumed[HELD_INPUTS_ENV]!, unrelated]) utimesSync(file, old, old)
+    const sweptHeld: string[][] = []
+    adoptHeldInputs({ ...later, ready: true, holdInputs(texts: readonly string[]) { sweptHeld.push([...texts]); return texts.length } }, resumed, dir)
+    check('R10 a boot sweeps held files older than a week, keeps newer ones and other files, and still takes its own',
+      JSON.stringify(sweptHeld) === '[["resumed late"]]' && !existsSync(stale) && existsSync(fresh) && existsSync(unrelated),
+      readdirSync(dir))
+    rmSync(fresh, { force: true })
+    rmSync(unrelated, { force: true })
     const foreign = join(dir, 'notes.json')
     writeFileSync(foreign, JSON.stringify({ texts: ['x'] }))
     check('R4 a marker naming any other file is ignored and the file is kept', takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }).length === 0 && existsSync(foreign))

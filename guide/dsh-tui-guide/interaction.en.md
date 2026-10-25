@@ -341,7 +341,10 @@ While the model is working, three paths have different placement:
     submitted after the session ended is held the same way. While the session
     is ended `⏎` sends nothing: `/new` starts a new session and `⏎` sends them
     there, or `/restart` resumes this one (only text survives a restart).
-    Images attached to a held message stay with it into the next session.
+    Images attached to a held message stay with it into the next session. A held
+    message taken back with `↑` while the session is ended is an ordinary draft
+    again, and a draft's images do not survive `/new`: to keep the images,
+    run `/new` first and edit there.
 
 ## Session workflows
 
