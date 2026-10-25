@@ -211,6 +211,10 @@ export function createInputActions(
         // The channel moved to another session: its dock and its queue are
         // not the ones this receipt speaks about.
         if (getSession() !== session) return
+        // The session ended meanwhile: its end held every row and their
+        // backend copies went with it, so this answer neither un-docks them
+        // nor reports a queue that will still run.
+        if (session.status === 'disposed') return
         // Every docked row this receipt cannot confirm dropped: the ids the
         // backend says it kept, plus every row docked after the request
         // fired (outside its snapshot). Those copies are still live: their
@@ -233,9 +237,7 @@ export function createInputActions(
         if (revoke.size > 0) {
           let undocked = false
           state.pending = state.pending.map(item => {
-            // The session ended meanwhile: its copy went with it, and the
-            // row stays held for the next session.
-            if (item.docked !== true || item.orphaned === true || !revoke.has(item.id)) return item
+            if (item.docked !== true || !revoke.has(item.id)) return item
             undocked = true
             return { ...item, docked: undefined }
           })

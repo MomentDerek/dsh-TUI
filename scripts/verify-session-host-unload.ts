@@ -441,11 +441,16 @@ const root = new Context()
   assert.ok(await settled(() => exiting.sent.length === 1), 'fixture: the input reached the session')
   assert.ok(interrupted.interruptAndDock() === 1, 'fixture: the interrupt docked the row')
   exiting.emit([{ type: 'session.status', status: 'disposed' }])
+  exiting.status = 'disposed'
+  const noticesBeforeAnswer = interrupted.notifications.length
   answer({ stillQueued: [], outcome: 'failed' })
   await settled(() => false, 5)
   const exited = interrupted.pending.find(item => item.text === 'queued before the exit')
-  check('K5 a session that ends before its interrupt answers keeps the row held, even when the receipt fails',
-    exited?.docked === true && exited.orphaned === true, interrupted.pending)
+  const lateNotices = interrupted.notifications.slice(noticesBeforeAnswer).map(item => item.text)
+  check('K5 a session that ends before its interrupt answers keeps the row held, and the failed receipt reports no queue that will still run',
+    exited?.docked === true && exited.orphaned === true
+      && !lateNotices.includes(t('interrupt-failed')) && !lateNotices.includes(t('interrupt-unconfirmed')),
+    { pending: interrupted.pending, lateNotices })
 }
 
 // ── D: an unsubscribed session, and a session on a context that stays ────
