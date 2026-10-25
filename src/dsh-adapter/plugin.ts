@@ -61,7 +61,7 @@ import { clearResumeTarget, resumeTargetFromArgv, stripResumeArgs, writeResumeTa
 import { cmdlineArgsOf, initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
-import { heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../heldInputs.js'
+import { adoptHeldInputs, heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../heldInputs.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
 import { DSH_BACKEND_ID, HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
@@ -2221,19 +2221,8 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // replacement keeps the arguments but the first process sent their prompt.
   const initialPrompt = launchPromptSent ? '' : initialPromptFromCmdlineArgs(cmdlineArgs ?? process.argv.slice(2))
   // The queue a /restart carried over: held, never auto-sent (heldInputs.ts).
-  const heldInputs = takeHeldInputs()
-  if (heldInputs.length > 0) {
-    if (channel.ready) {
-      channel.holdInputs(heldInputs)
-    } else {
-      const unsubscribe = channel.subscribe(() => {
-        if (!channel.ready) return
-        unsubscribe()
-        channel.holdInputs(heldInputs)
-      })
-      ctx.effect(() => unsubscribe, 'dsh-tui held inputs after startup')
-    }
-  }
+  const stopHeldInputs = adoptHeldInputs(channel)
+  if (stopHeldInputs !== undefined) ctx.effect(() => stopHeldInputs, 'dsh-tui held inputs after startup')
   if (initialPrompt) {
     // A placeholder session refuses sends and nothing replays them after
     // adoption: hold the prompt until the channel is ready.

@@ -34,6 +34,29 @@ export function writeHeldInputs(texts: readonly string[], dir: string = DATA_DIR
 }
 
 /**
+ * The replacement's side: park the texts a `/restart` handed this process as
+ * held rows once the screen's channel is ready (never sent by themselves).
+ * @returns What stops waiting for a channel that is not ready yet.
+ */
+export function adoptHeldInputs(
+  channel: { readonly ready: boolean; subscribe(listener: () => void): () => void; holdInputs(texts: readonly string[]): number },
+  env: NodeJS.ProcessEnv = process.env,
+): (() => void) | undefined {
+  const texts = takeHeldInputs(env)
+  if (texts.length === 0) return undefined
+  if (channel.ready) {
+    channel.holdInputs(texts)
+    return undefined
+  }
+  const unsubscribe = channel.subscribe(() => {
+    if (!channel.ready) return
+    unsubscribe()
+    channel.holdInputs(texts)
+  })
+  return unsubscribe
+}
+
+/**
  * The resume command after a restart that ended before any replacement took
  * the held texts (a stall, a failed spawn): their file stays, and the command
  * hands it to the next launch. A Windows command takes no env prefix, so

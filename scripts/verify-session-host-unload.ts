@@ -37,10 +37,12 @@
  *      session [H3]; an interrupt's dock still ends with its session [H4]
  *   I. texts a `/restart` carried over are parked as held rows [I1, I2]
  *   K. the end of a session closes its automatic compaction row [K1]; a
- *      draft swapped in for a held row is held too and survives /new [K2, K3]
+ *      draft swapped in for a held row is held too and survives /new [K2, K3];
+ *      a held row keeps its images into the next session [K4]
  *   R. the carry-over file is taken once, and only a file it wrote [R1-R4];
  *      only its owner can read it [R5]; a restart that ended early names it
- *      in the resume command [R6, R7]
+ *      in the resume command [R6, R7]; the replacement holds what it took once
+ *      its channel is ready [R8, R9]
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
@@ -54,7 +56,7 @@ import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
 import { createDshSession } from '../src/dsh-adapter/backend/session.js'
 import { createChannel } from '../src/dsh-adapter/channel.js'
-import { HELD_INPUTS_ENV, heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../src/heldInputs.js'
+import { adoptHeldInputs, HELD_INPUTS_ENV, heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../src/heldInputs.js'
 import { setLang, t } from '../src/i18n.js'
 
 setLang('en')
@@ -204,6 +206,23 @@ const root = new Context()
     check('R7 with nothing kept the resume command is unchanged',
       heldInputsResumeCommand('dsh-tui --resume s1', kept, 'linux') === 'dsh-tui --resume s1'
         && heldInputsResumeCommand('dsh-tui --resume s1', undefined, 'linux') === 'dsh-tui --resume s1')
+    // The replacement's boot, against a channel that becomes ready later.
+    const carried = { ...writeHeldInputs(['first', 'second'], dir, 45) } as NodeJS.ProcessEnv
+    const held: string[][] = []
+    const listeners = new Set<() => void>()
+    const later = {
+      ready: false,
+      subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
+      holdInputs(texts: readonly string[]) { held.push([...texts]); return texts.length },
+    }
+    const stop = adoptHeldInputs(later, carried)
+    const waited = held.length === 0 && stop !== undefined
+    later.ready = true
+    for (const listener of [...listeners]) listener()
+    check('R8 a replacement takes the carried texts and holds them once its channel is ready, then stops listening',
+      waited && JSON.stringify(held) === '[["first","second"]]' && listeners.size === 0 && carried[HELD_INPUTS_ENV] === undefined,
+      { held, listeners: listeners.size })
+    check('R9 a boot with nothing carried holds nothing', adoptHeldInputs(later, {}) === undefined && held.length === 1)
     const foreign = join(dir, 'notes.json')
     writeFileSync(foreign, JSON.stringify({ texts: ['x'] }))
     check('R4 a marker naming any other file is ignored and the file is kept', takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }).length === 0 && existsSync(foreign))
@@ -251,19 +270,27 @@ const root = new Context()
 {
   interface Fake extends AgentSession {
     readonly sent: string[]
+    /** Images each submit carried, in order. */
+    readonly sentImages: number[]
     emit(events: readonly AgentEvent[]): void
   }
-  const fake = (sessionId: string): Fake => {
+  const IMAGES = { limits: { maxImageBytes: 5e6, maxImagesPerMessage: 10, maxImageDimension: 8000, maxImagePixels: 1e8, mediaTypes: ['image/png'] } }
+  const fake = (sessionId: string, images = false): Fake => {
     const listeners = new Set<(batch: readonly AgentEvent[], meta: AgentEventMeta) => void>()
     const session: Fake = {
       ref: { backendId: 'fake', sessionId },
       cwd: '/tmp',
       status: 'idle',
-      capabilities: { native: {} },
+      capabilities: { native: {}, ...(images ? { images: IMAGES } : {}) } as Fake['capabilities'],
       sent: [],
+      sentImages: [],
       history: () => Promise.resolve([]),
       subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener) } },
-      submit(input: AgentInput, _placement: SubmitPlacement) { session.sent.push(input.text); return Promise.resolve({ accepted: true }) },
+      submit(input: AgentInput, _placement: SubmitPlacement) {
+        session.sent.push(input.text)
+        session.sentImages.push((input as { images?: readonly unknown[] }).images?.length ?? 0)
+        return Promise.resolve({ accepted: true })
+      },
       cancel: () => Promise.resolve({ stillQueued: [], outcome: 'confirmed' }),
       dispose: () => Promise.resolve(),
       emit(events) { for (const listener of [...listeners]) listener(events, { replay: false, wake: 'sync' }) },
@@ -323,6 +350,27 @@ const root = new Context()
     screen.pending.some(item => item.text === 'my unsent draft') && screen.deliverDocked() === 1
       && await settled(() => after[0]!.sent.length === 1) && after[0]!.sent[0] === 'my unsent draft',
     { pending: screen.pending, sent: after[0]?.sent })
+
+  // A held row keeps its images into the next session.
+  const pictured = fake('77777777-7777-4777-8777-777777777777', true)
+  const later: Fake[] = []
+  const withImages = createChannel(bare, pictured, {
+    model: 'm', provider: '', cwd: '/tmp', activity: false,
+    openSession: () => { const next = fake('88888888-8888-4888-8888-888888888888', true); later.push(next); return Promise.resolve(next) },
+  })
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+  const token = await withImages.stageImage({ data: png, mediaType: 'image/png', name: 'dot.png' } as never)
+  pictured.emit([{ type: 'turn.start', turn: 1, origin: 'user', time: 1 }])
+  withImages.submit(`look at ${token}`)
+  assert.ok(await settled(() => pictured.sent.length === 1) && pictured.sentImages[0] === 1, 'fixture: the image reached the first session')
+  pictured.emit([{ type: 'pending.changed', items: [], dropped: [withImages.pending[0]!.id] }])
+  pictured.emit([{ type: 'turn.end', turn: 1, reason: { kind: 'interrupted' }, time: 2 }])
+  assert.ok(await withImages.newSession() === true && later.length === 1, 'fixture: /new opened the next session')
+  const noticesBefore = withImages.notifications.length
+  check('K4 a held row keeps its image across /new and the dock sends it with the image',
+    withImages.deliverDocked() === 1 && await settled(() => later[0]!.sent.length === 1)
+      && later[0]!.sentImages[0] === 1 && withImages.notifications.length === noticesBefore,
+    { sent: later[0]?.sent, images: later[0]?.sentImages, notices: withImages.notifications.slice(noticesBefore).map(item => item.text) })
 }
 
 // ── D: an unsubscribed session, and a session on a context that stays ────
