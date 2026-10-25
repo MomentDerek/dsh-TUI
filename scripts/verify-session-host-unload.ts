@@ -41,7 +41,8 @@
  *   I. texts a `/restart` carried over are parked as held rows [I1, I2]
  *   K. the end of a session closes its automatic compaction row [K1]; a
  *      draft swapped in for a held row is held too and survives /new [K2, K3];
- *      a held row keeps its images into the next session [K4]
+ *      a held row keeps its images into the next session [K4]; an interrupt
+ *      receipt that comes back after the session ended leaves it held [K5]
  *   R. the carry-over file is taken once, and only a file it wrote [R1-R4];
  *      only its owner can read it [R5]; a restart that ended early names it
  *      in the resume command (PowerShell form on Windows) [R6, R7]; the
@@ -212,6 +213,7 @@ const root = new Context()
         && heldInputsResumeCommand('dsh-tui --resume s1', undefined, 'linux') === 'dsh-tui --resume s1')
     // The replacement's boot, against a channel that becomes ready later.
     const carried = { ...writeHeldInputs(['first', 'second'], dir, 45) } as NodeJS.ProcessEnv
+    const carriedFile = carried[HELD_INPUTS_ENV]!
     const held: string[][] = []
     const listeners = new Set<() => void>()
     const later = {
@@ -220,11 +222,12 @@ const root = new Context()
       holdInputs(texts: readonly string[]) { held.push([...texts]); return texts.length },
     }
     const stop = adoptHeldInputs(later, carried, dir)
-    const waited = held.length === 0 && stop !== undefined
+    // A replacement that died here would leave the file for the resume command.
+    const waited = held.length === 0 && stop !== undefined && existsSync(carriedFile)
     later.ready = true
     for (const listener of [...listeners]) listener()
-    check('R8 a replacement takes the carried texts and holds them once its channel is ready, then stops listening',
-      waited && JSON.stringify(held) === '[["first","second"]]' && listeners.size === 0 && carried[HELD_INPUTS_ENV] === undefined,
+    check('R8 a replacement keeps the carried file until its channel is ready, then holds the texts, deletes the file and stops listening',
+      waited && JSON.stringify(held) === '[["first","second"]]' && listeners.size === 0 && carried[HELD_INPUTS_ENV] === undefined && !existsSync(carriedFile),
       { held, listeners: listeners.size })
     check('R9 a boot with nothing carried holds nothing', adoptHeldInputs(later, {}, dir) === undefined && held.length === 1)
     // A stalled restart's file nobody resumed: a later boot sweeps it, but
@@ -232,14 +235,15 @@ const root = new Context()
     const old = Date.now() / 1000 - 8 * 24 * 60 * 60
     const stale = writeHeldInputs(['stale'], dir, 46)?.[HELD_INPUTS_ENV] ?? ''
     const resumed = { ...writeHeldInputs(['resumed late'], dir, 47) } as NodeJS.ProcessEnv
+    const resumedFile = resumed[HELD_INPUTS_ENV]!
     const fresh = writeHeldInputs(['fresh'], dir, 48)?.[HELD_INPUTS_ENV] ?? ''
     const unrelated = join(dir, 'held-inputs-notes.json')
     writeFileSync(unrelated, '{}')
-    for (const file of [stale, resumed[HELD_INPUTS_ENV]!, unrelated]) utimesSync(file, old, old)
+    for (const file of [stale, resumedFile, unrelated]) utimesSync(file, old, old)
     const sweptHeld: string[][] = []
     adoptHeldInputs({ ...later, ready: true, holdInputs(texts: readonly string[]) { sweptHeld.push([...texts]); return texts.length } }, resumed, dir)
     check('R10 a boot sweeps held files older than a week, keeps newer ones and other files, and still takes its own',
-      JSON.stringify(sweptHeld) === '[["resumed late"]]' && !existsSync(stale) && existsSync(fresh) && existsSync(unrelated),
+      JSON.stringify(sweptHeld) === '[["resumed late"]]' && !existsSync(stale) && !existsSync(resumedFile) && existsSync(fresh) && existsSync(unrelated),
       readdirSync(dir))
     rmSync(fresh, { force: true })
     rmSync(unrelated, { force: true })
@@ -425,6 +429,23 @@ const root = new Context()
     withImages.deliverDocked() === 1 && await settled(() => later[0]!.sent.length === 1)
       && later[0]!.sentImages[0] === 1 && withImages.notifications.length === noticesBefore,
     { sent: later[0]?.sent, images: later[0]?.sentImages, notices: withImages.notifications.slice(noticesBefore).map(item => item.text) })
+
+  // The session ends while an interrupt's receipt is still out (a CLI that
+  // exits mid-interrupt): the receipt can no longer un-dock the held row.
+  const exiting = fake('99999999-9999-4999-8999-999999999999')
+  let answer: (receipt: { stillQueued: readonly string[]; outcome: 'failed' }) => void = () => {}
+  exiting.cancel = () => new Promise(resolve => { answer = resolve })
+  const interrupted = createChannel(bare, exiting, { model: 'm', provider: '', cwd: '/tmp', activity: false })
+  exiting.emit([{ type: 'turn.start', turn: 1, origin: 'user', time: 1 }])
+  interrupted.submit('queued before the exit')
+  assert.ok(await settled(() => exiting.sent.length === 1), 'fixture: the input reached the session')
+  assert.ok(interrupted.interruptAndDock() === 1, 'fixture: the interrupt docked the row')
+  exiting.emit([{ type: 'session.status', status: 'disposed' }])
+  answer({ stillQueued: [], outcome: 'failed' })
+  await settled(() => false, 5)
+  const exited = interrupted.pending.find(item => item.text === 'queued before the exit')
+  check('K5 a session that ends before its interrupt answers keeps the row held, even when the receipt fails',
+    exited?.docked === true && exited.orphaned === true, interrupted.pending)
 }
 
 // ── D: an unsubscribed session, and a session on a context that stays ────

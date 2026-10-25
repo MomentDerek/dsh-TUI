@@ -48,17 +48,28 @@ export function adoptHeldInputs(
   env: NodeJS.ProcessEnv = process.env,
   dir: string = DATA_DIR,
 ): (() => void) | undefined {
-  const texts = takeHeldInputs(env)
-  sweepHeldInputs(dir)
-  if (texts.length === 0) return undefined
+  const { texts, file } = readHeldInputs(env)
+  // The file goes only once its texts are on screen: a replacement that
+  // dies before its channel is ready leaves it for the resume command its
+  // parent prints. Then files nobody resumed are swept.
+  const settle = (): void => {
+    if (file !== undefined) rmSync(file, { force: true })
+    sweepHeldInputs(dir)
+  }
+  if (texts.length === 0) {
+    settle()
+    return undefined
+  }
   if (channel.ready) {
     channel.holdInputs(texts)
+    settle()
     return undefined
   }
   const unsubscribe = channel.subscribe(() => {
     if (!channel.ready) return
     unsubscribe()
     channel.holdInputs(texts)
+    settle()
   })
   return unsubscribe
 }
@@ -81,19 +92,25 @@ export function heldInputsResumeCommand(command: string, env: Readonly<Record<st
  * shot: the env marker is consumed too, so no child inherits it.
  */
 export function takeHeldInputs(env: NodeJS.ProcessEnv = process.env): string[] {
+  const { texts, file } = readHeldInputs(env)
+  if (file !== undefined) rmSync(file, { force: true })
+  return texts
+}
+
+/** Read the texts and consume the env marker; `file` is what the caller
+ *  deletes once it is done with them. */
+function readHeldInputs(env: NodeJS.ProcessEnv): { texts: string[]; file?: string } {
   const file = env[HELD_INPUTS_ENV]
   delete env[HELD_INPUTS_ENV]
   // Only ever a file writeHeldInputs named: the marker is env input, and
-  // this deletes what it names.
-  if (file === undefined || !HELD_INPUTS_FILE.test(basename(file))) return []
+  // the caller deletes what it names.
+  if (file === undefined || !HELD_INPUTS_FILE.test(basename(file))) return { texts: [] }
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
     const texts = parsed !== null && typeof parsed === 'object' ? (parsed as { texts?: unknown }).texts : undefined
-    return Array.isArray(texts) ? texts.filter((text): text is string => typeof text === 'string' && text.trim() !== '') : []
+    return { texts: Array.isArray(texts) ? texts.filter((text): text is string => typeof text === 'string' && text.trim() !== '') : [], file }
   } catch {
-    return []
-  } finally {
-    rmSync(file, { force: true })
+    return { texts: [], file }
   }
 }
 

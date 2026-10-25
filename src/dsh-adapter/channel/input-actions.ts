@@ -233,7 +233,9 @@ export function createInputActions(
         if (revoke.size > 0) {
           let undocked = false
           state.pending = state.pending.map(item => {
-            if (item.docked !== true || !revoke.has(item.id)) return item
+            // The session ended meanwhile: its copy went with it, and the
+            // row stays held for the next session.
+            if (item.docked !== true || item.orphaned === true || !revoke.has(item.id)) return item
             undocked = true
             return { ...item, docked: undefined }
           })
