@@ -107,9 +107,7 @@ export function createSessionBatchRouter(deps: {
       return { ...item, docked: true, orphaned: true }
     })
     if (!changed) return
-    // An ended session sends nothing until the next one: say so, like the dock.
-    const key = deps.state.status === 'disposed' ? 'input-orphans-held-disposed' : 'input-orphans-held'
-    if (held > 0) deps.notify?.(t(key, { count: held }), { color: 'warning', timeoutMs: 8000 })
+    if (held > 0) deps.notify?.(t('input-orphans-held', { count: held }), { color: 'warning', timeoutMs: 8000 })
     deps.state.emit()
   }
 

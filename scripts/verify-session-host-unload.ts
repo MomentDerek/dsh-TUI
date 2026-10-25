@@ -31,7 +31,10 @@
  *      while the session is gone keeps it [G2]
  *   F. the DSH session tells its own discards (cancel, retraction) from the
  *      kernel's (teardown, hook or parent cancel): only the latter go out as
- *      `dropped` [F1-F3]
+ *      `dropped` [F1-F3]; a switch is its own discard too, and the foreground
+ *      never cancels the agent directly [F4, F5]
+ *   T. in the kernel's own teardown order (discards first, then the unload)
+ *      the input is held once and no notice promises ⏎ [T1]
  *   H. on any backend's channel: a `dropped` input is held [H1]; held rows
  *      survive `/new` [H2] and the dock delivers each once to the new
  *      session [H3]; an interrupt's dock still ends with its session [H4]
@@ -47,7 +50,7 @@
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -162,7 +165,7 @@ const root = new Context()
 
   const queued = channel.pending.find(item => item.text === 'queued while the turn runs')
   check('G1 the follow-up queued before the unload is held in the dock, with a notice',
-    queued?.docked === true && queued.orphaned === true && channel.notifications.some(item => item.text === t('input-orphans-held-disposed', { count: 1 }) && item.text.endsWith('sends it after /new')),
+    queued?.docked === true && queued.orphaned === true && channel.notifications.some(item => item.text === t('input-orphans-held', { count: 1 }) && item.text.startsWith('1 queued message was')),
     { queued, notices: channel.notifications.map(item => item.text) })
   check('G3 the unload takes that follow-up back from an agent that outlives the row, so the held row is never also run',
     retracted.length === 1 && retracted[0] === queued?.id, { retracted, queued })
@@ -263,7 +266,41 @@ const root = new Context()
   discard(lost)
   check('F3 a discard the session did not ask for goes out as dropped', changes.length === 3 && kinds(changes[2]!) === 'dropped'
     && (changes[2] as { dropped?: readonly string[] }).dropped?.[0] === lost, changes)
+
+  await submit('switch away')
+  await session.cancel('switch')
+  check('F4 a switch (rewind, tree) drops the queue as the session\'s own discard', changes.length === 4 && kinds(changes[3]!) === 'discarded', changes)
   release()
+
+  // The foreground channel cancels only through its session; the one direct
+  // agent cancel left stops a background agent (agent-view).
+  const channelDir = new URL('../src/dsh-adapter/channel/', import.meta.url)
+  const direct = readdirSync(channelDir, { recursive: true }).map(String).filter(file => file.endsWith('.ts'))
+    .filter(file => /\bagent\.cancel\(/.test(readFileSync(new URL(file, channelDir), 'utf8')))
+  check('F5 no foreground path cancels the agent directly', JSON.stringify(direct) === '["agent-view-projection.ts"]', direct)
+}
+
+// ── T: the kernel's own teardown order ───────────────────────────────────
+// A real agent teardown clears its inbox first (the discards arrive while the
+// session still reports running), and only then does the row unload.
+{
+  const row = await mountRow(root, 'teardown-row')
+  const { agent, calls } = stubAgent(root, 'teardown')
+  const channel = createChannel(root as never, createDshSession(row.ctx, { agent: agent as never, handle: undefined }, { screenOutlivesContext: true }), {
+    provider: 'test', model: 'test-model', cwd: '/tmp', activity: false,
+  })
+  agent.status = 'running'
+  root.emit('agent/status', { agent, status: 'running' } as never)
+  channel.submit('queued before the teardown')
+  assert.ok(await settled(() => calls.some(call => call.startsWith('followup:'))), 'fixture: the follow-up reached the agent')
+  const id = channel.pending.find(item => item.text === 'queued before the teardown')?.id
+  root.emit('agent/inbox/discarded', { agent, message: { id } } as never)
+  await row.unload()
+  const notices = channel.notifications.map(item => item.text)
+  check('T1 discarded first, unloaded after: held once, and no notice promises ⏎ while the session is ended',
+    channel.status === 'disposed' && channel.pending.filter(item => item.orphaned === true).length === 1
+      && notices.filter(text => text === t('input-orphans-held', { count: 1 })).length === 1 && !notices.some(text => text.includes('⏎')),
+    { status: channel.status, pending: channel.pending, notices })
 }
 
 // ── H: held rows on any backend's channel, across /new ───────────────────

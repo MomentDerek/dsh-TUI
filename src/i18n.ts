@@ -1054,8 +1054,9 @@ const dict = {
   'input-pending-dock-hint-working': { zh: '按 ↑ 编辑排队消息，回合结束后 ⏎ 发送', en: 'Press ↑ to edit queued messages, ⏎ sends after the turn' },
   'input-dock-sent': { zh: '已发送 {{n}} 条暂存消息', en: 'Sent {{n}} held message(s)' },
   'input-dock-swapped': { zh: '已交换：草稿暂存，所点消息回到输入框（Ctrl+Z 换回）', en: 'Swapped: the draft is held and the picked message is back in the input (Ctrl+Z swaps back)' },
-  'input-orphans-held': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑，⏎ 发送', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit, ⏎ to send', other: '{{count}} queued messages were not delivered and are held: ↑ to edit, ⏎ to send' } },
-  'input-orphans-held-disposed': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑，/new 开新会话后 ⏎ 发送', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit, ⏎ sends it after /new', other: '{{count}} queued messages were not delivered and are held: ↑ to edit, ⏎ sends them after /new' } },
+  // No ⏎ here: whether ⏎ sends now or only after /new depends on the session,
+  // and the dock hint below says which (#1651).
+  'input-orphans-held': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit', other: '{{count}} queued messages were not delivered and are held: ↑ to edit' } },
   'input-dock-session-disposed': { zh: '会话已结束，暂存消息仍保留；/new 开新会话或 /restart 恢复该会话后按 ⏎ 发送', en: 'This session has ended; held messages are kept. After /new or /restart, ⏎ sends them' },
   'input-dock-confirming': { zh: '{{n}} 条暂存消息还在等打断完成，稍后再发送或编辑', en: '{{n}} held message(s) are waiting for the interrupt to finish; send or edit again in a moment' },
   // U+30FB (not U+00B7): the separator participates in the folded-chip
