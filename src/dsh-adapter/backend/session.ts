@@ -74,8 +74,12 @@ export function isAgentSession(value: unknown): value is AgentSession {
  * `AgentSession`. Creating the wrapper acquires nothing: listeners exist only
  * while `subscribe`/`subscribeRaw` subscriptions are live, and only `dispose()`
  * releases the handle.
+ *
+ * `screenOutlivesContext`: the screen showing this session lives longer than
+ * `ctx` (the entry's screen over its profile row), so when `ctx` unloads the
+ * screen holds this session's queued inputs, and the agent must not run them.
  */
-export function createDshSession(ctx: Context, target: DshSessionTarget): AgentSession {
+export function createDshSession(ctx: Context, target: DshSessionTarget, options: { readonly screenOutlivesContext?: boolean } = {}): AgentSession {
   const agent = target.agent
   const handle = isHandle(target) ? target : target.handle
   // The tools registry is read lazily, once per session, on the first
@@ -226,6 +230,17 @@ export function createDshSession(ctx: Context, target: DshSessionTarget): AgentS
         // Test doubles that serve only `on` have no fiber to follow.
         own(ctx.effect?.(() => () => {
           if (!active) return
+          active = false
+          // The agent can outlive the row (a borrowed agent, a row reloaded
+          // alone) and would still run what this session queued, while the
+          // screen holds those inputs as never sent: take them back, quietly
+          // (the screen holds them from the status below). A screen that
+          // unloads with `ctx` holds nothing: a surviving agent keeps them.
+          if (options.screenOutlivesContext === true) {
+            for (const id of [...pending.keys()]) {
+              try { if (agent.inbox.remove(MessageId(id))) pending.delete(id) } catch {}
+            }
+          }
           disposed = true
           listener([{ type: 'session.status', status: 'disposed' }], QUIET)
         }, 'dsh-tui session listeners') ?? (() => undefined))

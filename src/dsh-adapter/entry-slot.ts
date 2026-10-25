@@ -20,10 +20,11 @@ export interface EntrySlot {
    *  throws (a failure lands in the mounted screen). */
   attachDsh?: (ctx: unknown, runtimeConfig: unknown, configOwner: unknown) => Promise<void>
   /** A row applied again after `attachDsh` was taken (its services came
-   *  back after unloading under the screen, #1651): reopens the screen's
-   *  session if it ended with the previous row. False when the screen does
-   *  not need it, and the row stays idle. */
-  reattachDsh?: () => boolean
+   *  back after unloading under the screen, #1651): the hook that remounts
+   *  the DSH seams on the new row and reopens the screen's session if it
+   *  ended with the previous row, called like `attachDsh`. Undefined while
+   *  the previous row is still mounted, and the new row stays idle. */
+  reattachDsh?: () => EntrySlot['attachDsh']
   /** DSH: the composition failed or had no `dsh-tui` row, the startup session
    *  will never come. `logPath` is the saved startup report, if any. */
   composeFailed?: (error: unknown, logPath?: string) => void

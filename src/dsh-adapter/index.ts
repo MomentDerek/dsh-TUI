@@ -505,10 +505,9 @@ export async function apply(ctx: Context, config: RuntimeConfig<Config>): Promis
 /** The row under the entry's screen: the DSH side in its own runtime fiber
  *  once the Loader settled, never a second render; a recompose stays idle. */
 function attachToEntry(ctx: Context, config: RuntimeConfig<Config>): void {
-  const attach = takeEntryAttach()
+  // A later row takes over only once the previous one unloaded (#1651).
+  const attach = takeEntryAttach() ?? peekEntrySlot()?.reattachDsh?.()
   if (attach === undefined) {
-    // The previous row unloaded with the screen's session: reopen it here.
-    if (peekEntrySlot()?.reattachDsh?.() === true) return
     ctx.logger.warn('dsh-tui: the entry\'s screen already holds a DSH session; this dsh-tui row stays idle')
     return
   }

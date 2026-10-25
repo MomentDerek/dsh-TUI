@@ -236,7 +236,7 @@ const dict = {
   'interrupt-failed': { zh: '打断请求失败：排队消息没有撤回，仍会在下一回合发送；已取消暂存，避免重复发送', en: 'The interrupt request failed: the queued messages were not withdrawn and will still run next turn; they are no longer held, so nothing is sent twice' },
   'interrupt-unconfirmed': { zh: '无法确认排队消息已撤回：它们仍会在下一回合发送，不再暂存', en: 'Could not confirm the queued messages were withdrawn: they will still run next turn and are no longer held' },
   'interrupt-pending': { zh: '中断请求已发出，正在等待回合停止……', en: 'Interrupt requested; waiting for the turn to stop…' },
-  'interrupt-stuck': { zh: '中断迟迟没有生效（工具可能没有响应中断）。可用 /restart：它会中断当前回合并尝试重启；若进程无法正常收尾，退出后会打印恢复本会话的命令（排队输入不保留）。', en: 'The interrupt is not taking effect (a tool may be ignoring it). Use /restart: it interrupts this turn and tries to restart; if the process cannot shut down cleanly it exits and prints the command that resumes this session (queued input is not kept).' },
+  'interrupt-stuck': { zh: '中断迟迟没有生效（工具可能没有响应中断）。可用 /restart：它会中断当前回合并尝试重启；若进程无法正常收尾，退出后会打印恢复本会话的命令，并注明排队输入保存在哪里。', en: 'The interrupt is not taking effect (a tool may be ignoring it). Use /restart: it interrupts this turn and tries to restart; if the process cannot shut down cleanly it exits and prints the command that resumes this session and where the queued input is kept.' },
   'cmd-unavailable-backend': { zh: '/{{cmd}} 在 {{backend}} 内核下不可用', en: '/{{cmd}} is not available on the {{backend}} kernel' },
   'export-user-section': { zh: '## 用户', en: '## User' },
   'export-thinking-section': { zh: '## 思考', en: '## Thinking' },
@@ -778,7 +778,7 @@ const dict = {
   'reload-kind-activity': { zh: '活动指示', en: 'activity' },
   // ── /restart (process restart with session resume) ────────────────────
   'restart-starting': { zh: '正在重启 dsh-tui，完成后自动恢复当前会话……', en: 'Restarting dsh-tui. The session resumes when it comes back…' },
-  'restart-during-turn': { zh: '当前回合仍在运行，正在中断重启；排队输入会在重启后暂存，不会自动发送。若进程无法正常收尾，退出后会打印恢复本会话的命令（排队输入不保留）。', en: 'The current turn is still running; interrupting and restarting. Queued input is held after the restart, not sent automatically. If the process cannot shut down cleanly it exits and prints the command that resumes this session (queued input is not kept).' },
+  'restart-during-turn': { zh: '当前回合仍在运行，正在中断重启；排队输入会在重启后暂存（仅保留文字，图片不保留），不会自动发送。若进程无法正常收尾，退出后会打印恢复本会话的命令，并注明排队输入保存在哪里。', en: 'The current turn is still running; interrupting and restarting. Queued input is held after the restart (text only, images are not kept), not sent automatically. If the process cannot shut down cleanly it exits and prints the command that resumes this session and where the queued input is kept.' },
   'restart-unavailable': { zh: '当前运行方式不支持进程内重启（未挂载重启通道）。', en: 'Restart is unavailable in this launch mode (no restart channel mounted).' },
   'streaming-folded': { zh: '…（前 {{count}} 字符流式期间已折叠，落定后完整显示）', en: '…(first {{count}} chars folded while streaming; full text renders once the turn settles)' },
   'mermaid-too-wide': { zh: '（图需要 {{width}} 列，当前宽度不足，显示源码）', en: '(diagram needs {{width}} columns; showing the source)' },
@@ -1055,6 +1055,7 @@ const dict = {
   'input-dock-sent': { zh: '已发送 {{n}} 条暂存消息', en: 'Sent {{n}} held message(s)' },
   'input-dock-swapped': { zh: '已交换：草稿暂存，所点消息回到输入框（Ctrl+Z 换回）', en: 'Swapped: the draft is held and the picked message is back in the input (Ctrl+Z swaps back)' },
   'input-orphans-held': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑，⏎ 发送', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit, ⏎ to send', other: '{{count}} queued messages were not delivered and are held: ↑ to edit, ⏎ to send' } },
+  'input-orphans-held-disposed': { zh: '{{count}} 条排队消息没有送达，已暂存：按 ↑ 编辑，/new 开新会话后 ⏎ 发送', en: { one: '{{count}} queued message was not delivered and is held: ↑ to edit, ⏎ sends it after /new', other: '{{count}} queued messages were not delivered and are held: ↑ to edit, ⏎ sends them after /new' } },
   'input-dock-session-disposed': { zh: '会话已结束，暂存消息仍保留；/new 开新会话或 /restart 恢复该会话后按 ⏎ 发送', en: 'This session has ended; held messages are kept. After /new or /restart, ⏎ sends them' },
   'input-dock-confirming': { zh: '{{n}} 条暂存消息还在等打断完成，稍后再发送或编辑', en: '{{n}} held message(s) are waiting for the interrupt to finish; send or edit again in a moment' },
   // U+30FB (not U+00B7): the separator participates in the folded-chip

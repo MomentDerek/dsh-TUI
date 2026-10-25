@@ -107,7 +107,9 @@ export function createSessionBatchRouter(deps: {
       return { ...item, docked: true, orphaned: true }
     })
     if (!changed) return
-    if (held > 0) deps.notify?.(t('input-orphans-held', { count: held }), { color: 'warning', timeoutMs: 8000 })
+    // An ended session sends nothing until the next one: say so, like the dock.
+    const key = deps.state.status === 'disposed' ? 'input-orphans-held-disposed' : 'input-orphans-held'
+    if (held > 0) deps.notify?.(t(key, { count: held }), { color: 'warning', timeoutMs: 8000 })
     deps.state.emit()
   }
 
@@ -116,6 +118,9 @@ export function createSessionBatchRouter(deps: {
     if (status === 'disposed') {
       deps.state.status = 'disposed'
       reconcileRetiredProjection('disposed')
+      // An automatic compaction's `compaction.end` will not come any more
+      // (#1651). A manual one is the transaction's: it retires its own row.
+      if (deps.state.compaction !== undefined && deps.ownsCompactionProgress?.() !== true) deps.state.compaction = undefined
       holdOrphans('all')
       deps.state.emit()
       return

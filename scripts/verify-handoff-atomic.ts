@@ -323,7 +323,9 @@ const stateTmp = mkdtempSync(join(tmpdir(), 'verify-handoff-atomic-'))
     const restart = start >= 0 && end > start ? plugin.slice(start, end) : ''
     check('plugin.ts: a stalled /restart dispose hands back the resume hint (no bare exit)',
       restart.includes('restart timed out while stopping the current turn')
-      && /preservedSessionTail\(sessionId, hint\)/.test(restart)
+      // The hint may carry the queued messages' file (#1651), never replace it.
+      && /preservedSessionTail\(sessionId, resumeLine\)/.test(restart)
+      && /resumeLine = \(id: string\): string => heldInputsResumeCommand\(hint\(id\), options\.env\)/.test(restart)
       && /\}, stalled\)/.test(restart))
   }
 }

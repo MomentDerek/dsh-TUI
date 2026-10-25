@@ -61,7 +61,7 @@ import { clearResumeTarget, resumeTargetFromArgv, stripResumeArgs, writeResumeTa
 import { cmdlineArgsOf, initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
-import { takeHeldInputs, writeHeldInputs } from '../heldInputs.js'
+import { heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../heldInputs.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
 import { DSH_BACKEND_ID, HOST_NOTICE_ENV, KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
@@ -2941,16 +2941,37 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       } catch {
       }
     }
+    // The row's seams (presets, ask_user, approvals, the assembly filters)
+    // live on the row and unload with it: a row that comes back mounts them again.
+    let rowMounted = false
+    const mountRowSeams = async (dshCtx: Context): Promise<void> => {
+      rowMounted = true
+      dshCtx.effect(() => () => { rowMounted = false })
+      await installPresets(dshCtx)
+      const seams = mountDshQuestionSeams(dshCtx)
+      if (seams.notice !== undefined) notifyChannel(seams.notice, { color: 'error' })
+      if (seams.registration.kind === 'waterfall') seams.registration.register(channel)
+      mountDshApprovals(dshCtx)
+      refreshHostServices()
+    }
     entrySlot.reattachDsh = () => {
-      if (compositionFailed || exited || !channel.ready || channel.status !== 'disposed') return false
-      // The resume path reopens the session on the entry's own context, so
-      // a later unload of the row can no longer take its listeners along. It
-      // runs as the entry's action: the row's activation only triggered it.
-      void outsideActivation(() => channel.resumeTo(channel.sessionId)).then(
-        result => { if (result.ok) notifyChannel(t('session-reattached')) },
-        (error: unknown) => { logForDebugging(`dsh-tui: reopening the session after its row came back failed (${error instanceof Error ? error.message : String(error)})`) },
-      )
-      return true
+      if (compositionFailed || exited || rowMounted || !channel.ready) return undefined
+      return async (rowCtx, rowRuntimeConfig) => {
+        if (compositionFailed || exited || rowMounted) return
+        try {
+          // The row may come back with a changed config: read it like the first.
+          rowFacts.config = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>)
+          await mountRowSeams(rowCtx as Context)
+          if (channel.status !== 'disposed') return
+          // The resume path reopens the session on the entry's own context, so
+          // a later unload of the row can no longer take the agent along. It
+          // runs as the entry's action: the row's activation only triggered it.
+          const result = await outsideActivation(() => channel.resumeTo(channel.sessionId))
+          if (result.ok) notifyChannel(t('session-reattached'))
+        } catch (error) {
+          logForDebugging(`dsh-tui: reopening the session after its row came back failed (${error instanceof Error ? error.message : String(error)})`)
+        }
+      }
     }
     entrySlot.attachDsh = async (rowCtx, rowRuntimeConfig) => {
       const dshCtx = rowCtx as Context
@@ -2960,12 +2981,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       try {
         const rowConfig = configValues<Config>(rowRuntimeConfig as RuntimeConfig<Config>)
         rowFacts.config = rowConfig
-        await installPresets(dshCtx)
-        const seams = mountDshQuestionSeams(dshCtx)
-        if (seams.notice !== undefined) notifyChannel(seams.notice, { color: 'error' })
-        if (seams.registration.kind === 'waterfall') seams.registration.register(channel)
-        mountDshApprovals(dshCtx)
-        refreshHostServices()
+        await mountRowSeams(dshCtx)
         const rowRoute = { provider: rowConfig.provider, model: rowConfig.model }
         // The same startup/deployment split the plugin's own boot makes (issue #67).
         const { startupRoute: rowStartupRoute, deploymentRoute: rowDeploymentRoute } = startupRoutes(dshCtx, rowRoute)
@@ -2983,7 +2999,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           const created = await openOnRow(undefined, { cwd })
           await takeOpened(created)
           refreshLastRunRecord()
-          return createDshSession(dshCtx, { agent: created.agent, handle: created.handle })
+          return createDshSession(dshCtx, { agent: created.agent, handle: created.handle }, { screenOutlivesContext: true })
         }
         // The entry mounted on rebuilt defaults: the row's own `workspace` /
         // `cwd` decide the session directory, with `apply`'s precedence. A
@@ -3005,7 +3021,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           ? undefined
           : rowConfig.sessionId ?? resumeTargetFromArgv(cmdlineArgsOf(dshCtx) ?? process.argv.slice(2))
         const opened = await openOnRow(rowSessionId, startupMeta)
-        const session = createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle })
+        const session = createDshSession(dshCtx, { agent: opened.agent, handle: opened.handle }, { screenOutlivesContext: true })
         // The composition failed while this opened: close the unadoptable session.
         if (compositionFailed) {
           await session.dispose().catch(() => undefined)
@@ -3670,12 +3686,17 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
   // abort). Spawning the replacement then would race this process for the
   // session mount, so the only honest answer is the resume hint the user can
   // run after this process is gone.
-  // Held texts no replacement took (a stall, a failed spawn) do not stay on
-  // disk; one the replacement took is already gone.
+  // Held texts no replacement took (a stall, a failed spawn) stay on disk for
+  // the resume command, which names their file; without a session to resume
+  // they go. A replacement that ran took them already.
   const dropHeldInputs = (): void => { takeHeldInputs({ ...options.env }) }
+  const resumeLine = (id: string): string => heldInputsResumeCommand(hint(id), options.env)
+  const ended = (): string => {
+    if (sessionId === '') dropHeldInputs()
+    return preservedSessionTail(sessionId, resumeLine)
+  }
   const stalled = (): void => {
-    dropHeldInputs()
-    writeHandoffNotice(`\ndsh-tui restart timed out while stopping the current turn.${preservedSessionTail(sessionId, hint)}`)
+    writeHandoffNotice(`\ndsh-tui restart timed out while stopping the current turn.${ended()}`)
     process.exit(1)
   }
   disposeRootAndThen(ctx, () => {
@@ -3691,20 +3712,20 @@ function runRestart(ctx: Context, profile: string | undefined, sessionId: string
     void restartTui(sessionId, supervision).then(
       restartCode => {
         logRestartEvent('runRestart: restartTui resolved', { restartCode })
-        dropHeldInputs()
         if (restartCode !== 0) {
           writeHandoffNotice(
-            `\ndsh-tui restart failed to spawn (exit ${restartCode}).${preservedSessionTail(sessionId, hint)}`,
+            `\ndsh-tui restart failed to spawn (exit ${restartCode}).${ended()}`,
           )
+        } else {
+          dropHeldInputs()
         }
         process.exit(restartCode)
       },
       restartError => {
-        dropHeldInputs()
         const message = restartError instanceof Error ? restartError.message : String(restartError)
         logRestartEvent('runRestart: restartTui rejected', { message })
         writeHandoffNotice(
-          `\ndsh-tui restart failed: ${message}.${preservedSessionTail(sessionId, hint)}`,
+          `\ndsh-tui restart failed: ${message}.${ended()}`,
         )
         process.exit(1)
       },

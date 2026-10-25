@@ -308,6 +308,9 @@ export function createInputActions(
       // is in flight; swapping its text into the composer now would hand
       // the user a second copy the late revocation cannot reach.
       if (input.provisionalDockIds?.includes(id) === true) return false
+      // The draft takes the swapped row's place: held for the next session
+      // when that row was (its own session ended), so `/new` keeps it too.
+      const orphaned = state.pending[index]!.orphaned === true
       // A docked retract is purely local on every backend (see removePending).
       state.pending = [
         ...state.pending.filter(item => item.id !== id),
@@ -317,6 +320,7 @@ export function createInputActions(
           images: [...(draft.images ?? [])],
           placement: 'followup',
           docked: true,
+          ...(orphaned ? { orphaned: true } : {}),
         },
       ]
       state.emit()

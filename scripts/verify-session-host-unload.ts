@@ -19,14 +19,16 @@
  *   C. a submit after the unload is refused with the disposed reason: the
  *      agent sees no call and the text is held in the dock [C1-C3]
  *   D. a session unsubscribed before its context unloads reports nothing
- *      [D1]; a session on a context that stays is untouched [D2]
+ *      [D1]; a session on a context that stays is untouched [D2]; one whose
+ *      screen unloads with it leaves the agent's queue alone [D3]
  *   E. the delivered `agent/disposed` path is unchanged, and a submit after
  *      it is refused too [E1, E2]
  *
  * Queued inputs must not vanish with the session either:
  *
- *   G. the follow-up queued before the unload is held in the dock [G1], and
- *      sending the dock while the session is gone keeps it [G2]
+ *   G. the follow-up queued before the unload is held in the dock [G1] and
+ *      taken back from an agent that outlives the row [G3]; sending the dock
+ *      while the session is gone keeps it [G2]
  *   F. the DSH session tells its own discards (cancel, retraction) from the
  *      kernel's (teardown, hook or parent cancel): only the latter go out as
  *      `dropped` [F1-F3]
@@ -34,12 +36,16 @@
  *      survive `/new` [H2] and the dock delivers each once to the new
  *      session [H3]; an interrupt's dock still ends with its session [H4]
  *   I. texts a `/restart` carried over are parked as held rows [I1, I2]
- *   R. the carry-over file is taken once, and only a file it wrote [R1-R4]
+ *   K. the end of a session closes its automatic compaction row [K1]; a
+ *      draft swapped in for a held row is held too and survives /new [K2, K3]
+ *   R. the carry-over file is taken once, and only a file it wrote [R1-R4];
+ *      only its owner can read it [R5]; a restart that ended early names it
+ *      in the resume command [R6, R7]
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -48,7 +54,7 @@ import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentInput, AgentSession, SubmitPlacement } from '../src/agent/session.js'
 import { createDshSession } from '../src/dsh-adapter/backend/session.js'
 import { createChannel } from '../src/dsh-adapter/channel.js'
-import { HELD_INPUTS_ENV, takeHeldInputs, writeHeldInputs } from '../src/heldInputs.js'
+import { HELD_INPUTS_ENV, heldInputsResumeCommand, takeHeldInputs, writeHeldInputs } from '../src/heldInputs.js'
 import { setLang, t } from '../src/i18n.js'
 
 setLang('en')
@@ -102,7 +108,7 @@ const root = new Context()
 {
   const row = await mountRow(root, 'dsh-tui-row')
   const { agent, session, calls } = stubAgent(root, 'foreground')
-  const channel = createChannel(root as never, createDshSession(row.ctx, { agent: agent as never, handle: undefined }), {
+  const channel = createChannel(root as never, createDshSession(row.ctx, { agent: agent as never, handle: undefined }, { screenOutlivesContext: true }), {
     provider: 'test',
     model: 'test-model',
     cwd: '/tmp',
@@ -118,6 +124,14 @@ const root = new Context()
   assert.ok(await settled(() => calls.some(call => call.startsWith('followup:'))), 'fixture: the follow-up reached the agent')
   const pendingBefore = channel.pending.length
   const callsBefore = calls.length
+  // The agent outlives the row here (it is borrowed: no handle): its inbox
+  // still holds the follow-up, and a removal reports the discard synchronously.
+  const retracted: string[] = []
+  agent.inbox.remove = ((id: string) => {
+    retracted.push(id)
+    root.emit('agent/inbox/discarded', { agent, message: { id } } as never)
+    return true
+  }) as never
 
   await row.unload()
   check('A1 the row unload converges the session to disposed', await settled(() => channel.status === 'disposed'), channel.status)
@@ -146,8 +160,10 @@ const root = new Context()
 
   const queued = channel.pending.find(item => item.text === 'queued while the turn runs')
   check('G1 the follow-up queued before the unload is held in the dock, with a notice',
-    queued?.docked === true && queued.orphaned === true && channel.notifications.some(item => item.text === t('input-orphans-held', { count: 1 }) && item.text.startsWith('1 queued message was')),
+    queued?.docked === true && queued.orphaned === true && channel.notifications.some(item => item.text === t('input-orphans-held-disposed', { count: 1 }) && item.text.endsWith('sends it after /new')),
     { queued, notices: channel.notifications.map(item => item.text) })
+  check('G3 the unload takes that follow-up back from an agent that outlives the row, so the held row is never also run',
+    retracted.length === 1 && retracted[0] === queued?.id, { retracted, queued })
   const beforeSend = calls.length
   check('G2 sending the dock while the session is gone keeps it and says why',
     channel.deliverDocked() === 0 && channel.pending.some(item => item.id === queued?.id && item.docked === true)
@@ -172,6 +188,22 @@ const root = new Context()
     check('R2 the replacement takes the texts once, and the file and marker go', JSON.stringify(takeHeldInputs(env)) === '["one","two\\nlines"]'
       && env[HELD_INPUTS_ENV] === undefined && readdirSync(dir).length === 0)
     check('R3 a second take finds nothing', takeHeldInputs({ ...env }).length === 0)
+    if (process.platform !== 'win32') {
+      const marker = writeHeldInputs(['private'], dir, 43)?.[HELD_INPUTS_ENV]
+      check('R5 the file is readable by its owner alone', marker !== undefined && (statSync(marker).mode & 0o077) === 0, marker)
+      takeHeldInputs({ [HELD_INPUTS_ENV]: marker })
+    }
+    const kept = writeHeldInputs(['kept'], join(dir, 'it\'s here'), 44)
+    const file = kept?.[HELD_INPUTS_ENV] ?? ''
+    const line = heldInputsResumeCommand('dsh-tui --resume s1', kept, 'linux')
+    check('R6 a restart that ended early names the kept file in the resume command, quoted, and that command takes it',
+      line === `${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\\\'\'')}' dsh-tui --resume s1`
+        && heldInputsResumeCommand('dsh-tui --resume s1', kept, 'win32') === `dsh-tui --resume s1\n(queued messages kept in ${file})`
+        && JSON.stringify(takeHeldInputs({ ...kept })) === '["kept"]',
+      line)
+    check('R7 with nothing kept the resume command is unchanged',
+      heldInputsResumeCommand('dsh-tui --resume s1', kept, 'linux') === 'dsh-tui --resume s1'
+        && heldInputsResumeCommand('dsh-tui --resume s1', undefined, 'linux') === 'dsh-tui --resume s1')
     const foreign = join(dir, 'notes.json')
     writeFileSync(foreign, JSON.stringify({ texts: ['x'] }))
     check('R4 a marker naming any other file is ignored and the file is kept', takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }).length === 0 && existsSync(foreign))
@@ -267,6 +299,30 @@ const root = new Context()
     channel.deliverDocked() === 1 && await settled(() => next.sent.length === 1) && next.sent[0] === 'dropped by the backend'
       && first.sent.length === 2 && !channel.pending.some(item => item.docked === true),
     { next: next.sent, first: first.sent, pending: channel.pending })
+
+  // ── K: what the end of a session leaves on screen ──
+  const ending = fake('55555555-5555-4555-8555-555555555555')
+  const after: Fake[] = []
+  const screen = createChannel(bare, ending, {
+    model: 'm', provider: '', cwd: '/tmp', activity: false,
+    openSession: () => { const next = fake('66666666-6666-4666-8666-666666666666'); after.push(next); return Promise.resolve(next) },
+  })
+  ending.emit([{ type: 'compaction.start', trigger: 'auto', cancellable: false, time: 1 }])
+  assert.ok(screen.compaction !== undefined, 'fixture: the automatic compaction row is open')
+  screen.submit('queued before the end')
+  assert.ok(await settled(() => ending.sent.length === 1), 'fixture: the input reached the session')
+  ending.emit([{ type: 'session.status', status: 'disposed' }])
+  check('K1 the end of a session closes its automatic compaction row', screen.compaction === undefined, screen.compaction)
+  const heldId = screen.pending.find(item => item.text === 'queued before the end')?.id
+  check('K2 a draft swapped in for a held row is held too',
+    heldId !== undefined && screen.swapDockedForDraft(heldId, { text: 'my unsent draft' })
+      && screen.pending.some(item => item.text === 'my unsent draft' && item.docked === true && item.orphaned === true),
+    screen.pending)
+  assert.ok(await screen.newSession() === true && after.length === 1, 'fixture: /new opened the next session')
+  check('K3 that draft survives /new and the dock sends it once',
+    screen.pending.some(item => item.text === 'my unsent draft') && screen.deliverDocked() === 1
+      && await settled(() => after[0]!.sent.length === 1) && after[0]!.sent[0] === 'my unsent draft',
+    { pending: screen.pending, sent: after[0]?.sent })
 }
 
 // ── D: an unsubscribed session, and a session on a context that stays ────
@@ -288,6 +344,19 @@ const root = new Context()
   await sibling.unload()
   check('D2 a session on a context that stays is untouched by another unload', kept.length === 0 && onRoot.status === 'idle', { kept, status: onRoot.status })
   release()
+
+  // The plugin's own screen unloads with its context: a surviving agent
+  // keeps what it queued (the remounted screen adopts that agent again).
+  const shared = await mountRow(root, 'shared-row')
+  const { agent: surviving } = stubAgent(root, 'surviving')
+  const removed: string[] = []
+  surviving.inbox.remove = ((id: string) => { removed.push(id); return true }) as never
+  const together = createDshSession(shared.ctx, { agent: surviving as never, handle: undefined })
+  const releaseTogether = together.subscribe(() => undefined)
+  await together.submit({ text: 'stays queued', clientMessageId: 'stays-1', native: { id: 'stays-1', content: [{ type: 'text', text: 'stays queued' }] } } as never, 'followup')
+  await shared.unload()
+  check('D3 a screen that unloads with the context leaves the agent\'s queue alone', removed.length === 0 && together.status === 'disposed', { removed, status: together.status })
+  releaseTogether()
 }
 
 // ── E: the delivered agent/disposed path ─────────────────────────────────

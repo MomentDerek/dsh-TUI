@@ -6,7 +6,7 @@
  * them as canceled), so nothing re-sends them until the user sends the dock.
  * Text only: staged images live in the old process's memory.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import { DATA_DIR } from './utils/paths.js'
 
@@ -25,11 +25,25 @@ export function writeHeldInputs(texts: readonly string[], dir: string = DATA_DIR
   const file = join(dir, `held-inputs-${pid}.json`)
   try {
     mkdirSync(dir, { recursive: true })
-    writeFileSync(file, JSON.stringify({ texts: kept }))
+    // The user's own prompt text: readable by them alone.
+    writeFileSync(file, JSON.stringify({ texts: kept }), { mode: 0o600 })
     return { [HELD_INPUTS_ENV]: file }
   } catch {
     return undefined
   }
+}
+
+/**
+ * The resume command after a restart that ended before any replacement took
+ * the held texts (a stall, a failed spawn): their file stays, and the command
+ * hands it to the next launch. A Windows command takes no env prefix, so
+ * there the file is only named.
+ */
+export function heldInputsResumeCommand(command: string, env: Readonly<Record<string, string>> | undefined, platform: NodeJS.Platform = process.platform): string {
+  const file = env?.[HELD_INPUTS_ENV]
+  if (file === undefined || !existsSync(file)) return command
+  if (platform === 'win32') return `${command}\n(queued messages kept in ${file})`
+  return `${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\\\'\'')}' ${command}`
 }
 
 /**
