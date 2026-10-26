@@ -78,9 +78,12 @@ export function createCodexCommands(deps: CommandDeps) {
     skills = loading
     return loading
   }
+  /** A local command's answer (`/diff`, `/usage`). Unlike `!`/`!!` output the
+   *  channel never echoes it, so the record asks the projector to draw it live
+   *  (`displayLive`); without that the transcript stayed empty until replay. */
   const output = (text: string): void => {
     const seq = deps.ctx.nextSeq()
-    deps.emit([{ type: 'user.message', id: `codex-local-${seq}`, anchor: `codex-local-${seq}`, seq, time: deps.ctx.now(), source: 'command-output', text, blocks: [{ type: 'text', text }] }])
+    deps.emit([{ type: 'user.message', id: `codex-local-${seq}`, anchor: `codex-local-${seq}`, seq, time: deps.ctx.now(), source: 'command-output', text, blocks: [{ type: 'text', text }], displayLive: true }])
   }
   /** Backend commands that do not enter the Codex input queue still need to
    *  retire the channel's optimistic pending row. */

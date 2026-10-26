@@ -52,7 +52,21 @@ const command = (id: string, script: string, status: string, output: string | nu
 async function run(cols: number, fullscreen: boolean): Promise<void> {
   const tag = `${cols}c ${fullscreen ? 'fullscreen' : 'inline'}`
   const rows = 30
-  const h = await openHarness()
+  const h = await openHarness({
+    configureFake: fake => {
+      // The real backend command catalog needs `skills/list` to resolve: with
+      // it failing, `commands.changed` never lands and the completion menu has
+      // no `/usage` row — the state where Enter happens to work.
+      fake.on('skills/list', () => ({ data: [{ cwd: CWD, skills: [] }] }))
+      fake.on('account/rateLimits/read', () => ({
+        rateLimits: {
+          primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1800000000 },
+          secondary: { usedPercent: 50, windowDurationMins: 10080, resetsAt: 1800001000 },
+          credits: { balance: '42.5', unlimited: false, hasCredits: true },
+        },
+      }))
+    },
+  })
   const permissions = new PermissionStore()
   const questions = new QuestionStore()
   const ctx = { on: () => () => undefined, get: () => undefined, logger: { warn: () => undefined, info: () => undefined, debug: () => undefined } } as never
@@ -153,6 +167,13 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   try {
     // 固定窗:pacing the key handlers attach after the first frame.
     await sleep(300)
+    // A backend command that answers itself has no channel-side echo: the
+    // projector must draw its output live (issue #1774), not only on replay.
+    await type('/usage')
+    stdin.write('\r')
+    check(`${tag}: /usage draws the quota live as a local-output row`, await settled(() => channel.rows.some(row => row.kind === 'local-output' && row.text.includes('25%') && row.text.includes('50%') && row.text.includes('42.5'))), view())
+    check(`${tag}: /usage is on screen`, await settled(() => screen().includes('25%')), screen())
+    check(`${tag}: /usage never starts a turn`, h.sent('turn/start').length === 0, String(h.sent('turn/start').length))
     await type('run it')
     stdin.write('\r')
     check(`${tag}: the message reaches turn/start with its client id`, await settled(() => h.sent('turn/start').length === 1) && typeof h.sent('turn/start')[0]!.clientUserMessageId === 'string')

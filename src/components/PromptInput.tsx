@@ -2131,8 +2131,14 @@ export function PromptInput({
     // draft through the ordinary path instead of accepting a stale row.
     if (overlayOpen && value === completionInput) {
       const command = suggestions[selectedCommand]
-      if (command) {
-        tryRunCommand(command.commandLine)
+      // A backend command (Codex `/usage`, `/diff`) is answered by the
+      // session, not by this screen: `tryRunCommand` cannot consume it. Return
+      // only on success — swallowing the failure left Enter inert while the
+      // menu held the line, and typing a space (which closes the menu) looked
+      // like the only way to run it.
+      if (command !== undefined) {
+        if (tryRunCommand(command.commandLine)) return
+        submitText(command.commandLine)
         return
       }
     }

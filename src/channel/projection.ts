@@ -773,9 +773,11 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
     }
     // Command output a backend recorded as an input (Claude: `!!` output
     // sent on to the model): live, the channel already showed the command
-    // and its output; a replay restores the output row.
+    // and its output; a replay restores the output row. A backend command
+    // that answers itself (`/usage`, `/diff`) has no channel-side echo, and
+    // marks its record `displayLive` so the live pass draws it too.
     if (event.source === 'command-output') {
-      if (replaying && event.text !== '') {
+      if ((replaying || event.displayLive === true) && event.text !== '') {
         appendRow({ id: deps.rowIds.value, kind: 'local-output', text: preview(event.text, LOCAL_OUTPUT_LIMIT), seq: event.seq })
         deps.rowIds.value += 1
       }
