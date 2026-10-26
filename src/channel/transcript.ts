@@ -22,3 +22,15 @@ export function preview(text: string, limit: number): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`
 }
+
+/**
+ * One report line that keeps its shape: blank rows stay blank and leading
+ * indentation survives; a stray newline still cannot become a second row.
+ */
+export function previewIndented(text: string, limit: number): string {
+  const line = text.replace(/[\r\n]+/gu, ' ').replace(/\s+$/u, '')
+  // A truly empty Text node measures as zero height; one no-break space keeps
+  // the blank row the report asked for without painting anything.
+  if (line === '') return '\u00a0'
+  return line.length <= limit ? line : `${line.slice(0, limit)}…`
+}

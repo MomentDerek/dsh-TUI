@@ -58,6 +58,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
       // it failing, `commands.changed` never lands and the completion menu has
       // no `/usage` row — the state where Enter happens to work.
       fake.on('skills/list', () => ({ data: [{ cwd: CWD, skills: [] }] }))
+      fake.on('gitDiffToRemote', () => ({ sha: 'abc', diff: Array.from({ length: 300 }, (_, i) => `+line ${i}`).join('\n') }))
       fake.on('account/rateLimits/read', () => ({
         rateLimits: {
           primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1800000000 },
@@ -216,6 +217,16 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     stdin.write('\x1b')
     check(`${tag}: Esc interrupts the turn`, await settled(() => h.sent('turn/interrupt').length === 1 && h.sent('turn/interrupt')[0]!.turnId === 'turn-3'))
     check(`${tag}: the interrupted card and the interrupt row show`, await settled(() => screen().includes(codexText('codex-interrupted')) && !channel.working), screen())
+
+    // A long report must not push the conversation out of the rendered window:
+    // the projection caps it and says so.
+    await type('/diff')
+    stdin.write('\r')
+    check(`${tag}: /diff is bounded to 200 rows plus a truncation row`, await settled(() => {
+      const rows = channel.rows.filter(row => row.kind === 'local-output')
+      const diffRows = rows.filter(row => row.text.startsWith('+line '))
+      return diffRows.length === 200 && rows.some(row => row.text.includes('truncated'))
+    }), String(channel.rows.filter(row => row.kind === 'local-output').length))
   } finally {
     instance.unmount()
     channel.releaseContributions()

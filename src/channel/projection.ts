@@ -24,13 +24,18 @@ import { buildQuestionRecord, parseQuestionRecordAnswers, parseQuestionRecordQue
 import { cleanRenderText, NOTICE_CELLS } from './sanitize.js'
 import { appendLiveOutput, type LiveOutputTail } from './live-output.js'
 import { replaySelectionAttachment } from './selection-record.js'
-import { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, preview, RESULT_PREVIEW_LIMIT } from './transcript.js'
+import { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, preview, previewIndented, RESULT_PREVIEW_LIMIT } from './transcript.js'
 import { addUsageToBucket, emptyCostBuckets, estimateTokens, estimateTokensFraction, usageOutputTokens, type PricingWindow } from './usage.js'
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
 /** Notice keys whose live toast is tracked (a repeat replaces it). */
 const MAX_KEYED_TOASTS = 32
+
+/** Rows one backend command report may add (aligned with `cleanCommandReport`):
+ *  the transcript renders the last 120 rows, so an unbounded `/diff` would push
+ *  the whole conversation out of the window. */
+const MAX_LOCAL_REPORT_LINES = 200
 
 /** Short buffered deliveries are not reliable decode-rate samples. */
 const MIN_TPS_DECODE_MS = 500
@@ -780,11 +785,16 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
       if ((replaying || event.displayLive === true) && event.text !== '') {
         if (event.displayLive === true) {
           // A backend command's own report (`/usage` windows, a git diff): one
-          // row per line, the shape `pushLocal` and the ask-result report use.
-          // `preview()` flattens whitespace, so a single row would collapse the
-          // whole report into one truncated line.
-          for (const line of event.text.split('\n')) {
-            appendRow({ id: deps.rowIds.value, kind: 'local-output', text: preview(line, LOCAL_OUTPUT_LIMIT), seq: event.seq })
+          // row per line, indentation and blank rows kept (the `pushLocal`
+          // report shape). Flattening would lose the structure, and an
+          // unbounded report would push the conversation out of the window.
+          const lines = event.text.split('\n')
+          for (const line of lines.slice(0, MAX_LOCAL_REPORT_LINES)) {
+            appendRow({ id: deps.rowIds.value, kind: 'local-output', text: previewIndented(line, LOCAL_OUTPUT_LIMIT), seq: event.seq })
+            deps.rowIds.value += 1
+          }
+          if (lines.length > MAX_LOCAL_REPORT_LINES) {
+            appendRow({ id: deps.rowIds.value, kind: 'local-output', text: t('context-truncated'), seq: event.seq })
             deps.rowIds.value += 1
           }
         } else {

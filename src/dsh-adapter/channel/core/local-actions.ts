@@ -14,7 +14,7 @@ import { t } from '../../../i18n.js'
 import { runForegroundShell, type ForegroundShell } from '../../compat/shell.js'
 import type { ChannelBinding } from '../binding.js'
 import type { ChannelOwner } from '../owner.js'
-import { LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview } from '../transcript.js'
+import { LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, previewIndented } from '../transcript.js'
 import { sessionWorkingDirectory } from '../../../channel/working-directory.js'
 import type { ChannelState } from '../types.js'
 import type { CoreHost } from './host.js'
@@ -36,18 +36,6 @@ export function setActivityFrames(
   state.emit()
   notify(t('activity-indicator-switched', { name: preset }))
   return true
-}
-
-/**
- * One report line that keeps its shape: blank rows stay blank and leading
- * indentation survives; a stray newline still cannot become a second row.
- */
-function previewIndented(text: string, limit: number): string {
-  const line = text.replace(/[\r\n]+/gu, ' ').replace(/\s+$/u, '')
-  // A truly empty Text node measures as zero height; one no-break space keeps
-  // the blank row the report asked for without painting anything.
-  if (line === '') return '\u00a0'
-  return line.length <= limit ? line : `${line.slice(0, limit)}…`
 }
 
 export function createCoreLocalActions(ctx: ServiceLookup, deps: {

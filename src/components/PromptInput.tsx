@@ -4496,10 +4496,18 @@ export function PromptInput({
             query={value}
             accent={promptAccent}
             holdFrom={suggestionsHoldFrom}
-            // 点击行 = 运行该命令（与 Enter 同路径）
+            // 点击行 = 运行该命令（选中行与 Enter 共用派遣）
             onPick={(index) => {
               const command = suggestions[index]
-              if (command) dispatchCompletion(valueRef.current === completionInput ? command.commandLine : valueRef.current)
+              if (command === undefined) return
+              // A stale row (the draft moved on while it was showing) does not
+              // own the click: only run what the screen can dispatch, never
+              // send the half-typed draft to the model.
+              if (valueRef.current !== completionInput) {
+                tryRunCommand(valueRef.current)
+                return
+              }
+              dispatchCompletion(command.commandLine)
             }}
             // 滚轮 = 移动选中行（与 ↑/↓ 同路径，窗口跟随）
             onWheelStep={(step) => {
