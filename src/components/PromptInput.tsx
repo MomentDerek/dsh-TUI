@@ -1730,7 +1730,7 @@ export function PromptInput({
     }
   }
 
-  const submitText = (text: string, notice?: string) => {
+  const submitText = (text: string, notice?: string, options?: { readonly suppressWorkingNotice?: boolean }) => {
     const trimmed = text.trim()
     if (!trimmed) return
     const images = imageRefsFor(trimmed)
@@ -1745,7 +1745,7 @@ export function PromptInput({
     clearDeliveredDraft()
     if (notice) {
       channel.notify(notice, { timeoutMs: 2500 })
-    } else if (channel.working) {
+    } else if (channel.working && options?.suppressWorkingNotice !== true) {
       // While the model is streaming, the message joins the DSH inbox and is
       // processed after the current turn — say so, or it looks "lost".
       channel.notify(t('input-sent-after-turn'), { timeoutMs: 2500 })
@@ -2114,7 +2114,10 @@ export function PromptInput({
       notifyNotReady()
       return
     }
-    submitText(line)
+    // A backend command answers itself (Codex `/usage`, `/diff`): it is not
+    // queued for after the turn, so the working notice would contradict what
+    // the transcript shows a moment later.
+    submitText(line, undefined, { suppressWorkingNotice: true })
   }
 
   /**

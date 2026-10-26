@@ -782,9 +782,14 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
           // A backend command's own report (`/usage` windows, a git diff): the
           // same bounded shape `pushLocal` uses for registry reports — 200
           // lines, 64K UTF-16 units, 4000 cells per line, ANSI/C0 stripped,
-          // indentation and blank rows kept. A trailing newline is not a row.
-          const report = cleanCommandReport(event.text.replace(/\n$/u, ''))
-          trimLocalRows(state.rows, report.lines.length + Number(report.truncated))
+          // indentation and blank rows kept; a trailing newline is not a row.
+          const report = cleanCommandReport(event.text)
+          // The `local` title is the block boundary `trimLocalRows` relies on
+          // (and tells the reader which command produced the report).
+          const title = event.label ?? t('command-output-title')
+          trimLocalRows(state.rows, report.lines.length + 1 + Number(report.truncated))
+          appendRow({ id: deps.rowIds.value, kind: 'local', text: title, seq: event.seq })
+          deps.rowIds.value += 1
           for (const line of report.lines) {
             appendRow({ id: deps.rowIds.value, kind: 'local-output', text: previewIndented(line, 65_536), seq: event.seq })
             deps.rowIds.value += 1

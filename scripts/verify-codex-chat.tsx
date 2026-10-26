@@ -33,6 +33,7 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
   ])
 import { NO_REPLY } from './lib/codex-fake-app-server.js'
 import { CWD, openHarness, THREAD, tick } from './lib/codex-session-harness.js'
+import { trimLocalRows } from '../src/channel/transcript.js'
 
 setLang('en')
 let passed = 0
@@ -58,9 +59,15 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
       // it failing, `commands.changed` never lands and the completion menu has
       // no `/usage` row — the state where Enter happens to work.
       fake.on('skills/list', () => ({ data: [{ cwd: CWD, skills: [] }] }))
-      // A real `gitDiffToRemote` diff ends with a newline: it must not become
-      // an extra blank row, nor a false truncation at exactly 200 lines.
-      fake.on('gitDiffToRemote', () => ({ sha: 'abc', diff: `${Array.from({ length: 300 }, (_, i) => `+line ${i}`).join('\n')}\n` }))
+      // Two calls: exactly 200 lines + a real trailing newline (must not add a
+      // blank row or a false truncation), then 300 lines (must be capped).
+      let diffCalls = 0
+      fake.on('gitDiffToRemote', () => {
+        diffCalls += 1
+        const count = diffCalls === 1 ? 200 : 300
+        const prefix = diffCalls === 1 ? '+first ' : '+second '
+        return { sha: 'abc', diff: `${Array.from({ length: count }, (_, i) => `${prefix}${i}`).join('\n')}\n` }
+      })
       fake.on('account/rateLimits/read', () => ({
         rateLimits: {
           primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1800000000 },
@@ -175,7 +182,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     await type('/usage')
     // The menu row is the path this fix exists for: without it Enter takes the
     // plain submit path and the completion dispatch is never exercised.
-    check(`${tag}: the completion menu holds the backend command`, await settled(() => channel.commandCompletions('/usage').length === 1), view())
+    check(`${tag}: the completion menu holds the backend command`, await settled(() => channel.commandCompletions('/usage').length === 1 && screen().includes('Show Codex')), view())
     stdin.write('\r')
     check(`${tag}: /usage keeps one row per window`, await settled(() => {
       const rows = channel.rows.filter(row => row.kind === 'local-output')
@@ -220,15 +227,24 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     check(`${tag}: Esc interrupts the turn`, await settled(() => h.sent('turn/interrupt').length === 1 && h.sent('turn/interrupt')[0]!.turnId === 'turn-3'))
     check(`${tag}: the interrupted card and the interrupt row show`, await settled(() => screen().includes(codexText('codex-interrupted')) && !channel.working), screen())
 
-    // A long report must not push the conversation out of the rendered window:
-    // the projection caps it and says so.
+    // Exactly 200 lines + a trailing newline: no blank row, no false truncation.
     await type('/diff')
     stdin.write('\r')
-    check(`${tag}: /diff is bounded to 200 rows plus a truncation row`, await settled(() => {
+    check(`${tag}: /diff keeps exactly 200 lines with a trailing newline`, await settled(() => {
       const rows = channel.rows.filter(row => row.kind === 'local-output')
-      const diffRows = rows.filter(row => row.text.startsWith('+line '))
-      // The trailing newline must not add a blank row or a false truncation.
-      return diffRows.length === 200 && rows.some(row => row.text.includes('truncated')) && !rows.some(row => row.text === '\u00a0')
+      return rows.filter(row => row.text.startsWith('+first ')).length === 200
+        && !rows.some(row => row.text.includes('truncated'))
+        && !rows.some(row => row.text === '\u00a0')
+    }), String(channel.rows.filter(row => row.kind === 'local-output').length))
+    check(`${tag}: /diff titles its report block`, channel.rows.some(row => row.kind === 'local' && row.text === '/diff'))
+
+    // 300 lines: capped at 200 with a truncation row.
+    await type('/diff')
+    stdin.write('\r')
+    check(`${tag}: an oversized /diff is capped with a truncation row`, await settled(() => {
+      const rows = channel.rows.filter(row => row.kind === 'local-output')
+      return rows.filter(row => row.text.startsWith('+second ')).length === 200
+        && rows.some(row => row.text.includes('truncated'))
     }), String(channel.rows.filter(row => row.kind === 'local-output').length))
   } finally {
     instance.unmount()
@@ -236,6 +252,18 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     await h.session.dispose()
     term.dispose()
   }
+}
+
+// The local-row budget must drop whole blocks: a run of headerless rows would
+// be spliced as one block and wipe every earlier report at once.
+{
+  const rows: { kind: string }[] = []
+  for (let block = 0; block < 4; block++) {
+    rows.push({ kind: 'local' })
+    for (let i = 0; i < 200; i++) rows.push({ kind: 'local-output' })
+  }
+  trimLocalRows(rows, 10)
+  check('trimLocalRows drops whole blocks and keeps the newest', rows.length === 402 && rows.filter(row => row.kind === 'local').length === 2)
 }
 
 await run(80, false)
