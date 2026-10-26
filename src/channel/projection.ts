@@ -778,8 +778,21 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
     // marks its record `displayLive` so the live pass draws it too.
     if (event.source === 'command-output') {
       if ((replaying || event.displayLive === true) && event.text !== '') {
-        appendRow({ id: deps.rowIds.value, kind: 'local-output', text: preview(event.text, LOCAL_OUTPUT_LIMIT), seq: event.seq })
-        deps.rowIds.value += 1
+        if (event.displayLive === true) {
+          // A backend command's own report (`/usage` windows, a git diff): one
+          // row per line, the shape `pushLocal` and the ask-result report use.
+          // `preview()` flattens whitespace, so a single row would collapse the
+          // whole report into one truncated line.
+          for (const line of event.text.split('\n')) {
+            appendRow({ id: deps.rowIds.value, kind: 'local-output', text: preview(line, LOCAL_OUTPUT_LIMIT), seq: event.seq })
+            deps.rowIds.value += 1
+          }
+        } else {
+          // `!`/`!!` output keeps the live shape the channel already showed
+          // (one flattened row): the replay must not disagree with it.
+          appendRow({ id: deps.rowIds.value, kind: 'local-output', text: preview(event.text, LOCAL_OUTPUT_LIMIT), seq: event.seq })
+          deps.rowIds.value += 1
+        }
       }
       return
     }

@@ -2102,6 +2102,22 @@ export function PromptInput({
   }
 
   /**
+   * Run one completion row. The screen's own (and registry) commands consume
+   * it; a backend command (`/usage`, `/diff`) or backend skill answers through
+   * the session, so its line goes out through the ordinary submit path.
+   * Enter, the mouse pick and the batched-stdin line all share this: returning
+   * on `tryRunCommand`'s false is what used to leave them dead.
+   */
+  const dispatchCompletion = (line: string): void => {
+    if (tryRunCommand(line)) return
+    if (channel.ready === false) {
+      notifyNotReady()
+      return
+    }
+    submitText(line)
+  }
+
+  /**
    * The Enter main path, shared by the inline prompt, the expanded
    * editor's Ctrl+Enter, and its Send button:
    * - command menu open → run the SELECTED command (never send `/mo`);
@@ -2131,14 +2147,8 @@ export function PromptInput({
     // draft through the ordinary path instead of accepting a stale row.
     if (overlayOpen && value === completionInput) {
       const command = suggestions[selectedCommand]
-      // A backend command (Codex `/usage`, `/diff`) is answered by the
-      // session, not by this screen: `tryRunCommand` cannot consume it. Return
-      // only on success — swallowing the failure left Enter inert while the
-      // menu held the line, and typing a space (which closes the menu) looked
-      // like the only way to run it.
       if (command !== undefined) {
-        if (tryRunCommand(command.commandLine)) return
-        submitText(command.commandLine)
+        dispatchCompletion(command.commandLine)
         return
       }
     }
@@ -2776,7 +2786,7 @@ export function PromptInput({
       if (line.startsWith('/')) {
         const matches = channel.commandCompletions(line)
         if (matches.length === 1) {
-          tryRunCommand(matches[0]!.commandLine)
+          dispatchCompletion(matches[0]!.commandLine)
           return
         }
       }
@@ -4489,7 +4499,7 @@ export function PromptInput({
             // 点击行 = 运行该命令（与 Enter 同路径）
             onPick={(index) => {
               const command = suggestions[index]
-              if (command) tryRunCommand(valueRef.current === completionInput ? command.commandLine : valueRef.current)
+              if (command) dispatchCompletion(valueRef.current === completionInput ? command.commandLine : valueRef.current)
             }}
             // 滚轮 = 移动选中行（与 ↑/↓ 同路径，窗口跟随）
             onWheelStep={(step) => {

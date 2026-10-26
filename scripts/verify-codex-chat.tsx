@@ -170,8 +170,17 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     // A backend command that answers itself has no channel-side echo: the
     // projector must draw its output live (issue #1774), not only on replay.
     await type('/usage')
+    // The menu row is the path this fix exists for: without it Enter takes the
+    // plain submit path and the completion dispatch is never exercised.
+    check(`${tag}: the completion menu holds the backend command`, channel.commandCompletions('/usage').length === 1, view())
     stdin.write('\r')
-    check(`${tag}: /usage draws the quota live as a local-output row`, await settled(() => channel.rows.some(row => row.kind === 'local-output' && row.text.includes('25%') && row.text.includes('50%') && row.text.includes('42.5'))), view())
+    check(`${tag}: /usage keeps one row per window`, await settled(() => {
+      const rows = channel.rows.filter(row => row.kind === 'local-output')
+      return rows.some(row => row.text.includes('25%') && !row.text.includes('50%'))
+        && rows.some(row => row.text.includes('50%') && !row.text.includes('25%'))
+        && rows.some(row => row.text.includes('42.5'))
+    }), view())
+    check(`${tag}: /usage clears the draft`, await settled(() => !view().includes('❯ /usage')), view())
     check(`${tag}: /usage is on screen`, await settled(() => screen().includes('25%')), screen())
     check(`${tag}: /usage never starts a turn`, h.sent('turn/start').length === 0, String(h.sent('turn/start').length))
     await type('run it')
