@@ -38,6 +38,8 @@ export function previewIndented(text: string, limit: number): string {
 /**
  * Keep local rows inside the transcript budget: drop the oldest `local` block
  * (its title plus its `local-output` lines) until the incoming report fits.
+ * A run of headerless `local-output` rows (a `!!` replay with no `local`
+ * companion) counts as one block — nothing marks a boundary inside it.
  * Local rows cannot be restored from backend history, so nothing else bounds
  * them — `foldRows` deliberately leaves them alone. Shared by `pushLocal`
  * (channel-side reports) and the projector (backend command reports).

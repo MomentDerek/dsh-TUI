@@ -1730,7 +1730,7 @@ export function PromptInput({
     }
   }
 
-  const submitText = (text: string, notice?: string, options?: { readonly suppressWorkingNotice?: boolean }) => {
+  const submitText = (text: string, notice?: string) => {
     const trimmed = text.trim()
     if (!trimmed) return
     const images = imageRefsFor(trimmed)
@@ -1745,7 +1745,7 @@ export function PromptInput({
     clearDeliveredDraft()
     if (notice) {
       channel.notify(notice, { timeoutMs: 2500 })
-    } else if (channel.working && options?.suppressWorkingNotice !== true) {
+    } else if (channel.working) {
       // While the model is streaming, the message joins the DSH inbox and is
       // processed after the current turn — say so, or it looks "lost".
       channel.notify(t('input-sent-after-turn'), { timeoutMs: 2500 })
@@ -2110,14 +2110,15 @@ export function PromptInput({
    */
   const dispatchCompletion = (line: string): void => {
     if (tryRunCommand(line)) return
-    if (channel.ready === false) {
-      notifyNotReady()
+    // A backend command (Codex `/usage`, `/diff`, a backend skill) answers
+    // through the session. While a turn runs it takes the same placement a
+    // typed line does — `steerSend` — so the menu and the keyboard agree;
+    // self-answering commands run immediately either way.
+    if (channel.working) {
+      steerSend(line)
       return
     }
-    // A backend command answers itself (Codex `/usage`, `/diff`): it is not
-    // queued for after the turn, so the working notice would contradict what
-    // the transcript shows a moment later.
-    submitText(line, undefined, { suppressWorkingNotice: true })
+    submitText(line)
   }
 
   /**

@@ -34,6 +34,7 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
 import { NO_REPLY } from './lib/codex-fake-app-server.js'
 import { CWD, openHarness, THREAD, tick } from './lib/codex-session-harness.js'
 import { trimLocalRows } from '../src/channel/transcript.js'
+import { cleanCommandReport } from '../src/channel/sanitize.js'
 
 setLang('en')
 let passed = 0
@@ -264,6 +265,14 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   }
   trimLocalRows(rows, 10)
   check('trimLocalRows drops whole blocks and keeps the newest', rows.length === 402 && rows.filter(row => row.kind === 'local').length === 2)
+}
+
+// The report budget's boundary: a trailing newline is a terminator, not a row.
+{
+  const exact = cleanCommandReport(`${Array.from({ length: 200 }, (_, i) => `+l${i}`).join('\n')}\n`)
+  const over = cleanCommandReport(`${Array.from({ length: 201 }, (_, i) => `+l${i}`).join('\n')}\n`)
+  check('cleanCommandReport: 200 lines + trailing newline is exact', exact.lines.length === 200 && !exact.truncated && !exact.lines.includes(''))
+  check('cleanCommandReport: 201 lines + trailing newline truncates to 200', over.lines.length === 200 && over.truncated)
 }
 
 await run(80, false)

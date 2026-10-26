@@ -44,7 +44,14 @@ export function foldRows(
     cursor.rows = rows
     cursor.head = rows[0]
   }
-  if (excess <= from) return 0
+  if (excess <= from) {
+    // The array shrank under the cursor (a local-block splice, not a quiet
+    // frame): rows above the fold moved down, so the next pass must rescan
+    // from the head or they stay unfolded forever. `excess === from` is the
+    // steady streaming case and keeps the incremental pass.
+    if (cursor !== undefined && excess < from) cursor.index = 0
+    return 0
+  }
   let folded = 0
   for (const row of rows.slice(from, excess)) {
     if (row.folded || row.restored) continue
