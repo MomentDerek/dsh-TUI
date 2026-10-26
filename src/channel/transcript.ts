@@ -34,3 +34,21 @@ export function previewIndented(text: string, limit: number): string {
   if (line === '') return '\u00a0'
   return line.length <= limit ? line : `${line.slice(0, limit)}…`
 }
+
+/**
+ * Keep local rows inside the transcript budget: drop the oldest `local` block
+ * (its title plus its `local-output` lines) until the incoming report fits.
+ * Local rows cannot be restored from backend history, so nothing else bounds
+ * them — `foldRows` deliberately leaves them alone. Shared by `pushLocal`
+ * (channel-side reports) and the projector (backend command reports).
+ */
+export function trimLocalRows(rows: { kind: string }[], nextLines: number): void {
+  let count = rows.reduce((sum, row) => sum + Number(row.kind === 'local' || row.kind === 'local-output'), nextLines)
+  for (let i = 0; count > MAX_ROWS && i < rows.length;) {
+    if (rows[i]!.kind !== 'local' && rows[i]!.kind !== 'local-output') { i++; continue }
+    let end = i + 1
+    while (rows[end]?.kind === 'local-output') end++
+    count -= end - i
+    rows.splice(i, end - i)
+  }
+}

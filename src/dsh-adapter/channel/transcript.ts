@@ -3,11 +3,11 @@ import { toolResultPayload } from '../compat/messages.js'
 import { t } from '../../i18n.js'
 import type { ChatRow, ToolResultView, ToolViewPresenter } from './types.js'
 import { markChannelReadDirty } from '../../adapter/channel/read-view.js'
-import { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, previewIndented, RESULT_PREVIEW_LIMIT } from '../../channel/transcript.js'
+import { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, previewIndented, RESULT_PREVIEW_LIMIT, trimLocalRows } from '../../channel/transcript.js'
 
 // Limits and the preview helper are backend-neutral (src/channel/transcript.ts);
 // re-exported here for the existing importers.
-export { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, previewIndented, RESULT_PREVIEW_LIMIT }
+export { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, previewIndented, RESULT_PREVIEW_LIMIT, trimLocalRows }
 
 /**
  * Fold the oldest rows beyond the transcript window cap: drop each row's

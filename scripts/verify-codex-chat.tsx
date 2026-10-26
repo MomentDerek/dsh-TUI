@@ -58,7 +58,9 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
       // it failing, `commands.changed` never lands and the completion menu has
       // no `/usage` row — the state where Enter happens to work.
       fake.on('skills/list', () => ({ data: [{ cwd: CWD, skills: [] }] }))
-      fake.on('gitDiffToRemote', () => ({ sha: 'abc', diff: Array.from({ length: 300 }, (_, i) => `+line ${i}`).join('\n') }))
+      // A real `gitDiffToRemote` diff ends with a newline: it must not become
+      // an extra blank row, nor a false truncation at exactly 200 lines.
+      fake.on('gitDiffToRemote', () => ({ sha: 'abc', diff: `${Array.from({ length: 300 }, (_, i) => `+line ${i}`).join('\n')}\n` }))
       fake.on('account/rateLimits/read', () => ({
         rateLimits: {
           primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1800000000 },
@@ -173,7 +175,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     await type('/usage')
     // The menu row is the path this fix exists for: without it Enter takes the
     // plain submit path and the completion dispatch is never exercised.
-    check(`${tag}: the completion menu holds the backend command`, channel.commandCompletions('/usage').length === 1, view())
+    check(`${tag}: the completion menu holds the backend command`, await settled(() => channel.commandCompletions('/usage').length === 1), view())
     stdin.write('\r')
     check(`${tag}: /usage keeps one row per window`, await settled(() => {
       const rows = channel.rows.filter(row => row.kind === 'local-output')
@@ -225,7 +227,8 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     check(`${tag}: /diff is bounded to 200 rows plus a truncation row`, await settled(() => {
       const rows = channel.rows.filter(row => row.kind === 'local-output')
       const diffRows = rows.filter(row => row.text.startsWith('+line '))
-      return diffRows.length === 200 && rows.some(row => row.text.includes('truncated'))
+      // The trailing newline must not add a blank row or a false truncation.
+      return diffRows.length === 200 && rows.some(row => row.text.includes('truncated')) && !rows.some(row => row.text === '\u00a0')
     }), String(channel.rows.filter(row => row.kind === 'local-output').length))
   } finally {
     instance.unmount()

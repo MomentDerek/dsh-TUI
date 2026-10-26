@@ -751,9 +751,10 @@ thread 时 `thread/resume` 返回 `-32600`，message `thread <id> already has an
 | `/usage` | 以 `local-output` 行列出 `account/rateLimits/read` 的各窗口（已用 %、重置时间）与 credits |
 | `/<skill-name> [args]` | `turn/start{input:[{type:'skill', name, path}, {type:'text', text: args}]}`（skill 的 path 来自 `skills/list`） |
 
-- 后端命令的本地输出（`/diff`、`/usage`）带 `displayLive` 随 live 事件立即显示，每条输出一行
-  （`preview` 会压平行内空白，逐行建行才能保留配额窗口与 diff 的结构）；这些行不进入服务端 turn
-  items，`/resume` 后不会重放——与 `!`/`!!` 的本地行同一取舍。
+- 后端命令的本地输出（`/diff`、`/usage`）带 `displayLive` 随 live 事件立即显示，按既有报告预算
+  逐行建行（`cleanCommandReport`：最多 200 行、65536 个 UTF-16 码元、每行 4000 显示单元，超出补一条
+  截断行；保留缩进与空行）。压平会丢掉配额窗口与 diff 的结构，行数不设界则会把对话挤出渲染窗。
+  这些行不进入服务端 turn items，`/resume` 后不会重放——与 `!`/`!!` 的本地行同一取舍。
 - 与本地命令重名时本地优先（核心的既定规则）。**评审修订**：dsh-TUI 本地已有 `/init`（DSH 扩展的
   AGENTS.md 模板生成器，非 DSH 会话会被拒绝），所以 `/init` **不能**作为后端命令——它会被本地名字
   遮住，永远到不了后端。改由 N9 的 `init` 能力承接：Codex 的实现提交官方 `/init` 提示词（从
