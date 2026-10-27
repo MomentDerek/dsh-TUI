@@ -225,6 +225,16 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     check(`${tag}: async answer echo is readable and has no protocol envelope`, await settled(() => channel.rows.some(row => row.kind === 'user' && row.text === '> Which approach?\n\nSmall')) && !screen().includes('send_user_message_question_reply'), view())
     stdin.write('\x1b')
     check(`${tag}: dismissing an async question leaves work running`, await settled(() => questions.getSnapshot() === null) && h.sent('turn/interrupt').length === 0 && channel.working, view())
+    // While the turn runs, the menu dispatches a backend command through the
+    // typed placement: it answers itself, never reaches turn/steer, and does
+    // not start a new turn.
+    await type('/usage')
+    // 固定窗:this Enter must not collapse into the earlier Esc (80ms guard).
+    await sleep(120)
+    stdin.write('\r')
+    check(`${tag}: /usage answers mid-turn without a steer or a new turn`, await settled(() => channel.rows.filter(row => row.kind === 'local' && row.text === '/usage').length >= 2
+      && h.sent('turn/start').length === 3
+      && !h.sent('turn/steer').some(request => JSON.stringify(request).includes('/usage'))), view())
     stdin.write('\x1b')
     check(`${tag}: Esc interrupts the turn`, await settled(() => h.sent('turn/interrupt').length === 1 && h.sent('turn/interrupt')[0]!.turnId === 'turn-3'))
     check(`${tag}: the interrupted card and the interrupt row show`, await settled(() => screen().includes(codexText('codex-interrupted')) && !channel.working), screen())
@@ -276,18 +286,23 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   check('cleanCommandReport: 201 lines + trailing newline truncates to 200', over.lines.length === 200 && over.truncated)
 }
 
-// An equal-length middle splice must reset the fold cursor, or the shifted
-// assistant rows never fold again.
+// A middle splice that also grows the array must reset the fold cursor: the
+// old boundary row moved even though `excess > from`, so the shifted assistant
+// rows would never fold again. Index 0 stays a stable non-local row so only the
+// boundary witness can catch the shift.
 {
   const rows: { kind: string; text: string; folded?: boolean }[] = []
+  rows.push({ kind: 'user', text: 'u' })
   for (let i = 0; i < 201; i++) rows.push({ kind: 'local', text: 'l' })
-  for (let i = 0; i < 700; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
+  for (let i = 0; i < 500; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
   const cursor = { rows: rows as unknown, index: 0, head: undefined as unknown, boundary: undefined as unknown }
   foldRows(rows as never, 600, cursor as never)
-  rows.splice(0, 201, ...Array.from({ length: 201 }, () => ({ kind: 'local', text: 'l' })))
+  trimLocalRows(rows as never, 402)
+  for (let i = 0; i < 402; i++) rows.push({ kind: 'local', text: 'l' })
   foldRows(rows as never, 600, cursor as never)
-  const unfolded = rows.slice(0, 301).filter(row => row.kind === 'assistant' && row.folded !== true).length
-  check('foldRows rescans after an equal-length middle splice', unfolded === 0)
+  const excess = rows.length - 600
+  const unfolded = rows.slice(0, excess).filter(row => row.kind === 'assistant' && row.folded !== true).length
+  check('foldRows rescans after a net-growth middle splice', unfolded === 0)
 }
 
 await run(80, false)

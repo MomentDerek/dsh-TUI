@@ -791,6 +791,9 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
           appendRow({ id: deps.rowIds.value, kind: 'local', text: title, seq: event.seq })
           deps.rowIds.value += 1
           for (const line of report.lines) {
+            // `cleanCommandReport` already bounded the line in cells; this
+            // call only normalizes newlines and blank rows (the 65K limit can
+            // never cut here — a 240 limit would undo the report budget).
             appendRow({ id: deps.rowIds.value, kind: 'local-output', text: previewIndented(line, 65_536), seq: event.seq })
             deps.rowIds.value += 1
           }

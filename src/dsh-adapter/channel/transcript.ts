@@ -39,20 +39,18 @@ export function foldRows(
   // there was the O(rows) per-frame term of long-session streaming. Rows
   // prepended ahead of the window (older history) shift every index: a new
   // head restarts the pass.
-  const from = cursor === undefined ? 0 : cursor.rows === rows && cursor.head === rows[0] ? cursor.index : 0
+  let from = cursor === undefined ? 0 : cursor.rows === rows && cursor.head === rows[0] ? cursor.index : 0
+  // A local-block splice can move rows under the cursor with or without
+  // changing the array length, so the old boundary row is the witness: if it
+  // moved, rescan from the head — otherwise the shifted rows stay unfolded
+  // forever. A quiet streaming frame keeps the same boundary and stays
+  // incremental. This must run for every shift, not only the shrunken ones.
+  if (cursor !== undefined && from > 0 && rows[from - 1] !== cursor.boundary) from = 0
   if (cursor !== undefined) {
     cursor.rows = rows
     cursor.head = rows[0]
   }
-  if (excess <= from) {
-    // A local-block splice can move rows under the cursor without changing
-    // the array length (one block out, one in), so length alone cannot tell.
-    // The row at the old boundary is the witness: if it moved, rescan from
-    // the head — otherwise the shifted rows stay unfolded forever. A quiet
-    // streaming frame keeps the same boundary and stays incremental.
-    if (cursor !== undefined && cursor.index > 0 && rows[cursor.index - 1] !== cursor.boundary) cursor.index = 0
-    return 0
-  }
+  if (excess <= from) return 0
   let folded = 0
   for (const row of rows.slice(from, excess)) {
     if (row.folded || row.restored) continue
