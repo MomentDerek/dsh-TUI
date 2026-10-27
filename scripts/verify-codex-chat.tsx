@@ -35,6 +35,7 @@ import { NO_REPLY } from './lib/codex-fake-app-server.js'
 import { CWD, openHarness, THREAD, tick } from './lib/codex-session-harness.js'
 import { trimLocalRows } from '../src/channel/transcript.js'
 import { cleanCommandReport } from '../src/channel/sanitize.js'
+import { foldRows } from '../src/dsh-adapter/channel/transcript.js'
 
 setLang('en')
 let passed = 0
@@ -273,6 +274,20 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   const over = cleanCommandReport(`${Array.from({ length: 201 }, (_, i) => `+l${i}`).join('\n')}\n`)
   check('cleanCommandReport: 200 lines + trailing newline is exact', exact.lines.length === 200 && !exact.truncated && !exact.lines.includes(''))
   check('cleanCommandReport: 201 lines + trailing newline truncates to 200', over.lines.length === 200 && over.truncated)
+}
+
+// An equal-length middle splice must reset the fold cursor, or the shifted
+// assistant rows never fold again.
+{
+  const rows: { kind: string; text: string; folded?: boolean }[] = []
+  for (let i = 0; i < 201; i++) rows.push({ kind: 'local', text: 'l' })
+  for (let i = 0; i < 700; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
+  const cursor = { rows: rows as unknown, index: 0, head: undefined as unknown, boundary: undefined as unknown }
+  foldRows(rows as never, 600, cursor as never)
+  rows.splice(0, 201, ...Array.from({ length: 201 }, () => ({ kind: 'local', text: 'l' })))
+  foldRows(rows as never, 600, cursor as never)
+  const unfolded = rows.slice(0, 301).filter(row => row.kind === 'assistant' && row.folded !== true).length
+  check('foldRows rescans after an equal-length middle splice', unfolded === 0)
 }
 
 await run(80, false)

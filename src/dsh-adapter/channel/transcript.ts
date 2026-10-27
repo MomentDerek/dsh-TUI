@@ -22,7 +22,7 @@ export { ARGS_PREVIEW_LIMIT, LOCAL_OUTPUT_LIMIT, MAX_ROWS, preview, previewInden
 export function foldRows(
   rows: ChatRow[],
   cap: number,
-  cursor?: { rows: unknown; index: number; head?: unknown },
+  cursor?: { rows: unknown; index: number; head?: unknown; boundary?: unknown },
   /** Rows the backend can restore (default: every foldable kind); any
    *  other row keeps its full text. */
   restorable?: (row: ChatRow) => boolean,
@@ -45,11 +45,12 @@ export function foldRows(
     cursor.head = rows[0]
   }
   if (excess <= from) {
-    // The array shrank under the cursor (a local-block splice, not a quiet
-    // frame): rows above the fold moved down, so the next pass must rescan
-    // from the head or they stay unfolded forever. `excess === from` is the
-    // steady streaming case and keeps the incremental pass.
-    if (cursor !== undefined && excess < from) cursor.index = 0
+    // A local-block splice can move rows under the cursor without changing
+    // the array length (one block out, one in), so length alone cannot tell.
+    // The row at the old boundary is the witness: if it moved, rescan from
+    // the head — otherwise the shifted rows stay unfolded forever. A quiet
+    // streaming frame keeps the same boundary and stays incremental.
+    if (cursor !== undefined && cursor.index > 0 && rows[cursor.index - 1] !== cursor.boundary) cursor.index = 0
     return 0
   }
   let folded = 0
@@ -75,7 +76,10 @@ export function foldRows(
     markChannelReadDirty(row)
     markChannelReadDirty(rows)
   }
-  if (cursor !== undefined) cursor.index = excess
+  if (cursor !== undefined) {
+    cursor.index = excess
+    cursor.boundary = rows[excess - 1]
+  }
   return folded
 }
 
