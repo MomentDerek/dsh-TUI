@@ -229,7 +229,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     // typed placement: it answers itself, never reaches turn/steer, and does
     // not start a new turn.
     await type('/usage')
-    // 固定窗:this Enter must not collapse into the earlier Esc (80ms guard).
+    // 固定窗:pacing the Enter must not collapse into the earlier Esc (80ms guard).
     await sleep(120)
     stdin.write('\r')
     check(`${tag}: /usage answers mid-turn without a steer or a new turn`, await settled(() => channel.rows.filter(row => row.kind === 'local' && row.text === '/usage').length >= 2
