@@ -35,6 +35,7 @@ import { NO_REPLY } from './lib/codex-fake-app-server.js'
 import { CWD, openHarness, THREAD, tick } from './lib/codex-session-harness.js'
 import { MAX_ROWS, trimLocalRows } from '../src/channel/transcript.js'
 import { cleanCommandReport } from '../src/channel/sanitize.js'
+import { createProjectorHarness } from './lib/projector-harness.js'
 import { foldRows } from '../src/dsh-adapter/channel/transcript.js'
 
 setLang('en')
@@ -243,6 +244,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
       && h.sent('turn/start').length === 3
       && !h.sent('turn/steer').some(request => JSON.stringify(request).includes('/usage'))), view())
     check(`${tag}: the mid-turn dispatch takes the typed placement`, notices.includes(t('input-interrupted-next')), JSON.stringify(notices))
+    channel.notify = notify
     stdin.write('\x1b')
     check(`${tag}: Esc interrupts the turn`, await settled(() => h.sent('turn/interrupt').length === 1 && h.sent('turn/interrupt')[0]!.turnId === 'turn-3'))
     check(`${tag}: the interrupted card and the interrupt row show`, await settled(() => screen().includes(codexText('codex-interrupted')) && !channel.working), screen())
@@ -292,6 +294,26 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   const over = cleanCommandReport(`${Array.from({ length: 201 }, (_, i) => `+l${i}`).join('\n')}\n`)
   check('cleanCommandReport: 200 lines + trailing newline is exact', exact.lines.length === 200 && !exact.truncated && !exact.lines.includes(''))
   check('cleanCommandReport: 201 lines + trailing newline truncates to 200', over.lines.length === 200 && over.truncated)
+}
+
+// A report title is untrusted text too: the projector cleans it with the same
+// sanitizer as the body before it becomes a `local` row.
+{
+  const harness = createProjectorHarness()
+  harness.apply([{
+    type: 'user.message',
+    id: 'title-1',
+    anchor: 'title-1',
+    seq: 1,
+    time: 0,
+    source: 'command-output',
+    text: 'line',
+    blocks: [{ type: 'text', text: 'line' }],
+    label: '\u001b[31m/diff\u001b[0m\x07',
+    displayLive: true,
+  } as never])
+  const title = harness.state.rows.find(row => row.kind === 'local')
+  check('a report title is sanitized before it becomes a row', title !== undefined && title.text === '/diff', JSON.stringify(title?.text))
 }
 
 // A middle splice that also grows the array must reset the fold cursor: the
