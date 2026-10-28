@@ -83,23 +83,40 @@ const countCursors = new Map<string, CountCursor>()
  * Keys whose reveal has COMPLETED (caught up, snapped, or replaced). A
  * completed key must not re-create a cursor on a later active read — the
  * content is already fully on screen, and re-revealing would blank it and
- * typewrite again. Bounded FIFO: well past the cap these are all ancient
- * history (the row ids are gone); dropping the oldest half only risks a
- * long-unmounted row re-revealing, which is harmless (it paints full via
- * the active=false path anyway once unmounted... and a remounted streaming
- * row WANTS the reveal).
+ * typewrite again.
+ *
+ * Deliberately UNBOUNDED. The 2048-entry FIFO this replaced dropped the
+ * oldest half, which turns "already painted once" back into "never painted".
+ * Its premise — that a forgotten row re-paints full through the
+ * `active: false` path — does not hold: `fresh` is set when a live turn
+ * settles and is never cleared, so a remounted row keeps claiming
+ * liveliness and gets typewritten again from its first character (#1787).
+ * Long sessions were exactly the case that overflowed.
+ *
+ * Growth follows the session, not time: at most a few short keys per row
+ * that revealed (`a{id}`, `r{id}`, `tool:{callId}`, `tool:{callId}:split`),
+ * on rows that stay resident — `foldRows` never drops a row, and the
+ * projection's merge/replace paths are the only removers (their ids are
+ * never reused, so the leftover keys cost memory but cannot collide).
+ * Measured on V8: 50k `a{id}` keys ≈ 2.4 MB, 50k `tool:{callId}:split`
+ * keys ≈ 12.3 MB — second-order next to the ChatRow objects the same
+ * session already holds. docs/contributing.md asks for a measured
+ * alternative before removing a cache bound (:470-471); the measurement is
+ * above, and the alternative does not exist while `fresh` is never
+ * cleared: any count-based bound re-opens #1787 (an evicted off-screen row
+ * re-reads as active and typewrites once it scrolls back).
+ *
+ * It also grows on the render path, which contributing.md warns about
+ * separately (:512). The distinction from the neighbouring
+ * `HEIGHTS_CACHE_MAX` FIFO in MessageList is what an eviction costs there:
+ * a forgotten height only mis-estimates geometry and falls back to
+ * `DEFAULT_ROW_HEIGHT`, while a forgotten key re-typewrites the row — the
+ * exact report this comment exists for. Making `fresh` transactional would
+ * lift the constraint; that is a projection change, tracked in #1787.
  */
 const completedReveals = new Set<string>()
-const COMPLETED_REVEALS_MAX = 2048
 
 function markRevealCompleted(key: string): void {
-  if (completedReveals.size >= COMPLETED_REVEALS_MAX) {
-    let drop = COMPLETED_REVEALS_MAX / 2
-    for (const old of completedReveals) {
-      if (drop-- <= 0) break
-      completedReveals.delete(old)
-    }
-  }
   completedReveals.add(key)
 }
 
@@ -195,6 +212,30 @@ export function getRevealVersion(): number {
 /** Force-complete (and forget) a cursor: expanded card, replaced view, … */
 export function snapReveal(key: string): void {
   if (textCursors.delete(key) || countCursors.delete(key)) markRevealCompleted(key)
+}
+
+/**
+ * Session boundary (agent switch, `/resume`, rewind adopt): row ids restart
+ * at 0, so a key from the previous session (`a12`) names a different row in
+ * the new one. Drop both the completed memory and any in-flight cursors —
+ * replayed rows read with `active: false` and paint complete anyway, while
+ * the new session's live rows must be free to animate from scratch. The
+ * scheduler, listeners and version store stay intact: the mounted tree keeps
+ * subscribing, and clearing both cursor tables stops the timer synchronously.
+ *
+ * Known residue: a backend `conversation_reset` also restarts row ids, but it
+ * is a channel-layer event that never crosses into the UI — that path keeps
+ * its stale keys, so the first rows after such a reset paint without a
+ * reveal. The old 2048 FIFO used to heal this by accident once a session had
+ * revealed past the cap; with no eviction it is permanent until the agent
+ * changes. Covering it needs a row-id-regression signal from the channel;
+ * tracked in #1787.
+ */
+export function resetRevealSession(): void {
+  textCursors.clear()
+  countCursors.clear()
+  completedReveals.clear()
+  stopRevealTimerIfIdle()
 }
 
 // ---------------------------------------------------------------------------
@@ -323,14 +364,8 @@ export function revealLinesOf(key: string, total: number, options: RevealReadOpt
 
 /** Clear every cursor/listener/timer (verify scripts between cases). */
 export function resetRevealForTest(): void {
-  textCursors.clear()
-  countCursors.clear()
-  completedReveals.clear()
+  resetRevealSession()
   revealListeners.clear()
-  if (revealTimer !== undefined) {
-    clearInterval(revealTimer)
-    revealTimer = undefined
-  }
   revealVersionValue = 0
 }
 

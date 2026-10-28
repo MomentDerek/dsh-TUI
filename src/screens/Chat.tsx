@@ -15,6 +15,7 @@ import * as tuiKit from '../ui.js'
 import { usePageInset } from '../components/PageMargin.js'
 import { POINTER } from '../terminal-utils/figures.js'
 import { previousCodePoint } from '../components/AgentMessageComposer.js'
+import { resetRevealSession } from '../components/smoothReveal.js'
 import { isPlainReturnInput } from '../utils/modifiers.js'
 import { actionMatches, effectiveComboDisplay, primaryComboString } from '../utils/keymap.js'
 import { formatTokens } from '../terminal-utils/format.js'
@@ -1658,6 +1659,10 @@ export function Chat({
     }
     if (lastAgentIdRef.current === id) return
     lastAgentIdRef.current = id
+    // Reveal state is keyed by row id, and ids restart at 0 after an adopt:
+    // without this, a completed `a12` from the old session would suppress (or
+    // an in-flight cursor would resume over) the new session's row 12.
+    resetRevealSession()
     setExpanded(false)
     setExpandedRows(new Set())
     setSelectedId(null)
@@ -3265,7 +3270,11 @@ export function Chat({
       case 'clear':
         channel.clear()
         // channel.clear() resets row ids to 0; stale expanded/selection
-        // state would mis-highlight fresh rows (known-limitation fix).
+        // state would mis-highlight fresh rows (known-limitation fix). The
+        // reveal memory is keyed by the same ids: left alone, the new
+        // session's first rows would hit the old `a0…aN` entries and paint
+        // without their reveal.
+        resetRevealSession()
         setExpandedRows(new Set())
         setStreamViewToggledRows(new Set())
         setSelectedId(null)

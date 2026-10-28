@@ -12,6 +12,13 @@
  *   thinking preview ticker follows the ARRIVED text while the expanded body
  *   paints the revealed slice; a running tool card's diff body reveals line
  *   by line; the settled result view snaps complete.
+ * Group D — long-session subscriber fanout:
+ *   with 80 settled history cards, only the active card advances the reveal
+ *   scheduler; settled cards do not each force a store rerender.
+ * Group E — completed reveals survive remounts and session boundaries:
+ *   a finished row does not re-reveal after thousands of later reveals, a
+ *   session reset drops cross-session keys, and the Chat wiring that calls
+ *   the reset exists in both the agent-id effect and the `/clear` branch.
  *
  * Run: node --import tsx/esm scripts/verify-smooth-reveal.tsx
  */
@@ -23,6 +30,8 @@ process.env.DSH_TUI_LANG = 'en'
 process.env.FORCE_COLOR = '3'
 
 import { Writable, PassThrough } from 'node:stream'
+import { readFile } from 'node:fs/promises'
+import ts from 'typescript'
 import React from 'react'
 import { render } from '../src/ui.js'
 import { setLang } from '../src/i18n.js'
@@ -39,6 +48,7 @@ import {
   revealLinesOf,
   revealStep,
   resetRevealForTest,
+  resetRevealSession,
 } from '../src/components/smoothReveal.js'
 
 // env pin 因 import 提升而失效（见上），显式切换到 en——本脚本的断言
@@ -395,6 +405,69 @@ console.log('--- D: long-session reveal subscriber fanout ---')
       check(screen().includes('lines (ctrl+o to expand)'), 'D1 active tool reveal completes without nested store updates')
     },
   )
+}
+
+// E: a completed reveal must outlive the row's mount. `fresh` is set when a
+// live turn settles and never cleared, so a remounted history row (leaving a
+// whole screen remounts the transcript tree; /resume repaints its history)
+// still reads with active=true. If the completed memory is capped and evicted,
+// that row typewrites itself again from the first character — the long-session
+// re-reveal report (#1787). Row ids also restart at 0 across a session switch,
+// so the memory must be dropped at that boundary and nowhere else.
+console.log('--- E: completed reveals survive remounts ---')
+{
+  resetRevealForTest()
+  const text = 'history row text'
+  check(revealLengthOf('a1', text, { enabled: true, active: true }) === 0, 'E1 first live read starts at zero')
+  await sleep(600) // 固定窗:墙钟 16 字符、步长 3 → 六帧内追平（600ms ≈ 18 帧）
+  check(
+    revealLengthOf('a1', text, { enabled: true, active: true }) === text.length,
+    'E1 row catches up',
+  )
+  // A long session blows far past the old 2048-key cap; every one of these
+  // settles on the next tick, which used to evict the oldest half.
+  for (let i = 0; i < 2600; i++) revealLengthOf(`long${i}`, 'q', { enabled: true, active: true })
+  await sleep(500) // 固定窗:墙钟 单字符游标一拍追平
+  const afterChurn = revealLengthOf('a1', text, { enabled: true, active: true })
+  check(
+    afterChurn === text.length,
+    'E1 completed row stays complete after thousands of later reveals (no replay on remount)',
+    `len=${afterChurn}/${text.length}`,
+  )
+  // Session boundary: the same key names different content after an adopt.
+  resetRevealSession()
+  check(
+    revealLengthOf('a1', text, { enabled: true, active: true }) === 0,
+    'E2 session reset drops cross-session keys (new live row animates)',
+  )
+  // E1/E2 pin the primitive; neither fails if Chat stops calling the reset,
+  // which is exactly how the cross-session leak would return silently. Walk
+  // the real source's syntax tree for the call sites: a text regex would also
+  // match the name inside the comments that sit between the two calls, and
+  // a proximity window would go red the next time that comment is reworded
+  // (verify-terminal-size-source walks the AST for the same reason).
+  const chatSource = await readFile(new URL('../src/screens/Chat.tsx', import.meta.url), 'utf8')
+  const chatAst = ts.createSourceFile('Chat.tsx', chatSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  // Count alone would pass with both calls inside one branch, so record the
+  // enclosing construct: the agent-id effect and the `/clear` case are
+  // different reset reasons and both must stay wired.
+  const resetSites: Array<{ inEffect: boolean; inClear: boolean }> = []
+  const scanResets = (node: ts.Node, inEffect: boolean, inClear: boolean): void => {
+    const effectName = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      ? node.expression.name.text
+      : ts.isCallExpression(node) && ts.isIdentifier(node.expression) ? node.expression.text : undefined
+    const nextInEffect = inEffect || effectName === 'useEffect' || effectName === 'useLayoutEffect'
+    const nextInClear = inClear
+      || (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.expression.text === 'clear')
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'resetRevealSession') {
+      resetSites.push({ inEffect: nextInEffect, inClear: nextInClear })
+    }
+    ts.forEachChild(node, child => scanResets(child, nextInEffect, nextInClear))
+  }
+  scanResets(chatAst, false, false)
+  check(resetSites.some(site => site.inEffect), 'E3a Chat resets reveal state inside a React effect (agent switch)')
+  check(resetSites.some(site => site.inClear), 'E3b Chat resets reveal state in the /clear branch')
+  resetRevealForTest()
 }
 
 console.log('')
