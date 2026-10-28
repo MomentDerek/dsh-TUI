@@ -2108,13 +2108,13 @@ export function PromptInput({
    * Enter, the mouse pick and the batched-stdin line all share this: returning
    * on `tryRunCommand`'s false is what used to leave them dead.
    */
-  const dispatchCompletion = (line: string): void => {
+  const dispatchCompletion = (line: string, placement: 'steer' | 'submit' = 'steer'): void => {
     if (tryRunCommand(line)) return
     // A backend command (Codex `/usage`, `/diff`, a backend skill) answers
-    // through the session. While a turn runs it takes the same placement a
-    // typed line does — `steerSend` — so the menu and the keyboard agree;
-    // self-answering commands run immediately either way.
-    if (channel.working) {
+    // through the session. Interactive entry points take the typed placement
+    // while a turn runs; a piped whole line keeps the legacy direct submit
+    // (nobody is watching a steer notice there).
+    if (placement === 'steer' && channel.working) {
       // Same placement as a typed line; the notice is kept because the UI
       // cannot tell a self-answering command from a real skill here.
       steerSend(line)
@@ -2792,7 +2792,7 @@ export function PromptInput({
       if (line.startsWith('/')) {
         const matches = channel.commandCompletions(line)
         if (matches.length === 1) {
-          dispatchCompletion(matches[0]!.commandLine)
+          dispatchCompletion(matches[0]!.commandLine, 'submit')
           return
         }
       }

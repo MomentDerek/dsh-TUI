@@ -16,7 +16,7 @@
  */
 process.env.FORCE_COLOR = '3'
 
-const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { createChannel }, { setLang }, { codexText }, { default: instances }, { settled, sleep, viewportLines }, { PermissionStore }] =
+const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { createChannel }, { setLang, t }, { codexText }, { default: instances }, { settled, sleep, viewportLines }, { PermissionStore }] =
   await Promise.all([
     import('node:stream'),
     import('react'),
@@ -227,7 +227,14 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     check(`${tag}: dismissing an async question leaves work running`, await settled(() => questions.getSnapshot() === null) && h.sent('turn/interrupt').length === 0 && channel.working, view())
     // While the turn runs, the menu dispatches a backend command through the
     // typed placement: it answers itself, never reaches turn/steer, and does
-    // not start a new turn.
+    // not start a new turn. The notice is the discriminator — `steerSend`
+    // says "Interrupted", a plain submit would say "after this turn".
+    const notices: string[] = []
+    const notify = channel.notify
+    channel.notify = (text, options) => {
+      notices.push(text)
+      return notify.call(channel, text, options)
+    }
     await type('/usage')
     // 固定窗:墙钟 跨过 handleEnter 的 80ms Enter 去重窗
     await sleep(120)
@@ -235,6 +242,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     check(`${tag}: /usage answers mid-turn without a steer or a new turn`, await settled(() => channel.rows.filter(row => row.kind === 'local' && row.text === '/usage').length >= 2
       && h.sent('turn/start').length === 3
       && !h.sent('turn/steer').some(request => JSON.stringify(request).includes('/usage'))), view())
+    check(`${tag}: the mid-turn dispatch takes the typed placement`, notices.includes(t('input-interrupted-next')), JSON.stringify(notices))
     stdin.write('\x1b')
     check(`${tag}: Esc interrupts the turn`, await settled(() => h.sent('turn/interrupt').length === 1 && h.sent('turn/interrupt')[0]!.turnId === 'turn-3'))
     check(`${tag}: the interrupted card and the interrupt row show`, await settled(() => screen().includes(codexText('codex-interrupted')) && !channel.working), screen())
@@ -291,6 +299,9 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
 // rows would never fold again. The fixture keeps foldable rows inside the
 // shifted window (1 notice + 50 local + 649 assistant): the previous versions
 // of the witness check left 10 assistant rows unfolded here.
+// The numbers depend on MAX_ROWS === 600: the window keeps the tail and the
+// splice lands mid-array. If the cap changes, re-derive them — a fixture that
+// no longer distinguishes the old implementations must fail loudly, not pass.
 {
   const rows: { kind: string; text: string; folded?: boolean }[] = []
   rows.push({ kind: 'notice', text: 'n' })

@@ -2655,7 +2655,8 @@ export function Chat({
         if (truncated) lines.push(t('command-output-truncated'))
         // The report already has a cell cap. Avoid a second UTF-16 preview cut
         // splitting an emoji or a combining sequence in the local row sink.
-        if (lines.length > 0) channel.pushLocal(`/${name}`, lines, { lineLimit: 65_536, preserveWhitespace: true })
+        // Always push: an empty report still gets its `/<name>` title row.
+        channel.pushLocal(`/${name}`, lines, { lineLimit: 65_536, preserveWhitespace: true })
         if (outcome.kind === 'error') {
           const cleaned = cleanRenderText(outcome.text, COMMAND_RESULT_CELLS)
           if (cleaned !== '') channel.notify(cleaned, { color: 'error' })
