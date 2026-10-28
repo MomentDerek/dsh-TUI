@@ -278,6 +278,7 @@ function createSessionSubagentProjection(
         durationMs: sub.completedAt ? sub.completedAt - sub.startedAt : Date.now() - sub.startedAt,
         outputLines: sub.output.slice(-3), toolCalls: sub.toolCalls, tokens: sub.tokens,
         summary: sub.summary, stopReason: sub.stopReason, error: sub.error,
+        ...sub.failure === undefined ? {} : { failure: sub.failure },
       }
       row.subagent = view
       row.text = sub.description

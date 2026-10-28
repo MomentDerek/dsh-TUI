@@ -259,6 +259,17 @@ export type ToolResultView = ToolViewMeta & (
   | { readonly card: 'search'; readonly shape: 'paths'; readonly title?: string; readonly paths: readonly string[]; readonly truncated: boolean; readonly total: number }
 )
 
+/** Derived failure facts of one delegation child, parsed from the provider's
+ *  own error sentence by `src/channel/subagent-failure.ts`. `error` keeps the
+ *  sentence verbatim; these fields exist so a dashboard can group failures by
+ *  channel instead of reading one provider's outage as a total one. */
+export interface SubagentFailure {
+  readonly product?: string
+  readonly stage?: string
+  readonly category?: string
+  readonly exitCode?: number
+}
+
 export interface SubagentRow {
   agentId: string
   runId?: string
@@ -279,6 +290,9 @@ export interface SubagentRow {
   summary?: string
   stopReason?: string
   error?: string
+  /** Parsed view of `error` (see `SubagentFailure`); absent when the text
+   *  carries no provider diagnostic. */
+  failure?: SubagentFailure
   /** Runs in the background (the delegating call returned at launch). */
   background?: boolean
   /** Spawn nesting: 1 = spawned by the main loop, N+1 = by a depth-N agent. */
@@ -304,6 +318,8 @@ export interface SubagentState {
   sessionId?: string
   stopReason?: string
   error?: string
+  /** Parsed view of `error`; see `SubagentFailure`. */
+  failure?: SubagentFailure
   /** Compatibility projection for older consumers. */
   output: string[]
   outputEvents: SubagentOutputLine[]

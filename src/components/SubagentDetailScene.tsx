@@ -521,6 +521,16 @@ export function SubagentDetailScene({
         + (subagent.completedAt ? ` · ${t('subagent-completed')} ${formatTimestamp(subagent.completedAt)}` : '')}
         {` · id ${subagent.agentId.slice(0, 8)}`}
       </Text>
+      {subagent.failure !== undefined && (
+        <Text dimColor wrap="wrap">
+          {t('subagent-failure-detail', {
+            product: subagent.failure.product ?? '—',
+            stage: subagent.failure.stage ?? '—',
+            category: subagent.failure.category ?? '—',
+            exit: subagent.failure.exitCode === undefined ? '—' : String(subagent.failure.exitCode),
+          })}
+        </Text>
+      )}
       {subagent.error && (
         <Box marginTop={0}>
           <Text color="error" wrap="wrap">{`${t('subagent-error-label')}: ${subagent.error}`}</Text>
