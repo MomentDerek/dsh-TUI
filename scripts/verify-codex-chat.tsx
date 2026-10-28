@@ -33,7 +33,7 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
   ])
 import { NO_REPLY } from './lib/codex-fake-app-server.js'
 import { CWD, openHarness, THREAD, tick } from './lib/codex-session-harness.js'
-import { trimLocalRows } from '../src/channel/transcript.js'
+import { MAX_ROWS, trimLocalRows } from '../src/channel/transcript.js'
 import { cleanCommandReport } from '../src/channel/sanitize.js'
 import { foldRows } from '../src/dsh-adapter/channel/transcript.js'
 
@@ -297,22 +297,21 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
 // A middle splice that also grows the array must reset the fold cursor: the
 // old boundary row moved even though `excess > from`, so the shifted assistant
 // rows would never fold again. The fixture keeps foldable rows inside the
-// shifted window (1 notice + 50 local + 649 assistant): the previous versions
-// of the witness check left 10 assistant rows unfolded here.
-// The numbers depend on MAX_ROWS === 600: the window keeps the tail and the
-// splice lands mid-array. If the cap changes, re-derive them — a fixture that
-// no longer distinguishes the old implementations must fail loudly, not pass.
+// shifted window (1 notice + 50 local + MAX_ROWS+49 assistant): the previous
+// versions of the witness check left 10 assistant rows unfolded here.
+// Derived from MAX_ROWS so a cap change cannot silently weaken the fixture.
 {
+  const cap = MAX_ROWS
   const rows: { kind: string; text: string; folded?: boolean }[] = []
   rows.push({ kind: 'notice', text: 'n' })
   for (let i = 0; i < 50; i++) rows.push({ kind: 'local', text: 'l' })
-  for (let i = 0; i < 649; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
+  for (let i = 0; i < cap + 49; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
   const cursor = { rows: rows as unknown, index: 0, head: undefined as unknown, boundary: undefined as unknown }
-  foldRows(rows as never, 600, cursor as never)
-  trimLocalRows(rows as never, 560)
-  for (let i = 0; i < 560; i++) rows.push({ kind: 'local', text: 'l' })
-  foldRows(rows as never, 600, cursor as never)
-  const excess = rows.length - 600
+  foldRows(rows as never, cap, cursor as never)
+  trimLocalRows(rows as never, cap - 40)
+  for (let i = 0; i < cap - 40; i++) rows.push({ kind: 'local', text: 'l' })
+  foldRows(rows as never, cap, cursor as never)
+  const excess = rows.length - cap
   const unfolded = rows.slice(0, excess).filter(row => row.kind === 'assistant' && row.folded !== true).length
   check('foldRows rescans after a net-growth middle splice', unfolded === 0)
 }
