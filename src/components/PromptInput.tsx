@@ -1757,7 +1757,7 @@ export function PromptInput({
    * message is injected at the next step boundary of the RUNNING turn and
    * the agent continues without aborting — the "immediate" send.
    */
-  const steerSend = (text: string, options?: { readonly suppressNotice?: boolean }) => {
+  const steerSend = (text: string) => {
     const trimmed = text.trim()
     if (!trimmed) return
     const images = imageRefsFor(trimmed)
@@ -1769,7 +1769,6 @@ export function PromptInput({
       return
     }
     clearDeliveredDraft()
-    if (options?.suppressNotice === true) return
     // While an abort is still converging the step boundary this steer waits
     // for may be the very thing the wedged turn never reaches: do not promise
     // an immediate next step then.
@@ -2116,9 +2115,9 @@ export function PromptInput({
     // typed line does — `steerSend` — so the menu and the keyboard agree;
     // self-answering commands run immediately either way.
     if (channel.working) {
-      // A self-answering command appears in the transcript immediately, so
-      // the steer notice ("injected at the next step") would contradict it.
-      steerSend(line, { suppressNotice: true })
+      // Same placement as a typed line; the notice is kept because the UI
+      // cannot tell a self-answering command from a real skill here.
+      steerSend(line)
       return
     }
     submitText(line)

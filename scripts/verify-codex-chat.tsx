@@ -229,7 +229,7 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
     // typed placement: it answers itself, never reaches turn/steer, and does
     // not start a new turn.
     await type('/usage')
-    // 固定窗:pacing the Enter must not collapse into the earlier Esc (80ms guard).
+    // 固定窗:墙钟 跨过 handleEnter 的 80ms Enter 去重窗
     await sleep(120)
     stdin.write('\r')
     check(`${tag}: /usage answers mid-turn without a steer or a new turn`, await settled(() => channel.rows.filter(row => row.kind === 'local' && row.text === '/usage').length >= 2
@@ -288,17 +288,18 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
 
 // A middle splice that also grows the array must reset the fold cursor: the
 // old boundary row moved even though `excess > from`, so the shifted assistant
-// rows would never fold again. Index 0 stays a stable non-local row so only the
-// boundary witness can catch the shift.
+// rows would never fold again. The fixture keeps foldable rows inside the
+// shifted window (1 notice + 50 local + 649 assistant): the previous versions
+// of the witness check left 10 assistant rows unfolded here.
 {
   const rows: { kind: string; text: string; folded?: boolean }[] = []
-  rows.push({ kind: 'user', text: 'u' })
-  for (let i = 0; i < 201; i++) rows.push({ kind: 'local', text: 'l' })
-  for (let i = 0; i < 500; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
+  rows.push({ kind: 'notice', text: 'n' })
+  for (let i = 0; i < 50; i++) rows.push({ kind: 'local', text: 'l' })
+  for (let i = 0; i < 649; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
   const cursor = { rows: rows as unknown, index: 0, head: undefined as unknown, boundary: undefined as unknown }
   foldRows(rows as never, 600, cursor as never)
-  trimLocalRows(rows as never, 402)
-  for (let i = 0; i < 402; i++) rows.push({ kind: 'local', text: 'l' })
+  trimLocalRows(rows as never, 560)
+  for (let i = 0; i < 560; i++) rows.push({ kind: 'local', text: 'l' })
   foldRows(rows as never, 600, cursor as never)
   const excess = rows.length - 600
   const unfolded = rows.slice(0, excess).filter(row => row.kind === 'assistant' && row.folded !== true).length
