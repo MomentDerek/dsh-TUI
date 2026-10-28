@@ -42,7 +42,7 @@ export interface ChannelFailureSummary {
  * skipped rather than bucketed under a guess.
  */
 export function summarizeChannelFailures(
-  rows: readonly { readonly provider?: string | undefined; readonly status: string; readonly failure?: SubagentFailure | undefined }[],
+  rows: readonly { readonly provider?: string | undefined; readonly status: string }[],
 ): ChannelFailureSummary[] {
   const buckets = new Map<string, { failed: number; settled: number }>()
   for (const row of rows) {
@@ -51,7 +51,7 @@ export function summarizeChannelFailures(
     if (row.status !== 'failed' && row.status !== 'completed' && row.status !== 'cancelled') continue
     const bucket = buckets.get(provider) ?? { failed: 0, settled: 0 }
     bucket.settled += 1
-    if (row.failure !== undefined) bucket.failed += 1
+    if (row.status === 'failed') bucket.failed += 1
     buckets.set(provider, bucket)
   }
   return Array.from(buckets, ([provider, bucket]) => ({ provider, ...bucket }))

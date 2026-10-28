@@ -46,6 +46,12 @@ const summaries = summarizeChannelFailures([claudeFail, claudeFail2, spawnOk, no
 check('groups by provider only', summaries.length === 1 && summaries[0]?.provider === 'claude-code', JSON.stringify(summaries))
 check('counts settled and failed', summaries[0]?.failed === 2 && summaries[0]?.settled === 2, JSON.stringify(summaries[0]))
 check('drops providers with no failure', !summaries.some(summary => summary.provider === 'spawn'))
+const mixed = summarizeChannelFailures([
+  { provider: 'mixed', status: 'failed', failure: full },
+  { provider: 'mixed', status: 'failed' },
+  { provider: 'mixed', status: 'completed' },
+])
+check('counts failures without a parsed diagnostic', mixed[0]?.failed === 2 && mixed[0]?.settled === 3, JSON.stringify(mixed))
 const ordered = summarizeChannelFailures([
   { provider: 'b', status: 'failed', failure: full },
   { provider: 'a', status: 'failed', failure: full },

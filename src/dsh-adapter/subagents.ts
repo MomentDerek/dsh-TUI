@@ -123,6 +123,7 @@ export class SubagentActivityStore {
       existing.stopReason = undefined
       existing.summary = undefined
       existing.error = undefined
+      existing.failure = undefined
       existing.output = []
       existing.outputEvents = []
       existing.toolCalls = []
