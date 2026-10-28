@@ -298,7 +298,11 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
   }
 
   const openStreaming = (seq?: number): ChatRow => {
-    streaming = { id: deps.rowIds.value, kind: 'assistant', text: '', streaming: true, fresh: true, ...seq !== undefined ? { seq } : {} }
+    // `fresh` is a LIVE-only claim (channel-view.ts): a replay batch folds the
+    // session's own durable deltas through this same factory, and a replayed
+    // row that claims freshness makes the transcript typewrite history from
+    // its first character on every resume.
+    streaming = { id: deps.rowIds.value, kind: 'assistant', text: '', streaming: true, fresh: !replaying, ...seq !== undefined ? { seq } : {} }
     deps.rowIds.value += 1
     appendRow(streaming)
     indexAssistantRow(streaming)
@@ -1555,8 +1559,14 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
     lastTextDelta.clear()
     // Rows still on screen when a replay starts keep matching by seq, so a
     // replay over painted history reuses them instead of duplicating them.
+    // Everything the replay leaves behind is settled history, so the reused
+    // rows drop their live-only `fresh` claim too: a rebind/resume that
+    // replays over painted rows would otherwise keep typewriting them.
     assistantRowsBySeq.clear()
-    for (const row of state.rows) if (row.kind === 'assistant') indexAssistantRow(row)
+    for (const row of state.rows) {
+      delete row.fresh
+      if (row.kind === 'assistant') indexAssistantRow(row)
+    }
     replaying = true
     try {
       for (const event of events) applyEvent(event)

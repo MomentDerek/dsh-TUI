@@ -19,6 +19,9 @@
  *   a finished row does not re-reveal after thousands of later reveals, a
  *   session reset drops cross-session keys, and the Chat wiring that calls
  *   the reset exists in both the agent-id effect and the `/clear` branch.
+ * Group F — replayed history is never marked fresh:
+ *   a real projector replay (cold resume and replay-over-painted-rows) leaves
+ *   no row claiming `fresh`, so the transcript never typewrites history.
  *
  * Run: node --import tsx/esm scripts/verify-smooth-reveal.tsx
  */
@@ -39,7 +42,9 @@ import { MessageList } from '../src/components/MessageList.js'
 import { AssistantThinkingMessage } from '../src/components/messages/AssistantThinkingMessage.js'
 import { AssistantToolUseMessage } from '../src/components/messages/AssistantToolUseMessage.js'
 import type { ChatRow, ToolRow } from '../src/dsh-adapter/channel.js'
+import { createDshTranslator } from '../src/dsh-adapter/backend/translate.js'
 import { settled } from './lib/term-test.mjs'
+import { createProjectorHarness } from './lib/projector-harness.js'
 import {
   REVEAL_MIN_STEP,
   getRevealVersion,
@@ -468,6 +473,46 @@ console.log('--- E: completed reveals survive remounts ---')
   check(resetSites.some(site => site.inEffect), 'E3a Chat resets reveal state inside a React effect (agent switch)')
   check(resetSites.some(site => site.inClear), 'E3b Chat resets reveal state in the /clear branch')
   resetRevealForTest()
+}
+
+// F: `fresh` is a live-only claim (channel-view.ts). A replay batch — resume,
+// rebind, a reattaching client — folds the session's own durable deltas
+// through the same row factory a live turn uses, so an unguarded `fresh: true`
+// there made every replayed row claim it had just arrived and the transcript
+// typewrote its history on the first frame of a resume (#1787). Row ids stay
+// stable across a replay, so the reuse path has to strip the flag too.
+console.log('--- F: replayed history is never marked fresh ---')
+{
+  // Same boundary cast the golden pipeline uses (projection-golden.ts:129).
+  const logText = await readFile(new URL('./fixtures/dsh/v3-turns.jsonl', import.meta.url), 'utf8')
+  const log = logText.split('\n').filter(line => line.trim() !== '').map(line => JSON.parse(line) as unknown) as Parameters<ReturnType<typeof createDshTranslator>['translateReplay']>[0]
+  const translator = createDshTranslator({ tools: () => undefined, scope: () => ({}), attachments: () => undefined })
+  const live = createProjectorHarness({ agentPreset: 'ptc' })
+  for (const event of log) live.apply(translator.translateEvent(event), false)
+  live.projector.settleStreaming()
+  const liveFresh = live.state.rows.filter(row => row.fresh === true).map(row => row.id)
+  check(liveFresh.length > 0, 'F1 live rows keep the fresh flag (live text still reveals)', `ids=${liveFresh.join(',')}`)
+
+  live.apply(translator.translateReplay(log), true)
+  live.projector.settleStreaming()
+  const reusedStale = live.state.rows.filter(row => row.fresh === true).map(row => row.id)
+  check(
+    reusedStale.length === 0,
+    'F2 replay over painted rows clears fresh (rebind repaints instead of re-types)',
+    `ids=${reusedStale.join(',')}`,
+  )
+
+  const cold = createProjectorHarness({ agentPreset: 'ptc' })
+  cold.apply(translator.translateReplay(log), true)
+  cold.projector.settleStreaming()
+  const coldStale = cold.state.rows.filter(row => row.fresh === true).map(row => row.id)
+  check(
+    cold.state.rows.length > 0 && coldStale.length === 0,
+    'F3 a cold replay paints history without fresh (resume first frame)',
+    `rows=${cold.state.rows.length} ids=${coldStale.join(',')}`,
+  )
+  const assistants = (h: typeof cold): number => h.state.rows.filter(row => row.kind === 'assistant').length
+  check(assistants(live) === assistants(cold), 'F4 replay reuses painted assistant rows instead of duplicating them', `${assistants(live)} vs ${assistants(cold)}`)
 }
 
 console.log('')
