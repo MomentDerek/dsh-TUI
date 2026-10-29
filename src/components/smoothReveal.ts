@@ -279,7 +279,15 @@ export function revealLengthOf(key: string, text: string, options: RevealReadOpt
     // re-reveal would blank the already-complete content and typewrite it
     // again.
     if (completedReveals.has(key)) return text.length
-    if (!options.active) return text.length
+    if (!options.active) {
+      // Painted as history (a settled live row, a replayed row). Remember
+      // that the whole text is already on screen: a live continuation reuses
+      // this key, and without the caught-up cursor it would fall into the
+      // active branch below, create `revealed: 0` and typewrite the row
+      // again from its first character. Already complete, so no timer.
+      textCursors.set(key, { text, revealed: text.length })
+      return text.length
+    }
     textCursors.set(key, { text, revealed: 0 })
     ensureRevealTimer()
     return 0

@@ -522,6 +522,27 @@ console.log('--- F: replayed history is never marked fresh ---')
   check(assistants(live) === assistants(cold), 'F4 replay reuses painted assistant rows instead of duplicating them', `${assistants(live)} vs ${assistants(cold)}`)
 }
 
+// F5: a replayed row that a live turn continues must resume where the
+// painted text ended. History paints full through the inactive branch, which
+// used to leave no cursor behind; the live continuation then created one at
+// zero and typewrote the already-visible row from its first character.
+resetRevealForTest()
+{
+  const painted = 'replayed answer already on screen'
+  check(
+    revealLengthOf('a9', painted, { enabled: true, active: false }) === painted.length,
+    'F5 a replayed row paints full',
+  )
+  const grown = `${painted} and a live tail`
+  const resumed = revealLengthOf('a9', grown, { enabled: true, active: true })
+  check(
+    resumed >= painted.length,
+    'F5 a live continuation resumes from the painted length instead of restarting',
+    `len=${resumed}/${grown.length}`,
+  )
+  resetRevealForTest()
+}
+
 console.log('')
 if (failures > 0) {
   console.error(`verify-smooth-reveal: ${failures} FAILURE(S)`)
