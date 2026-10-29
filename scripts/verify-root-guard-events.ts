@@ -56,7 +56,9 @@ let serialized = 0
 let bailed = 0
 const waterfalled: number[] = []
 let dispatched = 0
+const resolvedProps: string[] = []
 root.events.on('probe/emit', () => { emitted += 1 })
+root.events.on('internal/get', (_ctx: unknown, prop: string) => { resolvedProps.push(prop) })
 root.events.on('probe/dispatch', () => { dispatched += 1 })
 root.events.on('probe/parallel', (value: number) => { paralleled = value })
 root.events.on('probe/serial', () => { serialized += 1 })
@@ -86,9 +88,11 @@ const plugin = {
     seen.dispatch = await attempt(() => {
       observed.dispatch = root.events.dispatch('emit', ['probe/dispatch']).length
     })
-    // Reading an undeclared service is the `internal/get` waterfall path
-    // `ctx.loader` takes inside recompose().
-    seen.undeclared = await attempt(() => (root as unknown as Record<string, unknown>).probeUndeclared)
+    // Reading an undeclared service through the plugin context is the
+    // `internal/get` waterfall path `ctx.loader` takes inside recompose().
+    // Reading it off `root` would short-circuit at `root.fiber.runtime` and
+    // never dispatch, so it cannot stand in for this check.
+    seen.undeclared = await attempt(() => (ctx as unknown as Record<string, unknown>).probeUndeclared)
 
     for (const method of ['resolve', 'get', 'has', 'keys', 'values', 'entries', 'forEach']) {
       const fn = registry[method]
@@ -132,7 +136,8 @@ check('the waterfall reached the host listener', waterfalled[0] === 1, waterfall
 check('the waterfall returned the composed value', observed.waterfall === 10, observed.waterfall)
 check('a plugin activation may dispatch on the root', seen.dispatch === 'ok', seen.dispatch)
 check('the dispatch returned the host listener', observed.dispatch === 1, observed.dispatch)
-check('a plugin activation may read an undeclared root service', seen.undeclared === 'ok', seen.undeclared)
+check('a plugin activation may read an undeclared service', seen.undeclared === 'ok', seen.undeclared)
+check('the read dispatched internal/get', resolvedProps.includes('probeUndeclared'), resolvedProps.slice(-4))
 
 check('a plugin activation may resolve a root registry entry', seen['registry.resolve'] === 'ok', seen['registry.resolve'])
 check('a plugin activation may query the root registry', seen['registry.has'] === 'ok', seen['registry.has'])
