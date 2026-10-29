@@ -100,19 +100,20 @@ const countCursors = new Map<string, CountCursor>()
  * never reused, so the leftover keys cost memory but cannot collide).
  * Measured on V8: 50k `a{id}` keys ≈ 2.4 MB, 50k `tool:{callId}:split`
  * keys ≈ 12.3 MB — second-order next to the ChatRow objects the same
- * session already holds. docs/contributing.md asks for a measured
- * alternative before removing a cache bound (:470-471); the measurement is
- * above, and the alternative does not exist while `fresh` is never
- * cleared: any count-based bound re-opens #1787 (an evicted off-screen row
- * re-reads as active and typewrites once it scrolls back).
+ * session already holds. The contributor guide's long-session memory rule
+ * asks for a measured alternative before removing a cache bound; the
+ * measurement is above, and the alternative does not exist while `fresh`
+ * is never cleared: any count-based bound re-opens #1787 (an evicted
+ * off-screen row re-reads as active and typewrites once it scrolls back).
  *
- * It also grows on the render path, which contributing.md warns about
- * separately (:512). The distinction from the neighbouring
- * `HEIGHTS_CACHE_MAX` FIFO in MessageList is what an eviction costs there:
- * a forgotten height only mis-estimates geometry and falls back to
- * `DEFAULT_ROW_HEIGHT`, while a forgotten key re-typewrites the row — the
- * exact report this comment exists for. Making `fresh` transactional would
- * lift the constraint; that is a projection change, tracked in #1795.
+ * It also grows on the render path, which the same guide warns about under
+ * its unbounded render-phase collection rule. The distinction from the
+ * neighbouring `HEIGHTS_CACHE_MAX` FIFO in MessageList is what an eviction
+ * costs there: a forgotten height only mis-estimates geometry and falls
+ * back to `DEFAULT_ROW_HEIGHT`, while a forgotten key re-typewrites the
+ * row — the exact report this comment exists for. Making `fresh`
+ * transactional would lift the constraint; that is a projection change,
+ * tracked in #1795.
  */
 const completedReveals = new Set<string>()
 
