@@ -4,6 +4,7 @@ import type { SubagentOutputLine, SubagentState } from '../dsh-adapter/subagents
 import { AgentMessageLeafRow, AssistantTextLeafRow, ThinkingLeafRow, ToolLeafRow } from './messages/TranscriptLeaves.js'
 import { AgentMessageFlowRow } from './messages/AgentMessageFlow.js'
 import { AgentMessageComposer, type ComposerKeyHandler } from './AgentMessageComposer.js'
+import { parseSubagentFailure } from '../channel/subagent-failure.js'
 import type { AgentComposeTarget, AgentMessageControl, AgentMessageView } from './messages/agentTeam.js'
 import { subagentDetailMemory } from './subagentDetailMemory.js'
 import {
@@ -468,6 +469,10 @@ export function SubagentDetailScene({
   }
   usePanelInput(panelKeyHandler, { active: panelMode && focused && visible })
 
+  // Derived at render time from the verbatim error text: storing it would let a
+  // respawned child inherit a stale diagnostic.
+  const failure = parseSubagentFailure(subagent.error)
+
   const tab = (name: DetailPage, label: string): React.ReactNode => {
     const active = activePage === name
     return (
@@ -521,13 +526,13 @@ export function SubagentDetailScene({
         + (subagent.completedAt ? ` · ${t('subagent-completed')} ${formatTimestamp(subagent.completedAt)}` : '')}
         {` · id ${subagent.agentId.slice(0, 8)}`}
       </Text>
-      {subagent.failure !== undefined && (
+      {failure !== undefined && (
         <Text dimColor wrap="wrap">
           {t('subagent-failure-detail', {
-            product: subagent.failure.product ?? '—',
-            stage: subagent.failure.stage ?? '—',
-            category: subagent.failure.category ?? '—',
-            exit: subagent.failure.exitCode === undefined ? '—' : String(subagent.failure.exitCode),
+            product: failure.product ?? '—',
+            stage: failure.stage ?? '—',
+            category: failure.category ?? '—',
+            exit: failure.exitCode === undefined ? '—' : String(failure.exitCode),
           })}
         </Text>
       )}

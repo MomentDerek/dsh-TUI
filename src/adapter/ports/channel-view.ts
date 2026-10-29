@@ -290,9 +290,6 @@ export interface SubagentRow {
   summary?: string
   stopReason?: string
   error?: string
-  /** Parsed view of `error` (see `SubagentFailure`); absent when the text
-   *  carries no provider diagnostic. */
-  failure?: SubagentFailure
   /** Runs in the background (the delegating call returned at launch). */
   background?: boolean
   /** Spawn nesting: 1 = spawned by the main loop, N+1 = by a depth-N agent. */
@@ -318,8 +315,6 @@ export interface SubagentState {
   sessionId?: string
   stopReason?: string
   error?: string
-  /** Parsed view of `error`; see `SubagentFailure`. */
-  failure?: SubagentFailure
   /** Compatibility projection for older consumers. */
   output: string[]
   outputEvents: SubagentOutputLine[]

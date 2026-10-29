@@ -12,7 +12,7 @@ import { AgentMessagesSummary } from './messages/AgentMessageFlow.js'
 import type { AgentMessageView, AgentIdentity } from './messages/agentTeam.js'
 import type { TeamTask, TeamView } from '../adapter/ports/channel-view.js'
 import { isTeamTaskBlocked, teamDashboardModel, teamTaskProgress, type TeamMemberRow } from './teamRoster.js'
-import { summarizeChannelFailures } from '../channel/subagent-failure.js'
+import { isDegradedChannel, summarizeChannelFailures } from '../channel/subagent-failure.js'
 import { isMinimalUiMode } from '../minimalUiMode.js'
 
 export interface SubagentDashboardProps {
@@ -258,7 +258,7 @@ export function SubagentDashboard({
   const running = subagents.filter(s => s.status === 'running').length
   const completed = subagents.filter(s => s.status === 'completed').length
   const failed = subagents.filter(s => s.status === 'failed').length
-  const channelFailures = summarizeChannelFailures(subagents)
+  const channelFailures = summarizeChannelFailures(subagents).filter(isDegradedChannel)
   const memberCount = (status: TeamMemberRow['status']): number =>
     model?.teammates.filter(row => row.status === status).length ?? 0
   const teamSep = panelMode ? ' · ' : '   '
