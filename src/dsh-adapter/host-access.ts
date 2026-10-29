@@ -374,13 +374,12 @@ function guardRootCapabilities(root: Context): void {
     const registry = concreteService(root.registry as object)
     if (!guardedRootRegistries.has(registry as object)) {
       guardedRootRegistries.add(registry as object)
-      // Mutations only. Reading the registry moves nothing, and Cordis itself
-      // walks it while resolving services: `ReflectService.notify` calls
-      // `this.ctx.registry.values()` to refresh dependent fibers after a
-      // `provide()` (cordis lib/index.js). The other iterators are plain
-      // inspection, kept open because the guard exists to stop structural root
-      // changes, not reads. Those reads run inside whatever activation started
-      // them — a web request, for one (#1765).
+      // Mutations only. Reads move nothing, and `root.registry` should behave
+      // like `ctx.registry`, which the guard never inspected: `getTraceable`
+      // rebinds a service to its caller's context, so only the `root.` alias
+      // ever resolved to the root receiver. Cordis itself reads through this
+      // alias too — `ReflectService.notify` calls `this.ctx.registry.values()`
+      // after a `provide()` (cordis lib/index.js).
       guardServiceMethod(registry, 'inject', root, 'root.inject', true)
       guardServiceMethod(registry, 'plugin', root, 'root.plugin', true)
       guardServiceMethod(registry, 'delete', root, 'root.registry.delete', true)
@@ -393,17 +392,17 @@ function guardRootCapabilities(root: Context): void {
     const events = concreteService(root.events as object)
     if (!guardedRootEvents.has(events as object)) {
       guardedRootEvents.add(events as object)
-      // Dispatch stays open; listening stays closed. `waterfall` is not just a
-      // hook surface: Cordis resolves every service a context does not own
-      // directly through `events.waterfall('internal/get', …)` and every write
-      // through `internal/set` (cordis lib/index.js), so guarding it puts the
-      // service system itself behind the guard. Plugin removal died there in
-      // `recompose()`'s `ctx.loader.await()`, before the config-reload emit it
-      // is blamed for (#1765). Subscribing stays refused: `on`/`once`/
-      // `register`/`unregister` pin a listener to the root past the activation
-      // that added it. That covers the direct subscription methods only;
-      // Cordis' own `internal/listener` channel predates this guard and can
-      // still park a hook on the root fiber through `emit`.
+      // Dispatch stays open; subscribing stays closed. `waterfall` also carries
+      // Cordis' own `internal/get` / `internal/set` resolution, so treating it
+      // as a hook surface would put the service system behind the guard. What
+      // #1765 actually hit was the config-reload `emit` that `recompose()`
+      // performs on the root context at the end of a web-originated save: a
+      // property read on `root` short-circuits before `internal/get`, so the
+      // emit is the only stop that failed. Subscribing stays refused —
+      // `on`/`once`/`register`/`unregister` pin a listener to the root past
+      // the activation that added it. That covers the direct subscription
+      // methods only; Cordis' own `internal/listener` channel predates this
+      // guard and can still park a hook on the root fiber through `emit`.
       for (const method of ['on', 'once', 'register', 'unregister']) {
         guardServiceMethod(events, method, root, `root.events.${method}`, true)
       }

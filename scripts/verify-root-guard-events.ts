@@ -1,24 +1,21 @@
 /**
  * #1765：root capability guard 在 `events` / `registry` 上的拦截面。
  *
- * 病不是「emit 被拦」一处，而是守卫把 Cordis 的服务解析路径一起关进了门：
- *   A. 插件 activation 里 `root.events.emit` 必须放行——DSH 的 `recompose()`
- *      在 `ctx.emit('app-boot/config-reload')` 收尾，而 web 请求永远跑在
- *      `dsh-host-webserver` 的 activation 令牌下；
- *   B. `waterfall` 必须放行——每个 context 未直接定义的服务属性都要过
- *      `events.waterfall('internal/get', …)`（cordis lib/index.js），拦它等于拦
- *      服务系统本身，`recompose()` 的 `ctx.loader.await()` 就在这里死掉，
- *      插件卸载因此连 emit 那一步都到不了；
- *   C. registry 读必须放行——`resolve`/`has` 不移动状态，`values`/`entries`/
- *      `forEach` 是 `ReflectService.notify` 通知依赖方的必经之路（cordis
- *      lib/index.js），拦它们会把 `provide()` 后的服务刷新一起拦掉；
- *   D. 监听与结构操作仍然关着——`on`/`once`/`register`/`unregister` 会把监听器
- *      挂在 root fiber 上、活过注册它的 activation，`root.effect` 与
- *      `registry.delete` 是真正的结构变更。
+ * #1765 的失败点是 root `ctx.emit('app-boot/config-reload')`：`recompose()`
+ * 收到的就是 root（`dsh-config-editor` 的三个调用点都传
+ * `this.ownerContext.root`），而 web 请求跑在 `dsh-host-webserver` 的
+ * activation 令牌下，收尾的 emit 于是撞上 `root.events.emit`。
  *
- * 守卫管的是直接订阅方法。Cordis 自己还有一条 `internal/listener` 通道：
- * 任何 context 的 `events.emit(root, 'internal/listener', …)` 都能把钩子挂到
- * root fiber 上。那条路径比这个守卫更早存在，不在它的能力面里，这里不做断言。
+ * 属性读取不走那条链：`ReflectService.handler.get` 对没有 `fiber.runtime`
+ * 的 root 直接 `ctx.reflect.get`，不派发 `internal/get`；插件 ctx 的读取用的
+ * 是自己的 traceable events 对象，守卫本来就不看。`waterfall` 与 registry 读
+ * 的放行是为了让 `root.xxx` 与 `ctx.xxx` 两个引用行为一致——守卫拦的是
+ * 结构性 root 变更，不是别名。
+ *
+ * 拒绝面按「能不能活过 activation」划线：`on`/`once`/`register`/`unregister`
+ * 会把监听器钉在 root fiber 上，`root.effect`/`root.inject`/`root.plugin`/
+ * `registry.delete` 是结构变更。Cordis 自己的 `internal/listener` 通道比这个
+ * 守卫更早存在，不在它的能力面里。
  *
  * 每条正向断言都校验副作用或返回值，不满足于「错误信息里没有守卫文案」。
  * Run via `node --import tsx/esm scripts/verify-root-guard-events.ts`.
@@ -57,7 +54,6 @@ const waterfalled: number[] = []
 let dispatched = 0
 const resolvedProps: string[] = []
 root.events.on('probe/emit', () => { emitted += 1 })
-root.events.on('internal/get', (_ctx: unknown, prop: string) => { resolvedProps.push(prop) })
 root.events.on('probe/dispatch', () => { dispatched += 1 })
 root.events.on('probe/parallel', (value: number) => { paralleled = value })
 root.events.on('probe/serial', () => { serialized += 1 })
@@ -66,6 +62,7 @@ root.events.on('probe/waterfall', (value: number, next: () => number) => {
   waterfalled.push(value)
   return next()
 })
+root.events.on('internal/get', (_ctx: unknown, prop: string) => { resolvedProps.push(prop) })
 
 const seen: Record<string, string> = {}
 const observed: Record<string, unknown> = {}
@@ -88,12 +85,10 @@ const plugin = {
       observed.dispatch = root.events.dispatch('emit', ['probe/dispatch']).length
     })
     // A property read on `root` short-circuits at `root.fiber.runtime` and
-    // never dispatches, and a read on the plugin context goes through the
-    // plugin's own traceable events object, which the guard never inspects.
-    // Dispatch on the root events service instead: that is the receiver the
-    // guard actually sees.
+    // never dispatches; dispatch on the root events service instead, which is
+    // the receiver the guard actually sees.
     seen.internalGet = await attempt(() => {
-      observed.internalGet = root.events.waterfall(
+      root.events.waterfall(
         'internal/get', root, 'probeUndeclared', new Error('probe'), () => 'fallback',
       )
     })
@@ -105,15 +100,37 @@ const plugin = {
         continue
       }
       seen[`registry.${method}`] = await attempt(() => {
-        if (method === 'forEach') return fn.call(registry, () => {})
-        if (method === 'resolve') return fn.call(registry, plugin)
-        if (method === 'get' || method === 'has') return fn.call(registry, 'probe-nobody')
+        if (method === 'forEach') {
+          let visits = 0
+          fn.call(registry, () => { visits += 1 })
+          observed['registry.forEach'] = visits
+          return undefined
+        }
+        if (method === 'resolve') {
+          observed['registry.resolve'] = fn.call(registry, plugin) === plugin.apply
+          return undefined
+        }
+        if (method === 'has') {
+          observed['registry.has'] = fn.call(registry, plugin)
+          return undefined
+        }
+        if (method === 'get') {
+          observed['registry.get'] = fn.call(registry, plugin) !== undefined
+          return undefined
+        }
+        if (method === 'keys') {
+          observed['registry.keys'] = [...(fn.call(registry) as Iterable<unknown>)].includes(plugin.apply)
+          return undefined
+        }
         observed[`registry.${method}`] = [...(fn.call(registry) as Iterable<unknown>)].length
         return undefined
       })
     }
 
     seen.on = await attempt(() => root.events.on('probe/ping', () => {}))
+    seen.once = await attempt(() => root.events.once('probe/ping', () => {}))
+    seen.register = await attempt(() => root.events.register('probe', [], () => {}, {}))
+    seen.unregister = await attempt(() => root.events.unregister([], () => {}))
     seen.effect = await attempt(() => root.effect(() => {}))
     seen.registryDelete = await attempt(() => registry.delete.call(registry, { name: 'probe-delete-target' }))
     check('the probe really ran inside a plugin activation', ctx !== root)
@@ -144,16 +161,24 @@ check('a plugin activation may dispatch internal/get on the root', seen.internal
 check('the internal/get listener ran', resolvedProps.includes('probeUndeclared'), resolvedProps.slice(-4))
 
 check('a plugin activation may resolve a root registry entry', seen['registry.resolve'] === 'ok', seen['registry.resolve'])
+check('the resolve returned the plugin callback', observed['registry.resolve'] === true, observed['registry.resolve'])
 check('a plugin activation may query the root registry', seen['registry.has'] === 'ok', seen['registry.has'])
+check('the registry knows the probe plugin', observed['registry.has'] === true, observed['registry.has'])
+check('a plugin activation may read a root registry entry', seen['registry.get'] === 'ok', seen['registry.get'])
+check('the registry returned the probe runtime', observed['registry.get'] === true, observed['registry.get'])
 check('a plugin activation may iterate root registry values', seen['registry.values'] === 'ok', seen['registry.values'])
 check('the registry values include the probe runtime', Number(observed['registry.values']) >= 1, observed['registry.values'])
 check('a plugin activation may iterate root registry entries', seen['registry.entries'] === 'ok', seen['registry.entries'])
 check('the registry entries include the probe runtime', Number(observed['registry.entries']) >= 1, observed['registry.entries'])
 check('a plugin activation may forEach the root registry', seen['registry.forEach'] === 'ok', seen['registry.forEach'])
+check('forEach visited the probe runtime', Number(observed['registry.forEach']) >= 1, observed['registry.forEach'])
 check('a plugin activation may list root registry keys', seen['registry.keys'] === 'ok', seen['registry.keys'])
-check('a plugin activation may read a root registry entry', seen['registry.get'] === 'ok', seen['registry.get'])
+check('the registry keys include the plugin callback', observed['registry.keys'] === true, observed['registry.keys'])
 
 check('a plugin activation may not subscribe on the root', seen.on === `dsh-tui: root.events.on ${REFUSAL}`, seen.on)
+check('a plugin activation may not subscribe once on the root', seen.once === `dsh-tui: root.events.once ${REFUSAL}`, seen.once)
+check('a plugin activation may not register a root hook', seen.register === `dsh-tui: root.events.register ${REFUSAL}`, seen.register)
+check('a plugin activation may not unregister a root hook', seen.unregister === `dsh-tui: root.events.unregister ${REFUSAL}`, seen.unregister)
 check('a plugin activation may not add a root effect', seen.effect === `dsh-tui: root.effect ${REFUSAL}`, seen.effect)
 check('a plugin activation may not delete a root service', seen.registryDelete === `dsh-tui: root.registry.delete ${REFUSAL}`, seen.registryDelete)
 
