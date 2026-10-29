@@ -338,8 +338,8 @@ export function SubagentDashboard({
         <Text key={summary.provider} color="error" wrap="wrap">
           {'⚠ ' + t('subagent-channel-degraded', {
             provider: summary.provider,
-            failed: String(summary.failed),
-            settled: String(summary.settled),
+            failed: summary.failed,
+            settled: summary.settled,
           })}
         </Text>
       ))}

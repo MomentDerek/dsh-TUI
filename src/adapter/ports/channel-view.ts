@@ -259,17 +259,6 @@ export type ToolResultView = ToolViewMeta & (
   | { readonly card: 'search'; readonly shape: 'paths'; readonly title?: string; readonly paths: readonly string[]; readonly truncated: boolean; readonly total: number }
 )
 
-/** Derived failure facts of one delegation child, parsed from the provider's
- *  own error sentence by `src/channel/subagent-failure.ts`. `error` keeps the
- *  sentence verbatim; these fields exist so a dashboard can group failures by
- *  channel instead of reading one provider's outage as a total one. */
-export interface SubagentFailure {
-  readonly product?: string
-  readonly stage?: string
-  readonly category?: string
-  readonly exitCode?: number
-}
-
 export interface SubagentRow {
   agentId: string
   runId?: string

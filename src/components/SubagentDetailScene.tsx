@@ -526,21 +526,24 @@ export function SubagentDetailScene({
         + (subagent.completedAt ? ` · ${t('subagent-completed')} ${formatTimestamp(subagent.completedAt)}` : '')}
         {` · id ${subagent.agentId.slice(0, 8)}`}
       </Text>
-      {failure !== undefined && (
-        <Text dimColor wrap="wrap">
-          {t('subagent-failure-detail', {
-            product: failure.product ?? '—',
-            stage: failure.stage ?? '—',
-            category: failure.category ?? '—',
-            exit: failure.exitCode === undefined ? '—' : String(failure.exitCode),
-          })}
-        </Text>
-      )}
-      {subagent.error && (
-        <Box marginTop={0}>
-          <Text color="error" wrap="wrap">{`${t('subagent-error-label')}: ${subagent.error}`}</Text>
-        </Box>
-      )}
+      {failure === undefined
+        ? subagent.error && (
+          <Box marginTop={0}>
+            <Text color="error" wrap="wrap">{`${t('subagent-error-label')}: ${subagent.error}`}</Text>
+          </Box>
+        )
+        : (
+          <Box marginTop={0}>
+            <Text color="error" wrap="wrap">
+              {t('subagent-failure-detail', {
+                product: failure.product ?? '—',
+                stage: failure.stage ?? '—',
+                category: failure.category ?? '—',
+                exit: failure.exitCode ?? '—',
+              })}
+            </Text>
+          </Box>
+        )}
 
       {/* Tab bar with page indicator */}
       <Box flexDirection="row" gap={0} marginTop={1}>
