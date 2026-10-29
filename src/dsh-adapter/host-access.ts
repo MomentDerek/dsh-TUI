@@ -374,12 +374,13 @@ function guardRootCapabilities(root: Context): void {
     const registry = concreteService(root.registry as object)
     if (!guardedRootRegistries.has(registry as object)) {
       guardedRootRegistries.add(registry as object)
+      // Mutations only. Reading the registry moves nothing: `resolve`/`get`/
+      // `has` and the iteration helpers are how DSH's own flows (the loader's
+      // `await`, plugin-manager's remove) look up services, and they run inside
+      // whatever activation started them — a web request, for one (#1765).
       guardServiceMethod(registry, 'inject', root, 'root.inject', true)
       guardServiceMethod(registry, 'plugin', root, 'root.plugin', true)
       guardServiceMethod(registry, 'delete', root, 'root.registry.delete', true)
-      for (const method of ['resolve', 'get', 'has', 'keys', 'values', 'entries', 'forEach']) {
-        guardServiceMethod(registry, method, root, `root.registry.${method}`, true)
-      }
     }
   } catch {
     // A minimal embedder may not expose the registry service object.
@@ -389,7 +390,17 @@ function guardRootCapabilities(root: Context): void {
     const events = concreteService(root.events as object)
     if (!guardedRootEvents.has(events as object)) {
       guardedRootEvents.add(events as object)
-      for (const method of ['on', 'once', 'emit', 'parallel', 'serial', 'bail', 'waterfall', 'register', 'unregister', 'dispatch']) {
+      // Dispatch stays open; listening stays closed. `waterfall` is not just a
+      // hook surface: Cordis resolves every service a context does not own
+      // directly through `events.waterfall('internal/get', …)` and every write
+      // through `internal/set` (cordis lib/index.js), so guarding it puts the
+      // service system itself behind the guard. Plugin removal died there in
+      // `recompose()`'s `ctx.loader.await()`, before the config-reload emit it
+      // is blamed for (#1765). Emitting reaches listeners that already exist
+      // and mutates nothing on the root fiber, while `on`/`once`/`register`/
+      // `unregister` would pin a listener to the root past the activation that
+      // added it — those stay refused.
+      for (const method of ['on', 'once', 'register', 'unregister']) {
         guardServiceMethod(events, method, root, `root.events.${method}`, true)
       }
     }
