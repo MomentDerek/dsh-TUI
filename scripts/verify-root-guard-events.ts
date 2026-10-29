@@ -62,7 +62,10 @@ root.events.on('probe/waterfall', (value: number, next: () => number) => {
   waterfalled.push(value)
   return next()
 })
-root.events.on('internal/get', (_ctx: unknown, prop: string) => { resolvedProps.push(prop) })
+root.events.on('internal/get', (_ctx: unknown, prop: string, _error: unknown, next: () => unknown) => {
+  resolvedProps.push(prop)
+  return next()
+})
 
 const seen: Record<string, string> = {}
 const observed: Record<string, unknown> = {}
@@ -88,7 +91,7 @@ const plugin = {
     // never dispatches; dispatch on the root events service instead, which is
     // the receiver the guard actually sees.
     seen.internalGet = await attempt(() => {
-      root.events.waterfall(
+      observed.internalGet = root.events.waterfall(
         'internal/get', root, 'probeUndeclared', new Error('probe'), () => 'fallback',
       )
     })
@@ -131,6 +134,8 @@ const plugin = {
     seen.once = await attempt(() => root.events.once('probe/ping', () => {}))
     seen.register = await attempt(() => root.events.register('probe', [], () => {}, {}))
     seen.unregister = await attempt(() => root.events.unregister([], () => {}))
+    seen.inject = await attempt(() => root.inject([], () => {}))
+    seen.plugin = await attempt(() => root.plugin({ name: 'probe-refused', apply() {} }))
     seen.effect = await attempt(() => root.effect(() => {}))
     seen.registryDelete = await attempt(() => registry.delete.call(registry, { name: 'probe-delete-target' }))
     check('the probe really ran inside a plugin activation', ctx !== root)
@@ -159,6 +164,7 @@ check('a plugin activation may dispatch on the root', seen.dispatch === 'ok', se
 check('the dispatch returned the host listener', observed.dispatch === 1, observed.dispatch)
 check('a plugin activation may dispatch internal/get on the root', seen.internalGet === 'ok', seen.internalGet)
 check('the internal/get listener ran', resolvedProps.includes('probeUndeclared'), resolvedProps.slice(-4))
+check('internal/get continued to the fallback', observed.internalGet === 'fallback', observed.internalGet)
 
 check('a plugin activation may resolve a root registry entry', seen['registry.resolve'] === 'ok', seen['registry.resolve'])
 check('the resolve returned the plugin callback', observed['registry.resolve'] === true, observed['registry.resolve'])
@@ -179,6 +185,8 @@ check('a plugin activation may not subscribe on the root', seen.on === `dsh-tui:
 check('a plugin activation may not subscribe once on the root', seen.once === `dsh-tui: root.events.once ${REFUSAL}`, seen.once)
 check('a plugin activation may not register a root hook', seen.register === `dsh-tui: root.events.register ${REFUSAL}`, seen.register)
 check('a plugin activation may not unregister a root hook', seen.unregister === `dsh-tui: root.events.unregister ${REFUSAL}`, seen.unregister)
+check('a plugin activation may not inject into the root', seen.inject === `dsh-tui: root.inject ${REFUSAL}`, seen.inject)
+check('a plugin activation may not start a root plugin', seen.plugin === `dsh-tui: root.plugin ${REFUSAL}`, seen.plugin)
 check('a plugin activation may not add a root effect', seen.effect === `dsh-tui: root.effect ${REFUSAL}`, seen.effect)
 check('a plugin activation may not delete a root service', seen.registryDelete === `dsh-tui: root.registry.delete ${REFUSAL}`, seen.registryDelete)
 
