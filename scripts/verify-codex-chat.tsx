@@ -294,6 +294,15 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   const over = cleanCommandReport(`${Array.from({ length: 201 }, (_, i) => `+l${i}`).join('\n')}\n`)
   check('cleanCommandReport: 200 lines + trailing newline is exact', exact.lines.length === 200 && !exact.truncated && !exact.lines.includes(''))
   check('cleanCommandReport: 201 lines + trailing newline truncates to 200', over.lines.length === 200 && over.truncated)
+  // CRLF: the terminator is `\r\n`, so it must not charge a cell or unit to
+  // the last line (which would clip a 4000-cell line or fake a 64K truncation).
+  const crlfCells = cleanCommandReport(`${'x'.repeat(4000)}\r\n`)
+  // Exactly maxCodeUnits of content across narrow lines: the leftover `\r`
+  // would push `raw` to 65_537 and fake a truncation.
+  const exactUnits = `${Array.from({ length: 16 }, () => 'x'.repeat(4000)).join('\n')}\n${'y'.repeat(1520)}`
+  const crlfUnits = cleanCommandReport(`${exactUnits}\r\n`)
+  check('cleanCommandReport: CRLF terminator does not clip the last line', crlfCells.lines.length === 1 && crlfCells.lines[0]!.length === 4000 && !crlfCells.truncated)
+  check('cleanCommandReport: CRLF terminator does not fake a 64K truncation', exactUnits.length === 65_536 && crlfUnits.lines.length === 17 && !crlfUnits.truncated)
 }
 
 // A report title is untrusted text too: the projector cleans it with the same
