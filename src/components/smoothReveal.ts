@@ -112,7 +112,7 @@ const countCursors = new Map<string, CountCursor>()
  * a forgotten height only mis-estimates geometry and falls back to
  * `DEFAULT_ROW_HEIGHT`, while a forgotten key re-typewrites the row — the
  * exact report this comment exists for. Making `fresh` transactional would
- * lift the constraint; that is a projection change, tracked in #1787.
+ * lift the constraint; that is a projection change, tracked in #1795.
  */
 const completedReveals = new Set<string>()
 
@@ -229,7 +229,7 @@ export function snapReveal(key: string): void {
  * reveal. The old 2048 FIFO used to heal this by accident once a session had
  * revealed past the cap; with no eviction it is permanent until the agent
  * changes. Covering it needs a row-id-regression signal from the channel;
- * tracked in #1787.
+ * tracked in #1795.
  */
 export function resetRevealSession(): void {
   textCursors.clear()

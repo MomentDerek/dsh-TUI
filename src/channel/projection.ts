@@ -1564,7 +1564,13 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
     // replays over painted rows would otherwise keep typewriting them.
     assistantRowsBySeq.clear()
     for (const row of state.rows) {
-      delete row.fresh
+      if (row.fresh !== undefined) {
+        delete row.fresh
+        // Read-view snapshots reuse untouched rows from the previous
+        // revision, so dropping the live claim has to move this row's dirty
+        // revision with it — otherwise a panel keeps serving `fresh: true`.
+        markChannelReadDirty(row)
+      }
       if (row.kind === 'assistant') indexAssistantRow(row)
     }
     replaying = true
