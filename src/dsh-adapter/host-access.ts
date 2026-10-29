@@ -374,10 +374,11 @@ function guardRootCapabilities(root: Context): void {
     const registry = concreteService(root.registry as object)
     if (!guardedRootRegistries.has(registry as object)) {
       guardedRootRegistries.add(registry as object)
-      // Mutations only. Reading the registry moves nothing: `resolve`/`get`/
-      // `has` and the iteration helpers are how DSH's own flows (the loader's
-      // `await`, plugin-manager's remove) look up services, and they run inside
-      // whatever activation started them — a web request, for one (#1765).
+      // Mutations only. Reading the registry moves nothing, and Cordis itself
+      // iterates it while resolving services: `ReflectService.notify` walks
+      // `this.ctx.registry.values()` to refresh every dependent fiber after a
+      // `provide()` (cordis lib/index.js). Those reads run inside whatever
+      // activation started them — a web request, for one (#1765).
       guardServiceMethod(registry, 'inject', root, 'root.inject', true)
       guardServiceMethod(registry, 'plugin', root, 'root.plugin', true)
       guardServiceMethod(registry, 'delete', root, 'root.registry.delete', true)
@@ -396,10 +397,11 @@ function guardRootCapabilities(root: Context): void {
       // through `internal/set` (cordis lib/index.js), so guarding it puts the
       // service system itself behind the guard. Plugin removal died there in
       // `recompose()`'s `ctx.loader.await()`, before the config-reload emit it
-      // is blamed for (#1765). Emitting reaches listeners that already exist
-      // and mutates nothing on the root fiber, while `on`/`once`/`register`/
-      // `unregister` would pin a listener to the root past the activation that
-      // added it — those stay refused.
+      // is blamed for (#1765). Subscribing stays refused: `on`/`once`/
+      // `register`/`unregister` pin a listener to the root past the activation
+      // that added it. That covers the direct subscription methods only;
+      // Cordis' own `internal/listener` channel predates this guard and can
+      // still park a hook on the root fiber through `emit`.
       for (const method of ['on', 'once', 'register', 'unregister']) {
         guardServiceMethod(events, method, root, `root.events.${method}`, true)
       }
