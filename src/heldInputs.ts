@@ -8,7 +8,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { basename, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { DATA_DIR } from './utils/paths.js'
 
 /** env marker naming the file the replacement takes its held texts from. */
@@ -42,8 +42,33 @@ export function writeHeldInputs(texts: readonly string[], dir: string = DATA_DIR
 }
 
 /**
+ * The one handoff this process has not settled yet. The DSH launcher's boot
+ * recompose applies the entry a second time, after the first pass consumed
+ * the env marker; that pass must still find the texts.
+ */
+let waiting: { texts: string[]; file?: string } | undefined
+
+/** Read the marker once per handoff; without a fresh one, hand back the
+ *  pending handoff (the recompose asking again). */
+function carriedInputs(env: NodeJS.ProcessEnv, dir: string): { texts: string[]; file?: string } {
+  if (env[HELD_INPUTS_ENV] !== undefined) waiting = readHeldInputs(env, dir)
+  return waiting ?? { texts: [] }
+}
+
+/** Best effort: a file another process still holds open must not decide
+ *  whether this one starts. */
+function removeHeldFile(file: string): void {
+  try {
+    rmSync(file, { force: true })
+  } catch {
+  }
+}
+
+/**
  * The replacement's side: park the texts a `/restart` handed this process as
  * held rows once the screen's channel is ready (never sent by themselves).
+ * A pass that cannot reach a ready channel leaves the handoff pending for the
+ * next `apply()` instead of dropping it.
  * @returns What stops waiting for a channel that is not ready yet.
  */
 export function adoptHeldInputs(
@@ -51,12 +76,13 @@ export function adoptHeldInputs(
   env: NodeJS.ProcessEnv = process.env,
   dir: string = DATA_DIR,
 ): (() => void) | undefined {
-  const { texts, file } = readHeldInputs(env)
+  const { texts, file } = carriedInputs(env, dir)
   // The file goes only once its texts are on screen: a replacement that
   // dies before its channel is ready leaves it for the resume command its
   // parent prints. Then files nobody resumed are swept.
   const settle = (): void => {
-    if (file !== undefined) rmSync(file, { force: true })
+    if (file !== undefined) removeHeldFile(file)
+    waiting = undefined
     sweepHeldInputs(dir)
   }
   if (texts.length === 0) {
@@ -80,13 +106,17 @@ export function adoptHeldInputs(
 /**
  * The resume command after a restart that ended before any replacement took
  * the held texts (a stall, a failed spawn): their file stays, and the command
- * hands it to the next launch. A Windows command takes no env prefix: there
- * it is the PowerShell form that sets the marker first.
+ * hands it to the next launch. Windows has no shared env-assignment syntax:
+ * PowerShell and cmd.exe each get their own copy-pasteable line.
  */
 export function heldInputsResumeCommand(command: string, env: Readonly<Record<string, string>> | undefined, platform: NodeJS.Platform = process.platform): string {
   const file = env?.[HELD_INPUTS_ENV]
   if (file === undefined || !existsSync(file)) return command
-  if (platform === 'win32') return `$env:${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\'')}'; ${command}`
+  if (platform === 'win32') {
+    // This line is the only way a stalled restart gets its texts back, and the
+    // two Windows shells disagree on how to set a variable: print both.
+    return `$env:${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\'')}'; ${command}\nset "${HELD_INPUTS_ENV}=${file}" && ${command}`
+  }
   return `${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\\\'\'')}' ${command}`
 }
 
@@ -94,20 +124,22 @@ export function heldInputsResumeCommand(command: string, env: Readonly<Record<st
  * Take (read and delete) the texts a `/restart` handed this process. One
  * shot: the env marker is consumed too, so no child inherits it.
  */
-export function takeHeldInputs(env: NodeJS.ProcessEnv = process.env): string[] {
-  const { texts, file } = readHeldInputs(env)
-  if (file !== undefined) rmSync(file, { force: true })
+export function takeHeldInputs(env: NodeJS.ProcessEnv = process.env, dir: string = DATA_DIR): string[] {
+  const marked = env[HELD_INPUTS_ENV] !== undefined
+  const { texts, file } = readHeldInputs(env, dir)
+  if (file !== undefined) removeHeldFile(file)
+  if (marked) waiting = undefined
   return texts
 }
 
 /** Read the texts and consume the env marker; `file` is what the caller
  *  deletes once it is done with them. */
-function readHeldInputs(env: NodeJS.ProcessEnv): { texts: string[]; file?: string } {
+function readHeldInputs(env: NodeJS.ProcessEnv, dir: string): { texts: string[]; file?: string } {
   const file = env[HELD_INPUTS_ENV]
   delete env[HELD_INPUTS_ENV]
-  // Only ever a file writeHeldInputs named: the marker is env input, and
-  // the caller deletes what it names.
-  if (file === undefined || !HELD_INPUTS_FILE.test(basename(file))) return { texts: [] }
+  // Only ever a file writeHeldInputs named, in the directory it writes to:
+  // the marker is env input, and the caller deletes what it names.
+  if (file === undefined || !HELD_INPUTS_FILE.test(basename(file)) || dirname(resolve(file)) !== resolve(dir)) return { texts: [] }
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
     const texts = parsed !== null && typeof parsed === 'object' ? (parsed as { texts?: unknown }).texts : undefined

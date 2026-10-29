@@ -227,7 +227,12 @@ export function createSessionResumeActions(
       // normal return is a commit, which is what the outer finally keys on.
       const result = deps.binding.adopt<ResumeResult>(candidate, adoption, (committedBinding, disposePrevious) => {
         const previousSessionId = String(committedBinding.agent.session.id)
-        const keepPrevious = keepCurrent && committedBinding.handle !== undefined
+        // Reopening the screen's own ended session (#1651) is not a switch:
+        // the handle it replaces is the disposed one, and parking it would put
+        // a dead entry in the background ledger under the id this adoption now
+        // owns — the live-adoption lookup prefers that entry over the screen's
+        // current handle. Dispose it instead (idempotent).
+        const keepPrevious = keepCurrent && previousSessionId !== sessionId && committedBinding.handle !== undefined
           && (committedBinding.handle.agent.status === 'running' || agentViewHasTurns(snapshotLiveSessionEvents(committedBinding.handle.agent.session)))
         if (keepCurrent && (committedBinding.handle === undefined || keepPrevious)) deps.parkSubagents(committedBinding.agent)
         state.cwd = handle.agent.session.header.cwd ?? state.cwd

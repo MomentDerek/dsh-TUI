@@ -335,10 +335,12 @@ While the model is working, three paths have different placement:
     Claude CLI that cannot withdraw them, or when the withdrawal request fails,
     the backend still runs them next turn; dsh-TUI stops holding them, says so,
     and never sends them twice.
-  - Messages the backend dropped without running them (the session ended
-    unexpectedly, or the backend discarded them) are held as "not delivered",
-    never re-sent by themselves, and stay for the next session; on DSH, a
-    message submitted after the session ended is held the same way. While the session
+  - Messages the DSH kernel dropped without running them (the session ended
+    unexpectedly, or the kernel discarded them) are held as "not delivered";
+    Claude and Codex still report such losses as discarded, so those are not
+    held. Held messages are never re-sent by themselves and stay for the next
+    session; on DSH, a message submitted after the session ended is held the
+    same way. While the session
     is ended `⏎` sends nothing: `/new` starts a new session and `⏎` sends them
     there, or `/restart` resumes this one (only text survives a restart).
     Images attached to a held message stay with it into the next session. A held

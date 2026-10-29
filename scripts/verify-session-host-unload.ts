@@ -45,12 +45,14 @@
  *      receipt that comes back after the session ended leaves it held [K5]
  *   L. reopening the screen's own agent, still live under an ended session,
  *      keeps the handle the screen holds [L1]
- *   R. the carry-over file is taken once, and only a file it wrote [R1-R4];
- *      only its owner can read it [R5]; a restart that ended early names it
- *      in the resume command (PowerShell form on Windows) [R6, R7]; the
- *      replacement holds what it took once its channel is ready [R8, R9]; a
- *      boot sweeps week-old files nobody resumed [R10]; each restart writes a
- *      file of its own, even under a reused pid [R11]
+ *   R. the carry-over file is taken once, and only a file it wrote in its own
+ *      directory [R1-R4]; only its owner can read it [R5]; a restart that
+ *      ended early names it in the resume command, in both Windows shell forms
+ *      [R6, R7]; the replacement holds what it took once its channel is ready
+ *      [R8, R9]; a boot sweeps week-old files nobody resumed [R10]; each
+ *      restart writes a file of its own, even under a reused pid [R11]; a
+ *      pass that cannot reach a ready channel leaves the handoff for the
+ *      entry's next apply [R12]
  *
  * Run: node --import tsx/esm scripts/verify-session-host-unload.ts
  */
@@ -197,21 +199,23 @@ const root = new Context()
   try {
     check('R1 an empty queue writes nothing', writeHeldInputs(['', '  '], dir, 42) === undefined && readdirSync(dir).length === 0)
     const env: NodeJS.ProcessEnv = { ...writeHeldInputs(['one', 'two\nlines', ' '], dir, 42) }
-    check('R2 the replacement takes the texts once, and the file and marker go', JSON.stringify(takeHeldInputs(env)) === '["one","two\\nlines"]'
+    check('R2 the replacement takes the texts once, and the file and marker go', JSON.stringify(takeHeldInputs(env, dir)) === '["one","two\\nlines"]'
       && env[HELD_INPUTS_ENV] === undefined && readdirSync(dir).length === 0)
-    check('R3 a second take finds nothing', takeHeldInputs({ ...env }).length === 0)
+    check('R3 a second take finds nothing', takeHeldInputs({ ...env }, dir).length === 0)
     if (process.platform !== 'win32') {
       const marker = writeHeldInputs(['private'], dir, 43)?.[HELD_INPUTS_ENV]
       check('R5 the file is readable by its owner alone', marker !== undefined && (statSync(marker).mode & 0o077) === 0, marker)
-      takeHeldInputs({ [HELD_INPUTS_ENV]: marker })
+      takeHeldInputs({ [HELD_INPUTS_ENV]: marker }, dir)
     }
     const kept = writeHeldInputs(['kept'], join(dir, 'it\'s here'), 44)
     const file = kept?.[HELD_INPUTS_ENV] ?? ''
     const line = heldInputsResumeCommand('dsh-tui --resume s1', kept, 'linux')
     check('R6 a restart that ended early names the kept file in the resume command, quoted, and that command takes it',
       line === `${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\\\'\'')}' dsh-tui --resume s1`
-        && heldInputsResumeCommand('dsh-tui --resume s1', kept, 'win32') === `$env:${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\'')}'; dsh-tui --resume s1`
-        && JSON.stringify(takeHeldInputs({ ...kept })) === '["kept"]',
+        && heldInputsResumeCommand('dsh-tui --resume s1', kept, 'win32')
+          === `$env:${HELD_INPUTS_ENV}='${file.replaceAll('\'', '\'\'')}'; dsh-tui --resume s1`
+            + `\nset "${HELD_INPUTS_ENV}=${file}" && dsh-tui --resume s1`
+        && JSON.stringify(takeHeldInputs({ ...kept }, join(dir, 'it\'s here'))) === '["kept"]',
       line)
     check('R7 with nothing kept the resume command is unchanged',
       heldInputsResumeCommand('dsh-tui --resume s1', kept, 'linux') === 'dsh-tui --resume s1'
@@ -258,11 +262,31 @@ const root = new Context()
     const reused = { ...writeHeldInputs(['after pid reuse'], dir, 49) } as NodeJS.ProcessEnv
     check('R11 two restarts with the same pid keep separate files, each taken back by its own marker',
       before[HELD_INPUTS_ENV] !== reused[HELD_INPUTS_ENV]
-        && JSON.stringify(takeHeldInputs(before)) === '["before"]' && JSON.stringify(takeHeldInputs(reused)) === '["after pid reuse"]',
+        && JSON.stringify(takeHeldInputs(before, dir)) === '["before"]' && JSON.stringify(takeHeldInputs(reused, dir)) === '["after pid reuse"]',
       { before: before[HELD_INPUTS_ENV], reused: reused[HELD_INPUTS_ENV] })
-    const foreign = join(dir, 'notes.json')
+    // The launcher's boot recompose applies the entry a second time: a pass
+    // that could not hold the texts must leave them for the next one.
+    const twice = { ...writeHeldInputs(['twice'], dir, 50) } as NodeJS.ProcessEnv
+    const twiceFile = twice[HELD_INPUTS_ENV]!
+    let firstHeld = 0
+    const first = adoptHeldInputs({
+      ready: false,
+      subscribe() { return () => {} },
+      holdInputs(texts: readonly string[]) { firstHeld += texts.length; return texts.length },
+    }, twice, dir)
+    first?.()
+    const twiceHeld: string[][] = []
+    adoptHeldInputs({ ...later, ready: true, holdInputs(texts: readonly string[]) { twiceHeld.push([...texts]); return texts.length } }, twice, dir)
+    check('R12 a pass that cannot hold the texts leaves them for the entry\'s next apply, which takes them once',
+      firstHeld === 0 && JSON.stringify(twiceHeld) === '[["twice"]]' && !existsSync(twiceFile), twiceHeld)
+    // A matching name is not enough: the marker must name a file in the
+    // directory `writeHeldInputs` writes to, and nothing else is deleted.
+    const elsewhere = mkdtempSync(join(tmpdir(), 'dsh-tui-held-elsewhere-'))
+    const foreign = join(elsewhere, 'held-inputs-1-0123456789ab.json')
     writeFileSync(foreign, JSON.stringify({ texts: ['x'] }))
-    check('R4 a marker naming any other file is ignored and the file is kept', takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }).length === 0 && existsSync(foreign))
+    check('R4 a marker naming a file outside the carry-over directory is ignored and the file is kept',
+      takeHeldInputs({ [HELD_INPUTS_ENV]: foreign }, dir).length === 0 && existsSync(foreign))
+    rmSync(elsewhere, { recursive: true, force: true })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
