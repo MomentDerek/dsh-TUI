@@ -784,6 +784,10 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
           // lines, 64K UTF-16 units, 4000 cells per line, ANSI/C0 stripped,
           // indentation and blank rows kept; a trailing newline is not a row.
           const report = cleanCommandReport(event.text)
+          // A terminator-only report has nothing to draw: a lone title row
+          // would read as a render failure. The channel-side sink keeps the
+          // same guard, so both shapes stay identical.
+          if (report.lines.length === 0 && !report.truncated) return
           // The `local` title is the block boundary `trimLocalRows` relies on
           // (and tells the reader which command produced the report). `label`
           // is a neutral event field, so it takes the same render sanitizer as

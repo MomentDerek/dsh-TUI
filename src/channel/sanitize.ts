@@ -52,9 +52,10 @@ export function cleanCommandReport(value: string): { lines: string[]; truncated:
   const maxCodeUnits = 65_536
   const maxLines = 200
   const maxCells = 4000
-  // A trailing line terminator (`\n` or `\r\n`) is not an empty reported row;
-  // leaving the `\r` behind would charge a cell/unit to the last line.
-  const raw = value.replace(/\r?\n$/u, '')
+  // A trailing line terminator (`\n`, `\r\n` or a lone `\r`) is not an empty
+  // reported row; leaving the `\r` behind would charge a cell/unit to the last
+  // line (clipping a 4000-cell line or faking a 64K truncation).
+  const raw = value.replace(/\r\n$|[\r\n]$/u, '')
   let bounded = raw.slice(0, maxCodeUnits)
   // Do not split a Unicode scalar at the allocation boundary.
   if (bounded.length < raw.length && /[\uD800-\uDBFF]$/u.test(bounded)) bounded = bounded.slice(0, -1)

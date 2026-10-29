@@ -297,12 +297,20 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   // CRLF: the terminator is `\r\n`, so it must not charge a cell or unit to
   // the last line (which would clip a 4000-cell line or fake a 64K truncation).
   const crlfCells = cleanCommandReport(`${'x'.repeat(4000)}\r\n`)
+  // A lone CR is a terminator too: it must not become a space row or charge
+  // the last line with a cell.
+  const loneCr = cleanCommandReport('\r')
+  const loneCrCells = cleanCommandReport(`${'x'.repeat(4000)}\r`)
   // Exactly maxCodeUnits of content across narrow lines: the leftover `\r`
   // would push `raw` to 65_537 and fake a truncation.
   const exactUnits = `${Array.from({ length: 16 }, () => 'x'.repeat(4000)).join('\n')}\n${'y'.repeat(1520)}`
   const crlfUnits = cleanCommandReport(`${exactUnits}\r\n`)
+  const crUnits = cleanCommandReport(`${exactUnits}\r`)
   check('cleanCommandReport: CRLF terminator does not clip the last line', crlfCells.lines.length === 1 && crlfCells.lines[0]!.length === 4000 && !crlfCells.truncated)
   check('cleanCommandReport: CRLF terminator does not fake a 64K truncation', exactUnits.length === 65_536 && crlfUnits.lines.length === 17 && !crlfUnits.truncated)
+  check('cleanCommandReport: a lone CR is a terminator, not a row', loneCr.lines.length === 0 && !loneCr.truncated)
+  check('cleanCommandReport: a lone CR does not clip the last line', loneCrCells.lines.length === 1 && loneCrCells.lines[0]!.length === 4000 && !loneCrCells.truncated)
+  check('cleanCommandReport: a lone CR does not fake a 64K truncation', crUnits.lines.length === 17 && !crUnits.truncated)
 }
 
 // A report title is untrusted text too: the projector cleans it with the same
@@ -323,6 +331,25 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   } as never])
   const title = harness.state.rows.find(row => row.kind === 'local')
   check('a report title is sanitized before it becomes a row', title !== undefined && title.text === '/diff', JSON.stringify(title?.text))
+}
+
+// A terminator-only report has no body: drawing its title alone would read as
+// a render failure. The channel-side sink already drops it; both sinks agree.
+{
+  const harness = createProjectorHarness()
+  harness.apply([{
+    type: 'user.message',
+    id: 'empty-1',
+    anchor: 'empty-1',
+    seq: 1,
+    time: 0,
+    source: 'command-output',
+    text: '\n',
+    blocks: [{ type: 'text', text: '\n' }],
+    label: '/diff',
+    displayLive: true,
+  } as never])
+  check('a terminator-only report draws no title row', harness.state.rows.length === 0)
 }
 
 // A middle splice that also grows the array must reset the fold cursor: the
