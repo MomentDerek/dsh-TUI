@@ -269,14 +269,19 @@ const root = new Context()
     const twice = { ...writeHeldInputs(['twice'], dir, 50) } as NodeJS.ProcessEnv
     const twiceFile = twice[HELD_INPUTS_ENV]!
     let firstHeld = 0
-    const first = adoptHeldInputs({
+    const firstListeners = new Set<() => void>()
+    const firstChannel = {
       ready: false,
-      subscribe() { return () => {} },
+      subscribe(listener: () => void) { firstListeners.add(listener); return () => { firstListeners.delete(listener) } },
       holdInputs(texts: readonly string[]) { firstHeld += texts.length; return texts.length },
-    }, twice, dir)
-    first?.()
+    }
+    adoptHeldInputs(firstChannel, twice, dir)
     const twiceHeld: string[][] = []
     adoptHeldInputs({ ...later, ready: true, holdInputs(texts: readonly string[]) { twiceHeld.push([...texts]); return texts.length } }, twice, dir)
+    // The first pass's channel becomes ready only after the second took the
+    // handoff: its stale listener must not park the same texts again.
+    firstChannel.ready = true
+    for (const listener of [...firstListeners]) listener()
     check('R12 a pass that cannot hold the texts leaves them for the entry\'s next apply, which takes them once',
       firstHeld === 0 && JSON.stringify(twiceHeld) === '[["twice"]]' && !existsSync(twiceFile), twiceHeld)
     // A matching name is not enough: the marker must name a file in the

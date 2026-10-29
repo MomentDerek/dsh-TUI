@@ -76,7 +76,8 @@ export function adoptHeldInputs(
   env: NodeJS.ProcessEnv = process.env,
   dir: string = DATA_DIR,
 ): (() => void) | undefined {
-  const { texts, file } = carriedInputs(env, dir)
+  const inputs = carriedInputs(env, dir)
+  const { texts, file } = inputs
   // The file goes only once its texts are on screen: a replacement that
   // dies before its channel is ready leaves it for the resume command its
   // parent prints. Then files nobody resumed are swept.
@@ -97,6 +98,9 @@ export function adoptHeldInputs(
   const unsubscribe = channel.subscribe(() => {
     if (!channel.ready) return
     unsubscribe()
+    // A later apply may have taken the handoff first (the recompose); the
+    // same texts must never be parked twice.
+    if (waiting !== inputs) return
     channel.holdInputs(texts)
     settle()
   })
