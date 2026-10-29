@@ -200,7 +200,7 @@ changes during a turn apply to the next one, not to reasoning already in progres
 | `Esc` / `Ctrl+C` | Dismiss the focused panel or interrupt. Cancelling a blocking question interrupts its turn; dismissing an async question only closes that question |
 | `/review` | Review uncommitted changes inline; requires idle state and consumes model usage |
 | `/review base <branch>` / `/review commit <sha>` | Review against a branch or commit; other arguments are custom review instructions |
-| `/diff` | Latest turn’s aggregated diff; otherwise try Git diff against the remote, then show an empty-state notice. Output is shown line by line and truncated with a notice past 200 lines |
+| `/diff` | Latest turn’s aggregated diff; otherwise try Git diff against the remote, then show an empty-state notice. Output is shown line by line and truncated with a notice past 200 lines; tabs and trailing whitespace are normalized for display |
 | `/<skill-name> [arguments]` | Invoke a discovered, enabled Codex skill; completion updates as skills change. Local commands take precedence on name collisions |
 | `/init` | Submit Codex’s AGENTS.md initialization prompt, not the DSH template generator; a model turn with normal approvals/usage |
 | `/mcp` | Codex MCP status and tool counts, with reconnect but no runtime toggle |

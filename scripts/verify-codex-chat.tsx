@@ -333,6 +333,25 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   check('a report title is sanitized before it becomes a row', title !== undefined && title.text === '/diff', JSON.stringify(title?.text))
 }
 
+// A label that cleans to nothing must not leave an empty title row.
+{
+  const harness = createProjectorHarness()
+  harness.apply([{
+    type: 'user.message',
+    id: 'title-2',
+    anchor: 'title-2',
+    seq: 1,
+    time: 0,
+    source: 'command-output',
+    text: 'line',
+    blocks: [{ type: 'text', text: 'line' }],
+    label: '\u001b[31m\u001b[0m\u0007',
+    displayLive: true,
+  } as never])
+  const title = harness.state.rows.find(row => row.kind === 'local')
+  check('an empty sanitized title falls back to the neutral label', title !== undefined && title.text === 'Command output', JSON.stringify(title?.text))
+}
+
 // A terminator-only report has no body: drawing its title alone would read as
 // a render failure. The channel-side sink already drops it; both sinks agree.
 {

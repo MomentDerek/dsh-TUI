@@ -791,8 +791,10 @@ export function createChannelProjection(state: ProjectionState, deps: ChannelPro
           // The `local` title is the block boundary `trimLocalRows` relies on
           // (and tells the reader which command produced the report). `label`
           // is a neutral event field, so it takes the same render sanitizer as
-          // the body instead of reaching the row verbatim.
-          const title = cleanRenderText(event.label ?? t('command-output-title'), NOTICE_CELLS)
+          // the body instead of reaching the row verbatim; a label that cleans
+          // to nothing falls back to the neutral title rather than drawing an
+          // empty row.
+          const title = cleanRenderText(event.label ?? '', NOTICE_CELLS) || t('command-output-title')
           trimLocalRows(state.rows, report.lines.length + 1 + Number(report.truncated))
           appendRow({ id: deps.rowIds.value, kind: 'local', text: title, seq: event.seq })
           deps.rowIds.value += 1
