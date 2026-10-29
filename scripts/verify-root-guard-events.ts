@@ -34,7 +34,6 @@ function check(label: string, ok: boolean, detail: unknown = ''): void {
 }
 
 const REFUSAL = 'is unavailable from a plugin activation'
-const refused = (message: string): boolean => message.includes(REFUSAL)
 
 async function attempt(run: () => unknown): Promise<string> {
   try {
@@ -88,16 +87,21 @@ const plugin = {
     seen.dispatch = await attempt(() => {
       observed.dispatch = root.events.dispatch('emit', ['probe/dispatch']).length
     })
-    // Reading an undeclared service through the plugin context is the
-    // `internal/get` waterfall path `ctx.loader` takes inside recompose().
-    // Reading it off `root` would short-circuit at `root.fiber.runtime` and
-    // never dispatch, so it cannot stand in for this check.
-    seen.undeclared = await attempt(() => (ctx as unknown as Record<string, unknown>).probeUndeclared)
+    // A property read on `root` short-circuits at `root.fiber.runtime` and
+    // never dispatches, and a read on the plugin context goes through the
+    // plugin's own traceable events object, which the guard never inspects.
+    // Dispatch on the root events service instead: that is the receiver the
+    // guard actually sees.
+    seen.internalGet = await attempt(() => {
+      observed.internalGet = root.events.waterfall(
+        'internal/get', root, 'probeUndeclared', new Error('probe'), () => 'fallback',
+      )
+    })
 
     for (const method of ['resolve', 'get', 'has', 'keys', 'values', 'entries', 'forEach']) {
       const fn = registry[method]
       if (typeof fn !== 'function') {
-        seen[`registry.${method}`] = 'absent'
+        seen[`registry.${method}`] = 'missing'
         continue
       }
       seen[`registry.${method}`] = await attempt(() => {
@@ -136,8 +140,8 @@ check('the waterfall reached the host listener', waterfalled[0] === 1, waterfall
 check('the waterfall returned the composed value', observed.waterfall === 10, observed.waterfall)
 check('a plugin activation may dispatch on the root', seen.dispatch === 'ok', seen.dispatch)
 check('the dispatch returned the host listener', observed.dispatch === 1, observed.dispatch)
-check('a plugin activation may read an undeclared service', seen.undeclared === 'ok', seen.undeclared)
-check('the read dispatched internal/get', resolvedProps.includes('probeUndeclared'), resolvedProps.slice(-4))
+check('a plugin activation may dispatch internal/get on the root', seen.internalGet === 'ok', seen.internalGet)
+check('the internal/get listener ran', resolvedProps.includes('probeUndeclared'), resolvedProps.slice(-4))
 
 check('a plugin activation may resolve a root registry entry', seen['registry.resolve'] === 'ok', seen['registry.resolve'])
 check('a plugin activation may query the root registry', seen['registry.has'] === 'ok', seen['registry.has'])
@@ -146,8 +150,8 @@ check('the registry values include the probe runtime', Number(observed['registry
 check('a plugin activation may iterate root registry entries', seen['registry.entries'] === 'ok', seen['registry.entries'])
 check('the registry entries include the probe runtime', Number(observed['registry.entries']) >= 1, observed['registry.entries'])
 check('a plugin activation may forEach the root registry', seen['registry.forEach'] === 'ok', seen['registry.forEach'])
-check('a plugin activation may list root registry keys', seen['registry.keys'] === 'ok' || seen['registry.keys'] === 'absent', seen['registry.keys'])
-check('a plugin activation may read a root registry entry', seen['registry.get'] === 'ok' || seen['registry.get'] === 'absent', seen['registry.get'])
+check('a plugin activation may list root registry keys', seen['registry.keys'] === 'ok', seen['registry.keys'])
+check('a plugin activation may read a root registry entry', seen['registry.get'] === 'ok', seen['registry.get'])
 
 check('a plugin activation may not subscribe on the root', seen.on === `dsh-tui: root.events.on ${REFUSAL}`, seen.on)
 check('a plugin activation may not add a root effect', seen.effect === `dsh-tui: root.effect ${REFUSAL}`, seen.effect)

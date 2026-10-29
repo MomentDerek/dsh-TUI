@@ -375,10 +375,12 @@ function guardRootCapabilities(root: Context): void {
     if (!guardedRootRegistries.has(registry as object)) {
       guardedRootRegistries.add(registry as object)
       // Mutations only. Reading the registry moves nothing, and Cordis itself
-      // iterates it while resolving services: `ReflectService.notify` walks
-      // `this.ctx.registry.values()` to refresh every dependent fiber after a
-      // `provide()` (cordis lib/index.js). Those reads run inside whatever
-      // activation started them — a web request, for one (#1765).
+      // walks it while resolving services: `ReflectService.notify` calls
+      // `this.ctx.registry.values()` to refresh dependent fibers after a
+      // `provide()` (cordis lib/index.js). The other iterators are plain
+      // inspection, kept open because the guard exists to stop structural root
+      // changes, not reads. Those reads run inside whatever activation started
+      // them — a web request, for one (#1765).
       guardServiceMethod(registry, 'inject', root, 'root.inject', true)
       guardServiceMethod(registry, 'plugin', root, 'root.plugin', true)
       guardServiceMethod(registry, 'delete', root, 'root.registry.delete', true)
