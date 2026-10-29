@@ -4,7 +4,6 @@ import type { SubagentOutputLine, SubagentState } from '../dsh-adapter/subagents
 import { AgentMessageLeafRow, AssistantTextLeafRow, ThinkingLeafRow, ToolLeafRow } from './messages/TranscriptLeaves.js'
 import { AgentMessageFlowRow } from './messages/AgentMessageFlow.js'
 import { AgentMessageComposer, type ComposerKeyHandler } from './AgentMessageComposer.js'
-import { parseSubagentFailure } from '../channel/subagent-failure.js'
 import type { AgentComposeTarget, AgentMessageControl, AgentMessageView } from './messages/agentTeam.js'
 import { subagentDetailMemory } from './subagentDetailMemory.js'
 import {
@@ -469,10 +468,6 @@ export function SubagentDetailScene({
   }
   usePanelInput(panelKeyHandler, { active: panelMode && focused && visible })
 
-  // Derived at render time from the verbatim error text: storing it would let a
-  // respawned child inherit a stale diagnostic.
-  const failure = parseSubagentFailure(subagent.error)
-
   const tab = (name: DetailPage, label: string): React.ReactNode => {
     const active = activePage === name
     return (
@@ -526,24 +521,11 @@ export function SubagentDetailScene({
         + (subagent.completedAt ? ` · ${t('subagent-completed')} ${formatTimestamp(subagent.completedAt)}` : '')}
         {` · id ${subagent.agentId.slice(0, 8)}`}
       </Text>
-      {failure === undefined
-        ? subagent.error && (
-          <Box marginTop={0}>
-            <Text color="error" wrap="wrap">{`${t('subagent-error-label')}: ${subagent.error}`}</Text>
-          </Box>
-        )
-        : (
-          <Box marginTop={0}>
-            <Text color="error" wrap="wrap">
-              {t('subagent-failure-detail', {
-                product: failure.product ?? '—',
-                stage: failure.stage ?? '—',
-                category: failure.category ?? '—',
-                exit: failure.exitCode ?? '—',
-              })}
-            </Text>
-          </Box>
-        )}
+      {subagent.error && (
+        <Box marginTop={0}>
+          <Text color="error" wrap="wrap">{`${t('subagent-error-label')}: ${subagent.error}`}</Text>
+        </Box>
+      )}
 
       {/* Tab bar with page indicator */}
       <Box flexDirection="row" gap={0} marginTop={1}>

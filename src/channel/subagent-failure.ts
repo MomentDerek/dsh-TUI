@@ -1,50 +1,15 @@
 /**
- * Failure facts carried by a delegation provider's error text.
+ * Channel-level failure counts for delegation children.
  *
- * A failed child arrives as one opaque sentence
- * (`Product subagent failure (product: Claude Code; stage: query-run;
- * category: invalid-result; exit code: 1)`). The sentence stays verbatim in
- * the transcript; these fields are the compact form the detail header shows
- * instead of pasting the sentence again, and the channel counts below say
- * whether a provider is failing enough runs to be worth a banner — one broken
- * channel must not read as "every subagent is broken".
- *
- * Parsing is deliberately conservative: text without the diagnostic shape
- * yields nothing rather than a guess, and the fields are recomputed from
- * `error` at render time rather than stored, so a fresh run can never inherit
- * a stale diagnostic.
+ * A failed child's own error text stays where the backend put it; this module
+ * only counts how many runs a provider answered and how many of those failed,
+ * so one broken channel cannot read as "every subagent is broken". It never
+ * invents a diagnosis: the per-item `product/stage/category` sentence a
+ * product provider emits reaches the transcript as a tool result, not as
+ * `SubagentState.error`, so parsing it here would be parsing a field that
+ * never carries it.
  */
 import type { SubagentStatus } from '../adapter/ports/channel-view.js'
-
-export interface SubagentFailure {
-  readonly product?: string
-  readonly stage?: string
-  readonly category?: string
-  readonly exitCode?: number
-}
-
-/** `product: X; stage: Y; category: Z` — the shape every product provider
- *  failure carries, whichever provider wrote it. Every group stops at a
- *  separator or a newline: a stack trace after the sentence must not be
- *  swallowed into `category`, and `product` may legitimately contain `)`. */
-const DIAGNOSTIC = /product:\s*([^;\n]+?)\s*;\s*stage:\s*([^;)\n]+?)\s*;\s*category:\s*([^;)\n]+?)\s*(?=[;)\n]|$)/i
-const EXIT_CODE = /\bexit code:\s*(-?\d+)/i
-
-export function parseSubagentFailure(text: string | undefined): SubagentFailure | undefined {
-  if (text === undefined || text === '') return undefined
-  const diagnostic = DIAGNOSTIC.exec(text)
-  // `exit code` alone is not a provider diagnostic: a plain subprocess failure
-  // (`Bash command failed with exit code: 127`) must stay opaque.
-  if (diagnostic === null) return undefined
-  const exit = EXIT_CODE.exec(text)
-  const exitCode = exit === null ? undefined : Number.parseInt(exit[1], 10)
-  return {
-    product: diagnostic[1],
-    stage: diagnostic[2],
-    category: diagnostic[3],
-    ...(exitCode === undefined ? {} : { exitCode }),
-  }
-}
 
 export interface ChannelFailureSummary {
   readonly provider: string
@@ -61,7 +26,12 @@ export interface ChannelFailureSummary {
  * `''` reaches here from a host registry that reported an empty name. Both are
  * skipped rather than bucketed under a guess.
  *
- * This is a plain count — callers decide what is worth surfacing.
+ * This is a plain count — callers decide what is worth surfacing. It counts
+ * rows, not attempts: a continuable child that is respawned under a new
+ * `runId` resets to `running`, so repeated failures of one child collapse into
+ * whatever its last settlement was. Every failure in #1791 was a distinct
+ * child, which is the case this covers; the retry-of-one-child case does not
+ * accumulate, and the banner therefore stays quiet there.
  */
 export function summarizeChannelFailures(
   rows: readonly { readonly provider?: string | undefined; readonly status: SubagentStatus }[],
@@ -81,18 +51,28 @@ export function summarizeChannelFailures(
     .sort((left, right) => right.failed - left.failed || left.provider.localeCompare(right.provider))
 }
 
-/** Buckets that are not switchable delegation routes: the built-in `subagent`
- *  default (`onSpawned`'s `provider = 'subagent'`) and the workflow member lane
- *  (`subagent-projection.ts` writes `provider: 'workflow'`). "Switch provider"
- *  is not advice anyone can act on for either. */
-const SYNTHETIC_BUCKETS = new Set(['subagent', 'workflow'])
+/**
+ * Product delegation routes whose provider a user can actually swap: the
+ * `provider:` values of the shipped `tool-subagent-*` preset rows for the
+ * Claude Code and Codex products.
+ *
+ * Everything else is excluded on purpose. The built-in `subagent` default, the
+ * workflow member lane (`subagent-projection.ts` writes `provider:
+ * 'workflow'`), and the Claude backend's per-child `subagent_type` (`Explore`,
+ * `general-purpose`, …) are not switchable routes, so a banner offering
+ * "switch provider" would be advice nobody can act on. This is a positive
+ * list, not an exclusion list: a new backend inventing a provider name must
+ * opt in rather than start bannering by default.
+ */
+const SWITCHABLE_PRODUCT_PROVIDERS = new Set(['claude-code', 'codex'])
 
 /**
- * Whether a summary is worth a banner: at least two failures, and failures at
- * least half of the runs that got an answer. One failed child is business as
- * usual; a channel failing most of what it runs is not.
+ * Whether a summary is worth a banner: a switchable product route, at least
+ * two failures, and failures at least half of the runs that got an answer.
+ * One failed child is business as usual; a channel failing most of what it
+ * runs is not.
  */
 export function isDegradedChannel(summary: ChannelFailureSummary): boolean {
-  if (SYNTHETIC_BUCKETS.has(summary.provider)) return false
+  if (!SWITCHABLE_PRODUCT_PROVIDERS.has(summary.provider)) return false
   return summary.failed >= 2 && summary.failed * 2 >= summary.settled
 }
