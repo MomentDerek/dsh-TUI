@@ -393,6 +393,28 @@ async function run(cols: number, fullscreen: boolean): Promise<void> {
   check('foldRows rescans after a net-growth middle splice', unfolded === 0)
 }
 
+// Same splice, but the incoming report replaces exactly the rows it removed:
+// the array length never changes, so only the boundary witness can notice the
+// shift. A length comparison would stay green here while memory retention
+// returns.
+{
+  const cap = MAX_ROWS
+  const rows: { kind: string; text: string; folded?: boolean }[] = []
+  rows.push({ kind: 'notice', text: 'n' })
+  for (let i = 0; i < 50; i++) rows.push({ kind: 'local', text: 'l' })
+  for (let i = 0; i < cap + 49; i++) rows.push({ kind: 'assistant', text: 'a'.repeat(10) })
+  const cursor = { rows: rows as unknown, index: 0, head: undefined as unknown, boundary: undefined as unknown }
+  foldRows(rows as never, cap, cursor as never)
+  const before = rows.length
+  trimLocalRows(rows as never, cap)
+  const removed = before - rows.length
+  for (let i = 0; i < removed; i++) rows.push({ kind: 'local', text: 'l' })
+  foldRows(rows as never, cap, cursor as never)
+  const excess = rows.length - cap
+  const unfolded = rows.slice(0, excess).filter(row => row.kind === 'assistant' && row.folded !== true).length
+  check('foldRows rescans after an equal-length middle splice', removed > 0 && rows.length === before && unfolded === 0)
+}
+
 await run(80, false)
 await run(80, true)
 await run(40, false)
