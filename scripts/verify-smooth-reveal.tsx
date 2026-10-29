@@ -454,23 +454,30 @@ console.log('--- E: completed reveals survive remounts ---')
   const chatSource = await readFile(new URL('../src/screens/Chat.tsx', import.meta.url), 'utf8')
   const chatAst = ts.createSourceFile('Chat.tsx', chatSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   // Count alone would pass with both calls inside one branch, so record the
-  // enclosing construct: the agent-id effect and the `/clear` case are
-  // different reset reasons and both must stay wired.
-  const resetSites: Array<{ inEffect: boolean; inClear: boolean }> = []
-  const scanResets = (node: ts.Node, inEffect: boolean, inClear: boolean): void => {
+  // enclosing construct. "Inside some effect" is still too weak: the reset has
+  // to run in the effect that watches the agent id, and a check that only sees
+  // an effect ancestor would stay green if the call drifted into any other
+  // one. Keep the nearest effect's text and require the agent-id read in it.
+  const resetSites: Array<{ effectText: string | undefined; inClear: boolean }> = []
+  const scanResets = (node: ts.Node, effectText: string | undefined, inClear: boolean): void => {
     const effectName = ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
       ? node.expression.name.text
       : ts.isCallExpression(node) && ts.isIdentifier(node.expression) ? node.expression.text : undefined
-    const nextInEffect = inEffect || effectName === 'useEffect' || effectName === 'useLayoutEffect'
+    const nextEffectText = effectName === 'useEffect' || effectName === 'useLayoutEffect'
+      ? node.getText(chatAst)
+      : effectText
     const nextInClear = inClear
       || (ts.isCaseClause(node) && ts.isStringLiteral(node.expression) && node.expression.text === 'clear')
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'resetRevealSession') {
-      resetSites.push({ inEffect: nextInEffect, inClear: nextInClear })
+      resetSites.push({ effectText: nextEffectText, inClear: nextInClear })
     }
-    ts.forEachChild(node, child => scanResets(child, nextInEffect, nextInClear))
+    ts.forEachChild(node, child => scanResets(child, nextEffectText, nextInClear))
   }
-  scanResets(chatAst, false, false)
-  check(resetSites.some(site => site.inEffect), 'E3a Chat resets reveal state inside a React effect (agent switch)')
+  scanResets(chatAst, undefined, false)
+  check(
+    resetSites.some(site => site.effectText?.includes('channel.agentId') === true),
+    'E3a Chat resets reveal state in the effect that watches channel.agentId',
+  )
   check(resetSites.some(site => site.inClear), 'E3b Chat resets reveal state in the /clear branch')
   resetRevealForTest()
 }
