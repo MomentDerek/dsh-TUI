@@ -55,6 +55,30 @@ const ordered = summarizeChannelFailures([
 ] as const)
 check('orders by failure count', ordered[0]?.provider === 'a' && ordered[1]?.provider === 'b', JSON.stringify(ordered))
 
+// A continuable child reuses one `agentId`; opening its next run resets the
+// live row to `running`, so only the kept history can show that the same child
+// failed twice. Counting the live row alone would keep the banner quiet here.
+const rerunChild = summarizeChannelFailures([
+  {
+    provider: 'claude-code',
+    status: 'running',
+    settledRuns: [
+      { runId: 'run-1', provider: 'claude-code', status: 'failed' },
+      { runId: 'run-2', provider: 'claude-code', status: 'failed' },
+    ],
+  },
+] as const)
+check('repeated runs of one child accumulate', rerunChild[0]?.failed === 2 && rerunChild[0]?.settled === 2, JSON.stringify(rerunChild))
+check('two runs of one child reach the banner floor', rerunChild.some(isDegradedChannel), JSON.stringify(rerunChild))
+const liveAfterHistory = summarizeChannelFailures([
+  {
+    provider: 'claude-code',
+    status: 'failed',
+    settledRuns: [{ runId: 'run-1', provider: 'claude-code', status: 'failed' }],
+  },
+] as const)
+check('the settled run is not counted twice when the live row repeats it', liveAfterHistory[0]?.failed === 1 && liveAfterHistory[0]?.settled === 1, JSON.stringify(liveAfterHistory))
+
 check('one failure is not a degraded channel', !isDegradedChannel({ provider: 'claude-code', failed: 1, settled: 1 }))
 check('a switchable product route is surfaced', isDegradedChannel({ provider: 'claude-code', failed: 9, settled: 9 })
   && isDegradedChannel({ provider: 'codex', failed: 2, settled: 2 }))

@@ -26,25 +26,32 @@ export interface ChannelFailureSummary {
  * `''` reaches here from a host registry that reported an empty name. Both are
  * skipped rather than bucketed under a guess.
  *
- * This is a plain count — callers decide what is worth surfacing. It counts
- * rows, not attempts: a continuable child that is respawned under a new
- * `runId` resets to `running`, so repeated failures of one child collapse into
- * whatever its last settlement was. Every failure in #1791 was a distinct
- * child, which is the case this covers; the retry-of-one-child case does not
- * accumulate, and the banner therefore stays quiet there.
+ * This is a plain count — callers decide what is worth surfacing. Rows that
+ * carry `settledRuns` are counted from that history: a continuable child
+ * reuses one `agentId` and resets to `running` when it opens the next run, so
+ * the live row alone would report at most one failure no matter how often the
+ * same child failed. The live row is only the fallback for callers that have
+ * no history (older projections, focused tests).
  */
 export function summarizeChannelFailures(
-  rows: readonly { readonly provider?: string | undefined; readonly status: SubagentStatus }[],
+  rows: readonly {
+    readonly provider?: string | undefined
+    readonly status: SubagentStatus
+    readonly settledRuns?: readonly { readonly provider?: string | undefined; readonly status: SubagentStatus }[]
+  }[],
 ): ChannelFailureSummary[] {
   const buckets = new Map<string, { failed: number; settled: number }>()
   for (const row of rows) {
-    const provider = row.provider
-    if (provider === undefined || provider === '') continue
-    if (row.status !== 'failed' && row.status !== 'completed') continue
-    const bucket = buckets.get(provider) ?? { failed: 0, settled: 0 }
-    bucket.settled += 1
-    if (row.status === 'failed') bucket.failed += 1
-    buckets.set(provider, bucket)
+    const runs = row.settledRuns !== undefined && row.settledRuns.length > 0 ? row.settledRuns : [row]
+    for (const run of runs) {
+      const provider = run.provider === undefined || run.provider === '' ? row.provider : run.provider
+      if (provider === undefined || provider === '') continue
+      if (run.status !== 'failed' && run.status !== 'completed') continue
+      const bucket = buckets.get(provider) ?? { failed: 0, settled: 0 }
+      bucket.settled += 1
+      if (run.status === 'failed') bucket.failed += 1
+      buckets.set(provider, bucket)
+    }
   }
   return Array.from(buckets, ([provider, bucket]) => ({ provider, ...bucket }))
     .filter(summary => summary.failed > 0)

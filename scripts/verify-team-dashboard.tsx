@@ -289,8 +289,14 @@ try {
     // Panel mode renders no footer hint (the host draws it), so the invariant
     // here is that the last card survives the banner.
     check('channel banner: panel narrow keeps the last card', f.lines.some(line => line.includes('成功卡')), f.lines.join('|'))
-    check('channel banner: panel narrow no row overflows',
-      f.lines.every(line => width.stringWidth(line) <= cols), f.lines.find(line => width.stringWidth(line) > cols) ?? '')
+    // The viewport wraps at `cols`, so every physical line fits by
+    // construction and a width check could never fail. The real risk is a
+    // truncated logical line, which drops the banner's tail instead of
+    // wrapping it — assert the whole sentence survives instead.
+    const logical = f.lines.join(' ').replace(/\s+/g, ' ')
+    check('channel banner: panel narrow keeps the banner sentence intact',
+      logical.includes('channel claude-code: 2 of 2 settled runs failed')
+      && logical.includes('try another delegation provider'), logical)
     f.unmount()
   }
 } finally {
