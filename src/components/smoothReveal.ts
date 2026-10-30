@@ -25,8 +25,11 @@
  * never notice (stale cached heights → blank bands). Instead the cursors
  * live here keyed by row identity, the READS happen during render (they feed
  * the same flattened `text` prop the streaming path already uses), and the
- * WRITES happen on the scheduler tick, which bumps a version that
- * MessageList subscribes to via useSyncExternalStore. A reveal therefore
+ * WRITES happen in two places: the scheduler tick, which bumps a version
+ * that MessageList subscribes to via useSyncExternalStore; and the first
+ * history read of a row, which registers a caught-up cursor (see
+ * RevealReadOptions.active) so a later live continuation of that row does
+ * not restart it. A reveal therefore
  * rides the exact same update pipeline as an arriving chunk: prop change →
  * memo miss → re-render → post-commit measurement. Render-phase reads are
  * idempotent and safe to re-run (a discarded concurrent render at worst
@@ -249,12 +252,14 @@ export type RevealReadOptions = {
   /**
    * Whether this content arrived "just now" (live streaming row, freshly
    * settled row, live-created tool card). The FIRST read with active=true
-   * creates the cursor at zero — that is what turns a one-shot
-   * non-streaming delivery into a smooth paint. Reading with active=false
-   * (history / replayed content) never creates one: replaying a transcript
-   * must not typewrite every row. `active` only matters for cursor creation;
-   * settling mid-reveal deliberately keeps revealing (the "non-streaming
-   * becomes streaming" contract).
+   * creates the cursor at zero — that is what turns a one-shot non-streaming
+   * delivery into a smooth paint. A first read with active=false (history /
+   * replayed content) paints the whole text and registers a caught-up cursor
+   * (revealed == text.length, no timer), so replaying a transcript typewrites
+   * nothing while a later live continuation of the same row resumes from the
+   * painted length. `active` decides where a new cursor starts, not whether
+   * one exists; settling mid-reveal deliberately keeps revealing (the
+   * "non-streaming becomes streaming" contract).
    */
   active: boolean
 }

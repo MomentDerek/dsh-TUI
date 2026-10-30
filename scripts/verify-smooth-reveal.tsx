@@ -43,6 +43,7 @@ import { AssistantThinkingMessage } from '../src/components/messages/AssistantTh
 import { AssistantToolUseMessage } from '../src/components/messages/AssistantToolUseMessage.js'
 import type { ChatRow, ToolRow } from '../src/dsh-adapter/channel.js'
 import { createDshTranslator } from '../src/dsh-adapter/backend/translate.js'
+import { createChannelReadView } from '../src/adapter/channel/read-view.js'
 import { settled } from './lib/term-test.mjs'
 import { createProjectorHarness } from './lib/projector-harness.js'
 import {
@@ -479,6 +480,10 @@ console.log('--- E: completed reveals survive remounts ---')
     'E3a Chat resets reveal state in the effect that watches channel.agentId',
   )
   check(resetSites.some(site => site.inClear), 'E3b Chat resets reveal state in the /clear branch')
+  check(
+    resetSites.some(site => site.effectText?.includes('lastRevealGenerationRef') === true),
+    'E3c Chat resets reveal state when the binding is replaced (re-resume)',
+  )
   resetRevealForTest()
 }
 
@@ -520,6 +525,24 @@ console.log('--- F: replayed history is never marked fresh ---')
   )
   const assistants = (h: typeof cold): number => h.state.rows.filter(row => row.kind === 'assistant').length
   check(assistants(live) === assistants(cold), 'F4 replay reuses painted assistant rows instead of duplicating them', `${assistants(live)} vs ${assistants(cold)}`)
+
+  // F6: everything above reads the projector's mutable `state.rows`. The UI
+  // sees frozen snapshots through the read view, which reuses the previous
+  // array and row copies when their revisions did not move — so dropping
+  // `fresh` without marking both would leave panels typewriting history while
+  // every assertion above stays green.
+  const viewer = createChannelReadView(() => {})
+  const repaint = createProjectorHarness({ agentPreset: 'ptc' })
+  for (const event of log) repaint.apply(translator.translateEvent(event), false)
+  repaint.projector.settleStreaming()
+  const before = viewer(repaint.state.rows, 1) as readonly ChatRow[]
+  const beforeFresh = before.filter(row => row.fresh === true).length
+  check(beforeFresh > 0, 'F6 the read view serves live rows with fresh', `fresh=${beforeFresh}`)
+  repaint.apply(translator.translateReplay(log), true)
+  repaint.projector.settleStreaming()
+  const after = viewer(repaint.state.rows, 2) as readonly ChatRow[]
+  const afterFresh = after.filter(row => row.fresh === true).length
+  check(afterFresh === 0, 'F6 a snapshot taken after the replay no longer claims fresh', `fresh=${afterFresh}`)
 }
 
 // F5: a replayed row that a live turn continues must resume where the

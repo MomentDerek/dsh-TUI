@@ -1650,6 +1650,17 @@ export function Chat({
       ink?.clearScrollbackAndRedraw()
     }, 0)
   }
+  // A re-resume of the same session rebinds without necessarily changing
+  // `agentId`, yet it still restarts row ids — the keys this memory uses.
+  // Layout phase so the first frame after the rebind cannot paint against the
+  // previous session's keys.
+  const bindingGeneration = channel.agentBindingGeneration
+  const lastRevealGenerationRef = React.useRef(bindingGeneration)
+  React.useLayoutEffect(() => {
+    if (lastRevealGenerationRef.current === bindingGeneration) return
+    lastRevealGenerationRef.current = bindingGeneration
+    resetRevealSession()
+  }, [bindingGeneration])
   const lastAgentIdRef = React.useRef<string | undefined>(undefined)
   React.useEffect(() => {
     const id = channel.agentId
