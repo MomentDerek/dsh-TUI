@@ -13,7 +13,9 @@
  * The CI runners already give each script a throwaway HOME (#1018), but running
  * a script by hand — the run line in its own header — bypasses that. The
  * invariant enforced here is local to the script: mount the composer, own a
- * HOME *before* the composer module is evaluated.
+ * HOME *before* any repository module is evaluated. `src/history.ts` fixes
+ * `HISTORY_FILE` from `DATA_DIR` at import time too, so a fake home that only
+ * outranks the composer still leaves an earlier import writing to the real one.
  *
  * Scope: scripts that import PromptInput itself, in the source tree and in the
  * compiled `lib/types/` mirror. Scripts that mount `src/screens/Chat.tsx` reach
@@ -42,13 +44,18 @@ const MIN_MOUNTED = 20
 const COMPONENT = String.raw`(?:lib\/types|src)\/components\/PromptInput\.js`
 const COMPONENT_RE = new RegExp(String.raw`['"][^'"]*${COMPONENT}['"]`)
 const FAKE_HOME_RE = /['"][^'"]*fake-home\.mjs['"]/
-// Body owners: statements in the module body, which ESM runs after the whole
-// static import list has been evaluated. Line-anchored, so a commented-out line
-// or a one-line string mention does not count.
-const BODY_OWNERS = [
-  /^[ \t]*process\.env\.(?:HOME|USERPROFILE)\s*=/m,
-  /import\s*\(\s*['"][^'"]*fake-home\.mjs['"]\s*\)/,
+// Body owners: assignments in the module body, which ESM runs after the whole
+// static import list has been evaluated. `os.homedir()` reads `USERPROFILE` on
+// Windows and `HOME` elsewhere, so owning one name leaves the other platform
+// writing into the real home; both are required. Line-anchored, so a
+// commented-out line or a one-line string mention does not count.
+const HOME_ASSIGNMENTS = [
+  /\bprocess\.env\.HOME\s*=/m,
+  /\bprocess\.env\.USERPROFILE\s*=/m,
 ]
+// The dynamic form runs in the body too, so it owns HOME only when it precedes
+// the composer import it guards.
+const FAKE_HOME_IMPORT_CALL = /import\s*\(\s*['"][^'"]*fake-home\.mjs['"]\s*\)/
 
 /**
  * Split a file into its static import statements, one entry per `import` line or
@@ -82,6 +89,13 @@ const importsComposer = ({ text }) =>
   !/^[ \t]*import\s+type\b/.test(text) && COMPONENT_RE.test(text)
 
 const ownsHomeByImport = ({ text }) => FAKE_HOME_RE.test(text)
+// Any repository module can reach `src/utils/paths.ts`, so the fake home has to
+// come before the first one. `import type` is erased and cannot pin a path.
+const importsLocalModule = ({ text }) =>
+  !/^[ \t]*import\s+type\b/.test(text) && /(?:from|import)\s*['"]\.\.?\//.test(text)
+const importedFrom = ({ text }) => text.match(/['"]([^'"]+)['"]/)?.[1] ?? 'a local module'
+const landsAfter = statement =>
+  `imports ${importedFrom(statement)} before the fake home, which then lands too late to redirect that module's DATA_DIR`
 
 const lineOf = (source, pattern) => {
   const at = source.search(pattern)
@@ -107,14 +121,17 @@ for (const path of walk(SCRIPTS)) {
   const name = relative(ROOT, path)
   mounted.push(name)
 
-  // Static imports evaluate in source order, so an owner anywhere in that list
-  // wins only when it sits above the composer statement. A body assignment
-  // (`process.env.HOME = ...`) never wins against one: it runs after the whole
-  // list, however high it appears — that was the shape of #1788 itself.
+  // Static imports evaluate in source order, so a fake-home import wins only if
+  // no earlier repository module already pinned a `DATA_DIR`-derived path.
   const ownerAt = statements.findIndex(ownsHomeByImport)
+  const earlyLocal = statements.slice(0, Math.max(ownerAt, 0)).find(importsLocalModule)
   if (staticAt >= 0) {
-    if (ownerAt >= 0 && ownerAt < staticAt) continue
-    const lateBody = BODY_OWNERS.some(pattern => lineOf(source, pattern) >= 0)
+    if (ownerAt >= 0 && ownerAt < staticAt) {
+      if (earlyLocal === undefined) continue
+      failures.push([name, landsAfter(earlyLocal)])
+      continue
+    }
+    const lateBody = HOME_ASSIGNMENTS.some(pattern => lineOf(source, pattern) >= 0)
     failures.push([
       name,
       ownerAt >= 0
@@ -127,14 +144,25 @@ for (const path of walk(SCRIPTS)) {
   }
 
   // Composer reached only through `import(...)` in the body: a body owner counts
-  // when it runs first. A static owner is already evaluated by then.
-  const bodyAt = BODY_OWNERS.map(pattern => lineOf(source, pattern)).filter(at => at >= 0)
-  if (ownerAt >= 0 || (bodyAt.length > 0 && Math.min(...bodyAt) < dynamicAt)) continue
+  // when it runs first. A static owner is already evaluated by then. Both names
+  // must be set, and the later of the two has to precede the composer import.
+  const assignments = HOME_ASSIGNMENTS.map(pattern => lineOf(source, pattern))
+  const importCallAt = lineOf(source, FAKE_HOME_IMPORT_CALL)
+  const bodyAt = [...assignments, importCallAt].filter(at => at >= 0)
+  const ownsBothNames = assignments.every(at => at >= 0)
+  if (ownerAt >= 0 && earlyLocal !== undefined) {
+    failures.push([name, landsAfter(earlyLocal)])
+    continue
+  }
+  if (ownerAt >= 0 || ((ownsBothNames || importCallAt >= 0) && Math.max(...bodyAt) < dynamicAt))
+    continue
   failures.push([
     name,
     bodyAt.length === 0
       ? "relies on the machine's real HOME"
-      : 'takes over HOME only after the composer import',
+      : ownsBothNames
+        ? 'takes over HOME only after the composer import'
+        : 'owns only one of HOME / USERPROFILE before the composer import',
   ])
 }
 
@@ -153,7 +181,7 @@ if (mounted.length < MIN_MOUNTED) {
 
 for (const [name, reason] of failures) {
   console.log(`FAIL: ${name} imports the composer module but ${reason}`)
-  console.log("  add `import './lib/fake-home.mjs'` above every component import —")
+  console.log("  add `import './lib/fake-home.mjs'` above every repository import —")
   console.log('  static imports evaluate in source order, so it has to come first')
 }
 
